@@ -23,7 +23,13 @@ try {
     else if (op === 'up') await page.keyboard.up(arg);
     else if (op === 'press') await page.keyboard.press(arg);
     else if (op === 'wait') await page.waitForTimeout(Number(arg));
-    else if (op === 'shot') { await page.screenshot({ path: arg }); console.log('[drive] shot', arg); }
+    else if (op === 'drag') {
+      const [dx, dy] = arg.split(',').map(Number);
+      await page.mouse.move(640, 400);
+      await page.mouse.down();
+      for (let s = 1; s <= 10; s++) await page.mouse.move(640 + (dx * s) / 10, 400 + (dy * s) / 10);
+      await page.mouse.up();
+    } else if (op === 'shot') { await page.screenshot({ path: arg }); console.log('[drive] shot', arg); }
   }
 } finally {
   await browser.close();

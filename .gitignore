@@ -3,3 +3,8 @@ dist/
 .DS_Store
 *.local
 .vite/
+
+# large room scans — test-only, not for git
+public/room.ply
+public/room2.ply
+public/central.ply
