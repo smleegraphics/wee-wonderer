@@ -9,6 +9,7 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "esModuleInterop": true,
+    "types": ["vite/client", "@webgpu/types"],
     "skipLibCheck": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,

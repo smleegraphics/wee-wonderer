@@ -1,8 +1,14 @@
 import { defineConfig } from 'vite';
 
-// splatlight is a local file: dependency and ships raw .wgsl imported via ?raw.
-// Nothing special needed yet; kept explicit so the WebGPU/asset story has a home.
 export default defineConfig({
+  // Force a single three.js instance: 'three/webgpu' bundles its own copy of the
+  // core, so importing both it and 'three' loads two instances — and the
+  // WebGPURenderer then can't see lights/materials created by the other one.
+  // Alias exact 'three' → 'three/webgpu' (which re-exports all of core) so
+  // everything, including three/addons, shares one instance.
+  resolve: {
+    alias: [{ find: /^three$/, replacement: 'three/webgpu' }],
+  },
   server: { host: true },
   assetsInclude: ['**/*.ply', '**/*.splat', '**/*.glb'],
 });
