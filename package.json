@@ -1,0 +1,22 @@
+{
+  "name": "wee-wonderer",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "A cozy browser toy where a tiny figurine explores a Gaussian splat scan of your real space. three.js (WebGPU) app; splat rendering via splatlight.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "three": "^0.169.0",
+    "splatlight": "file:../splatlight"
+  },
+  "devDependencies": {
+    "@types/three": "^0.169.0",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10"
+  }
+}
