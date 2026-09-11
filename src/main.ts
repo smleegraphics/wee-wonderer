@@ -306,7 +306,9 @@ function updateController(dt: number): void {
       player.position.addScaledVector(climbNormal, -charH * 0.35);
       state = 'ground';
       play('idle', TUNE.fade);
-    } else if (player.position.y <= 0) {
+    } else if (player.position.y < 0) {
+      // descended below the floor (pressing S at the base) → let go. Grabbing at
+      // ground level (y === 0) holds instead of instantly dropping.
       player.position.y = 0;
       player.position.addScaledVector(climbNormal, charH * 0.05);
       state = 'ground';
