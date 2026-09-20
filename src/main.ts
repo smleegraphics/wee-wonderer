@@ -12,6 +12,7 @@ import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import { GaussianSplat } from 'three/addons/objects/GaussianSplat.js';
 import { GaussianSplatPLYLoader } from 'three/addons/loaders/GaussianSplatPLYLoader.js';
 import { orientScan } from './orient-scan';
+import { BoxCollision, type Box, type Collision } from './collision';
 
 const q = new URLSearchParams(location.search);
 // which demo scan to load — config, not logic (auto-leveled at load, see below)
@@ -164,6 +165,7 @@ function keyEvent(e: KeyboardEvent, v: 0 | 1): void {
     case 'KeyD': move.r = v; break;
     case 'ShiftLeft': case 'ShiftRight': move.run = !!v; break;
     case 'Space': if (v && state === 'ground') startJump(); e.preventDefault(); break;
+    case 'KeyC': if (v) toggleClimb(); break;
   }
 }
 addEventListener('keydown', (e) => keyEvent(e, 1));
@@ -174,10 +176,70 @@ function startJump(): void {
   else { vy = TUNE.jumpVel * charH; state = 'air'; play(actions['jump_loop'] ? 'jump_loop' : 'idle', 0.08); }
 }
 
-// --- collision seam ---------------------------------------------------------
-// M3a: flat room floor at y=0. Furniture/step collision (jump/climb targets)
-// comes next as hand-authored boxes plugged in here.
-function groundHeightAt(_x: number, _z: number): number { return 0; }
+// --- collision --------------------------------------------------------------
+// Hand-authored furniture colliders for this demo scan (see context/magic-test-
+// plan.md). The controller only calls the `Collision` seam, so an auto-generated
+// backend (heightfield/voxels from the splat) can drop in with no changes here.
+// Tuned to the playroom furniture via the ?debug overlay + P position-logger.
+const demoColliders: Box[] = [
+  { pos: new THREE.Vector3(-0.8, 0.1, -0.5), size: new THREE.Vector3(1.2, 0.2, 0.9) }, // puzzle box
+  { pos: new THREE.Vector3(0.3, 0.09, -3.0), size: new THREE.Vector3(1.8, 0.18, 1.2) }, // cloud cushion
+];
+const collision: Collision = new BoxCollision(demoColliders);
+
+const DEBUG = q.has('debug');
+const CHAR_RADIUS = 0.14; // char-heights
+const climbNormal = new THREE.Vector3(0, 0, 1);
+let climbTopY = 0;
+
+function toggleClimb(): void {
+  if (state === 'climb') { exitClimb(); return; }
+  if (state !== 'ground' || !actions['climb']) return;
+  const face = collision.climbableFaceAt(player.position, charH);
+  if (!face) return;
+  climbNormal.copy(face.normal);
+  climbTopY = face.topY;
+  state = 'climb'; vy = 0;
+  player.position.x = face.snap.x;
+  player.position.z = face.snap.z;
+  player.rotation.y = Math.atan2(-climbNormal.x, -climbNormal.z); // face the wall
+  play('climb', TUNE.fade);
+}
+function exitClimb(): void { state = 'air'; vy = 0; play(actions['jump_loop'] ? 'jump_loop' : 'idle', 0.12); }
+
+function climbUpdate(dt: number): void {
+  player.position.y += (move.f - move.b) * TUNE.climbSpeed * charH * dt;
+  if (player.position.y >= climbTopY) { // mantle over the top
+    player.position.y = climbTopY;
+    player.position.addScaledVector(climbNormal, -charH * 0.35);
+    state = 'ground'; play('idle', TUNE.fade);
+  } else if (player.position.y < 0) { // slid to the floor
+    player.position.y = 0;
+    player.position.addScaledVector(climbNormal, charH * 0.05);
+    state = 'ground'; play('idle', TUNE.fade);
+  }
+}
+
+/** Debug: wireframe colliders over a 1-unit grid + a P key that logs the figurine's world position. */
+function setupCollisionDebug(): void {
+  if (!DEBUG) return;
+  const grid = new THREE.GridHelper(16, 16, 0x00ff66, 0x00aa44);
+  grid.position.y = 0.02;
+  scene.add(grid);
+  scene.add(new THREE.AxesHelper(3)); // +X red, +Z blue
+  for (const b of demoColliders) {
+    const m = new THREE.Mesh(
+      new THREE.BoxGeometry(b.size.x, b.size.y, b.size.z),
+      new THREE.MeshBasicMaterial({ color: b.climbable ? 0xffaa00 : 0x22ddff, wireframe: true }),
+    );
+    m.position.copy(b.pos);
+    scene.add(m);
+  }
+  addEventListener('keydown', (e) => {
+    if (e.code === 'KeyP')
+      console.log(`POS x=${player.position.x.toFixed(2)} y=${player.position.y.toFixed(2)} z=${player.position.z.toFixed(2)}`);
+  });
+}
 
 // --- controller update ------------------------------------------------------
 const camFwd = new THREE.Vector3(), camRight = new THREE.Vector3(), wishDir = new THREE.Vector3();
@@ -204,12 +266,15 @@ function updateController(dt: number): void {
   if (moving) wishDir.normalize();
   const speed = (move.run ? TUNE.runSpeed : TUNE.walkSpeed) * charH;
 
+  if (state === 'climb') { climbUpdate(dt); return; }
+
   if (moving && state !== 'jump_start') {
     player.position.addScaledVector(wishDir, speed * dt);
     player.rotation.y = lerpAngle(player.rotation.y, Math.atan2(wishDir.x, wishDir.z), TUNE.turnLerp * dt);
   }
+  collision.resolve(player.position, CHAR_RADIUS * charH);
 
-  const groundY = groundHeightAt(player.position.x, player.position.z);
+  const groundY = collision.groundHeightAt(player.position.x, player.position.z);
   if (state === 'air') {
     vy += TUNE.gravity * charH * dt;
     player.position.y += vy * dt;
@@ -230,6 +295,7 @@ let frames = 0;
 
 async function main(): Promise<void> {
   await renderer.init();
+  setupCollisionDebug();
   loadRoom();
   new GLTFLoader().load(`${import.meta.env.BASE_URL}character.glb`, onLoaded, undefined, (err) => showBanner(`character.glb load failed: ${String(err)}`));
 
