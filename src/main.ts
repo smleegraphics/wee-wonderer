@@ -14,8 +14,15 @@ import { GaussianSplatPLYLoader } from 'three/addons/loaders/GaussianSplatPLYLoa
 import { orientScan } from './orient-scan';
 
 const q = new URLSearchParams(location.search);
-// which demo scan to load — config, not logic (auto-leveled at load, see below)
-const SCAN_FILE = q.get('scan') ?? 'room2.ply';
+// demo scans for the switcher UI — config, not logic (each auto-levels at load).
+const SCANS: { file: string; label: string }[] = [
+  { file: 'room2.ply', label: 'Playroom' },
+  { file: 'livingroom.ply', label: 'Living Room' },
+  { file: 'kitchen.ply', label: 'Kitchen' },
+  { file: 'counter.ply', label: 'Counter' },
+];
+const DEFAULT_SCAN = q.get('scan') ?? SCANS[0].file;
+const TARGET_RADIUS = 7; // normalize every scan to this world size (figurine ~0.45 tall)
 const app = document.getElementById('app')!;
 
 const renderer = new WebGPURenderer({ antialias: true });
@@ -46,21 +53,39 @@ scene.add(sun);
 // No per-scan constants: any scan (a demo, or the user's own) levels the same way.
 const room = new THREE.Group();
 scene.add(room);
+let currentSplat: GaussianSplat | null = null;
 
-function loadRoom(): void {
+/** Load (or swap to) a scan: dispose the old splat, auto-level the new one, respawn. */
+function loadScan(file: string): void {
+  if (currentSplat) {
+    room.remove(currentSplat);
+    currentSplat.geometry.dispose();
+    (currentSplat.material as THREE.Material).dispose();
+    (currentSplat as unknown as { dispose?: () => void }).dispose?.();
+    currentSplat = null;
+  }
+  room.quaternion.identity();
+  room.position.set(0, 0, 0);
+  room.scale.setScalar(1);
   new GaussianSplatPLYLoader().load(
-    `${import.meta.env.BASE_URL}${SCAN_FILE}`,
+    `${import.meta.env.BASE_URL}${file}`,
     (geometry) => {
       const o = orientScan(geometry.getAttribute('position') as THREE.BufferAttribute);
+      // scans have arbitrary unit scales — normalize each to a consistent world
+      // size so the fixed-size figurine stays a sensible fraction of every room.
+      const k = TARGET_RADIUS / o.radius;
       const splat = new GaussianSplat(geometry);
       splat.position.copy(o.center).multiplyScalar(-1); // recenter to origin
       room.add(splat);
       room.quaternion.copy(o.quaternion); // auto-leveled: floor normal → +Y
-      room.position.y = o.floorOffsetY; // floor at y=0
-      console.log(`room loaded + auto-leveled (radius ${o.radius.toFixed(2)})`);
+      room.scale.setScalar(k);
+      room.position.y = k * o.floorOffsetY; // floor at y=0 (in scaled space)
+      currentSplat = splat;
+      if (charLoaded) resetToSpawn();
+      console.log(`loaded ${file}: radius ${o.radius.toFixed(2)} → scaled ${k.toFixed(2)}x`);
     },
     undefined,
-    (err) => showBanner(`${SCAN_FILE} load failed: ${String(err)}`),
+    (err) => showBanner(`${file} load failed: ${String(err)}`),
   );
 }
 
@@ -99,21 +124,27 @@ function onLoaded(gltf: GLTF): void {
   charH = Math.max(bb.max.y - bb.min.y, 1e-4);
   model.position.y = -bb.min.y; // feet at the player origin
 
-  // spawn on the floor (y=0); tune the rug spot with ?fx=&fz=
-  player.position.set(Number(q.get('fx') ?? 0), 0, Number(q.get('fz') ?? 0));
-
   camera.near = charH * 0.02;
   camera.far = charH * 400;
   camera.updateProjectionMatrix();
   orbit.minDistance = charH * 2.5;
   orbit.maxDistance = charH * 14;
-  orbit.target.set(player.position.x, player.position.y + charH * 0.7, player.position.z);
-  camera.position.copy(player.position).add(new THREE.Vector3(charH * 1.2, charH * 2.6, charH * 4.5));
-  orbit.update();
 
   play('idle', 0);
   charLoaded = true;
+  resetToSpawn();
   console.log(`character: ${charH.toFixed(3)} tall, ${gltf.animations.length} clips`);
+}
+
+/** Put the figurine on the floor at the spawn point and re-frame the camera behind it. */
+function resetToSpawn(): void {
+  player.position.set(Number(q.get('fx') ?? 0), 0, Number(q.get('fz') ?? 0));
+  player.rotation.set(0, 0, 0);
+  vy = 0;
+  state = 'ground';
+  camera.position.copy(player.position).add(new THREE.Vector3(charH * 1.2, charH * 2.6, charH * 4.5));
+  orbit.target.set(player.position.x, player.position.y + charH * 0.7, player.position.z);
+  orbit.update();
 }
 
 function setupMixer(gltf: GLTF, model: THREE.Object3D): void {
@@ -230,7 +261,8 @@ let frames = 0;
 
 async function main(): Promise<void> {
   await renderer.init();
-  loadRoom();
+  loadScan(DEFAULT_SCAN);
+  setupScanSwitcher();
   new GLTFLoader().load(`${import.meta.env.BASE_URL}character.glb`, onLoaded, undefined, (err) => showBanner(`character.glb load failed: ${String(err)}`));
 
   renderer.setAnimationLoop(() => {
@@ -248,6 +280,29 @@ addEventListener('resize', () => {
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
+
+/** A small button bar (top-left) to switch demo scans at runtime. */
+function setupScanSwitcher(): void {
+  const bar = document.createElement('div');
+  bar.style.cssText =
+    'position:fixed;top:12px;left:12px;display:flex;gap:6px;z-index:10;' +
+    'font:13px ui-monospace,Menlo,monospace';
+  const setActive = (active: HTMLButtonElement) => {
+    for (const c of Array.from(bar.children) as HTMLButtonElement[])
+      c.style.background = c === active ? '#2e6cff' : 'rgba(23,24,29,0.85)';
+  };
+  for (const s of SCANS) {
+    const btn = document.createElement('button');
+    btn.textContent = s.label;
+    btn.style.cssText =
+      'padding:6px 11px;border:1px solid #3a3b44;border-radius:8px;color:#e8e8ea;' +
+      'background:rgba(23,24,29,0.85);cursor:pointer;backdrop-filter:blur(4px)';
+    btn.onclick = () => { loadScan(s.file); setActive(btn); };
+    if (s.file === DEFAULT_SCAN) btn.style.background = '#2e6cff';
+    bar.appendChild(btn);
+  }
+  document.body.appendChild(bar);
+}
 
 function showBanner(msg: string): void {
   document.body.insertAdjacentHTML('beforeend', `<pre style="position:fixed;top:0;left:0;right:0;margin:0;padding:12px;color:#f88;background:#1a1c22;font:12px ui-monospace;white-space:pre-wrap;z-index:9">${msg}</pre>`);
