@@ -29,6 +29,11 @@ try {
       await page.mouse.down();
       for (let s = 1; s <= 10; s++) await page.mouse.move(640 + (dx * s) / 10, 400 + (dy * s) / 10);
       await page.mouse.up();
+    } else if (op === 'click') {
+      const [x, y] = arg.split(',').map(Number);
+      await page.mouse.click(x, y);
+    } else if (op === 'clickText') {
+      await page.getByText(arg, { exact: true }).click();
     } else if (op === 'shot') { await page.screenshot({ path: arg }); console.log('[drive] shot', arg); }
   }
 } finally {
