@@ -16,10 +16,10 @@ import { orientScan } from './orient-scan';
 const q = new URLSearchParams(location.search);
 // demo scans for the switcher UI — config, not logic (each auto-levels at load).
 const SCANS: { file: string; label: string }[] = [
-  { file: 'room2.ply', label: 'Playroom' },
-  { file: 'livingroom.ply', label: 'Living Room' },
-  { file: 'kitchen.ply', label: 'Kitchen' },
-  { file: 'counter.ply', label: 'Counter' },
+  { file: 'room2.ply', label: 'Playroom' }, // already tightly bounded — no cleanup needed
+  { file: 'livingroom-clean.ply', label: 'Living Room' }, // floater-stripped (scripts/clean-scan.mjs)
+  { file: 'kitchen-clean.ply', label: 'Kitchen' },
+  { file: 'counter-clean.ply', label: 'Counter' },
 ];
 const DEFAULT_SCAN = q.get('scan') ?? SCANS[0].file;
 const TARGET_RADIUS = 7; // normalize every scan to this world size (figurine ~0.45 tall)
