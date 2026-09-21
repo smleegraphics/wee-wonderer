@@ -34,6 +34,8 @@ try {
       await page.mouse.click(x, y);
     } else if (op === 'clickText') {
       await page.getByText(arg, { exact: true }).click();
+    } else if (op === 'select') {
+      await page.locator('select').selectOption(arg); // arg = option value (scan file)
     } else if (op === 'shot') { await page.screenshot({ path: arg }); console.log('[drive] shot', arg); }
   }
 } finally {

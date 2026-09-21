@@ -14,6 +14,8 @@ import { GaussianSplatPLYLoader } from 'three/addons/loaders/GaussianSplatPLYLoa
 import { orientScan } from './orient-scan';
 import { voxelizeSplat, surfaceToGeometry } from './voxelize';
 import { MeshCollision } from './collision';
+import { voxelCacheKey, voxelCacheGet, voxelCachePut } from './voxel-cache';
+import type { VoxelSurface } from './voxelize';
 
 const q = new URLSearchParams(location.search);
 // demo scans for the switcher UI — config, not logic (each auto-levels at load).
@@ -33,6 +35,7 @@ let showVoxels = q.get('voxel') === '1';
 let collisionDebug: THREE.Mesh | null = null;
 let collision: MeshCollision | null = null; // BVH over the voxel surface, rebuilt per scan
 const CHAR_RADIUS = 0.14; // in char-heights, for wall push-out
+let loadToken = 0; // guards against a slow async collision build landing after a scan swap
 const app = document.getElementById('app')!;
 
 const renderer = new WebGPURenderer({ antialias: true });
@@ -67,6 +70,7 @@ let currentSplat: GaussianSplat | null = null;
 
 /** Load (or swap to) a scan: dispose the old splat, auto-level the new one, respawn. */
 function loadScan(file: string): void {
+  const token = ++loadToken;
   if (currentSplat) {
     room.remove(currentSplat);
     currentSplat.geometry.dispose();
@@ -86,7 +90,7 @@ function loadScan(file: string): void {
   room.scale.setScalar(1);
   new GaussianSplatPLYLoader().load(
     `${import.meta.env.BASE_URL}${file}`,
-    (geometry) => {
+    async (geometry) => {
       // capture the real splat centers now — GaussianSplat swaps geometry for a
       // billboard quad, so this attribute must be read before construction.
       const centers = geometry.getAttribute('position') as THREE.BufferAttribute;
@@ -102,9 +106,9 @@ function loadScan(file: string): void {
       room.position.y = k * o.floorOffsetY; // floor at y=0 (in scaled space)
       currentSplat = splat;
       room.updateMatrixWorld(true);
-      buildCollision(centers, splat.matrixWorld);
-      if (charLoaded) resetToSpawn();
       console.log(`loaded ${file}: radius ${o.radius.toFixed(2)} → scaled ${k.toFixed(2)}x`);
+      await buildCollision(file, token, centers, splat.matrixWorld);
+      if (token === loadToken && charLoaded) resetToSpawn();
     },
     undefined,
     (err) => showBanner(`${file} load failed: ${String(err)}`),
@@ -230,11 +234,20 @@ function startJump(): void {
 }
 
 // --- collision ---------------------------------------------------------------
-// Voxelize the loaded splat into a blocky surface, build a three-mesh-bvh over
-// it for the controller, and keep the surface as a toggleable debug overlay (V).
-function buildCollision(centers: THREE.BufferAttribute, matrixWorld: THREE.Matrix4): void {
+// Voxelize the loaded splat into a blocky surface (cached after the first load),
+// build a three-mesh-bvh over it for the controller, and keep the surface as a
+// toggleable debug overlay (V). `token` guards a slow async build from landing
+// after the user has already swapped to another scan.
+async function buildCollision(file: string, token: number, centers: THREE.BufferAttribute, matrixWorld: THREE.Matrix4): Promise<void> {
   const t0 = performance.now();
-  const surf = voxelizeSplat(centers, matrixWorld, VOXEL_SIZE, VOXEL_MIN);
+  const key = voxelCacheKey(file, VOXEL_SIZE, VOXEL_MIN, TARGET_RADIUS);
+  let surf: VoxelSurface | null = await voxelCacheGet(key);
+  const cached = surf !== null;
+  if (token !== loadToken) return; // superseded while awaiting the cache
+  if (!surf) {
+    surf = voxelizeSplat(centers, matrixWorld, VOXEL_SIZE, VOXEL_MIN);
+    void voxelCachePut(key, surf);
+  }
   const geom = surfaceToGeometry(surf);
   collision = new MeshCollision(geom); // note: MeshBVH indexes geom in place
   const mesh = new THREE.Mesh(
@@ -245,7 +258,7 @@ function buildCollision(centers: THREE.BufferAttribute, matrixWorld: THREE.Matri
   scene.add(mesh);
   collisionDebug = mesh;
   console.log(
-    `collision: ${surf.occupiedCount.toLocaleString()} voxels, ` +
+    `collision${cached ? ' (cached)' : ''}: ${surf.occupiedCount.toLocaleString()} voxels, ` +
     `${surf.triangleCount.toLocaleString()} tris @ ${surf.voxelSize.toFixed(3)}u ` +
     `in ${(performance.now() - t0).toFixed(0)}ms — press V to toggle overlay`,
   );
@@ -253,13 +266,21 @@ function buildCollision(centers: THREE.BufferAttribute, matrixWorld: THREE.Matri
 
 // --- controller update ------------------------------------------------------
 const camFwd = new THREE.Vector3(), camRight = new THREE.Vector3(), wishDir = new THREE.Vector3();
-const camLook = new THREE.Vector3();
+const camLook = new THREE.Vector3(), camDir = new THREE.Vector3();
 
-/** Glue the orbit pivot to the figurine so the camera follows while the user orbits/zooms. */
+/** Glue the orbit pivot to the figurine so the camera follows while the user
+ *  orbits/zooms, and pull the camera in if a wall is between it and the pivot. */
 function updateCamera(): void {
   camLook.set(player.position.x, player.position.y + charH * 0.7, player.position.z);
   orbit.target.lerp(camLook, 0.15);
   orbit.update();
+  if (!collision) return;
+  camDir.subVectors(camera.position, orbit.target);
+  const want = camDir.length();
+  if (want < 1e-4) return;
+  camDir.divideScalar(want);
+  const allowed = collision.rayDistance(orbit.target, camDir, want);
+  if (allowed < want) camera.position.copy(orbit.target).addScaledVector(camDir, Math.max(allowed - charH * 0.15, charH * 0.4));
 }
 function lerpAngle(a: number, b: number, t: number): number {
   let d = (b - a) % (Math.PI * 2);

@@ -44,6 +44,15 @@ export class MeshCollision implements Collision {
     this.bvh = new MeshBVH(geometry);
   }
 
+  /** Distance to the first surface along `dir` (unit) from `origin`, else `max`.
+   *  Used to keep the follow-camera from clipping through walls. */
+  rayDistance(origin: THREE.Vector3, dir: THREE.Vector3, max: number): number {
+    this.ray.origin.copy(origin);
+    this.ray.direction.copy(dir);
+    const hit = this.bvh.raycastFirst(this.ray, THREE.DoubleSide);
+    return hit && hit.distance < max ? hit.distance : max;
+  }
+
   groundHeightAt(x: number, z: number, fromY = 1e4): number {
     this.ray.origin.set(x, fromY, z);
     this.ray.direction.copy(DOWN);
