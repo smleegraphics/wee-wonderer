@@ -13,6 +13,7 @@ import { GaussianSplat } from 'three/addons/objects/GaussianSplat.js';
 import { GaussianSplatPLYLoader } from 'three/addons/loaders/GaussianSplatPLYLoader.js';
 import { orientScan } from './orient-scan';
 import { voxelizeSplat, surfaceToGeometry } from './voxelize';
+import { MeshCollision } from './collision';
 
 const q = new URLSearchParams(location.search);
 // demo scans for the switcher UI — config, not logic (each auto-levels at load).
@@ -30,6 +31,8 @@ const VOXEL_SIZE = Number(q.get('vox')) || TARGET_RADIUS / 72; // ~0.097 world u
 const VOXEL_MIN = Number(q.get('voxmin')) || 2; // min splats for a voxel to be solid
 let showVoxels = q.get('voxel') === '1';
 let collisionDebug: THREE.Mesh | null = null;
+let collision: MeshCollision | null = null; // BVH over the voxel surface, rebuilt per scan
+const CHAR_RADIUS = 0.14; // in char-heights, for wall push-out
 const app = document.getElementById('app')!;
 
 const renderer = new WebGPURenderer({ antialias: true });
@@ -77,6 +80,7 @@ function loadScan(file: string): void {
     (collisionDebug.material as THREE.Material).dispose();
     collisionDebug = null;
   }
+  collision = null;
   room.quaternion.identity();
   room.position.set(0, 0, 0);
   room.scale.setScalar(1);
@@ -98,7 +102,7 @@ function loadScan(file: string): void {
       room.position.y = k * o.floorOffsetY; // floor at y=0 (in scaled space)
       currentSplat = splat;
       room.updateMatrixWorld(true);
-      buildVoxelDebug(centers, splat.matrixWorld);
+      buildCollision(centers, splat.matrixWorld);
       if (charLoaded) resetToSpawn();
       console.log(`loaded ${file}: radius ${o.radius.toFixed(2)} → scaled ${k.toFixed(2)}x`);
     },
@@ -213,6 +217,7 @@ function keyEvent(e: KeyboardEvent, v: 0 | 1): void {
     case 'KeyD': move.r = v; break;
     case 'ShiftLeft': case 'ShiftRight': move.run = !!v; break;
     case 'Space': if (v && state === 'ground') startJump(); e.preventDefault(); break;
+    case 'KeyC': if (v) toggleClimb(); break;
     case 'KeyV': if (v) { showVoxels = !showVoxels; if (collisionDebug) collisionDebug.visible = showVoxels; } break;
   }
 }
@@ -224,27 +229,25 @@ function startJump(): void {
   else { vy = TUNE.jumpVel * charH; state = 'air'; play(actions['jump_loop'] ? 'jump_loop' : 'idle', 0.08); }
 }
 
-// --- collision seam ---------------------------------------------------------
-// M3a: flat room floor at y=0. Furniture/step collision (jump/climb targets)
-// comes next as hand-authored boxes plugged in here.
-function groundHeightAt(_x: number, _z: number): number { return 0; }
-
-// Spike 1: voxelize the loaded splat into a blocky surface mesh and show it as a
-// wireframe overlay, to eyeball whether it's a usable collider. No collision yet.
-function buildVoxelDebug(centers: THREE.BufferAttribute, matrixWorld: THREE.Matrix4): void {
+// --- collision ---------------------------------------------------------------
+// Voxelize the loaded splat into a blocky surface, build a three-mesh-bvh over
+// it for the controller, and keep the surface as a toggleable debug overlay (V).
+function buildCollision(centers: THREE.BufferAttribute, matrixWorld: THREE.Matrix4): void {
   const t0 = performance.now();
   const surf = voxelizeSplat(centers, matrixWorld, VOXEL_SIZE, VOXEL_MIN);
+  const geom = surfaceToGeometry(surf);
+  collision = new MeshCollision(geom); // note: MeshBVH indexes geom in place
   const mesh = new THREE.Mesh(
-    surfaceToGeometry(surf),
+    geom,
     new THREE.MeshBasicMaterial({ color: 0x35e08b, wireframe: true, transparent: true, opacity: 0.55 }),
   );
   mesh.visible = showVoxels;
   scene.add(mesh);
   collisionDebug = mesh;
   console.log(
-    `voxelized: ${surf.occupiedCount.toLocaleString()} voxels, ` +
+    `collision: ${surf.occupiedCount.toLocaleString()} voxels, ` +
     `${surf.triangleCount.toLocaleString()} tris @ ${surf.voxelSize.toFixed(3)}u ` +
-    `in ${(performance.now() - t0).toFixed(0)}ms — press V to toggle`,
+    `in ${(performance.now() - t0).toFixed(0)}ms — press V to toggle overlay`,
   );
 }
 
@@ -265,6 +268,41 @@ function lerpAngle(a: number, b: number, t: number): number {
   return a + d * Math.min(t, 1);
 }
 
+// --- climb (grab a wall / mantle onto furniture) ----------------------------
+const climbNormal = new THREE.Vector3(0, 0, 1);
+const forward = new THREE.Vector3();
+let climbTopY = 0;
+
+function toggleClimb(): void {
+  if (state === 'climb') { exitClimb(); return; }
+  if (state !== 'ground' || !actions['climb'] || !collision) return;
+  forward.set(Math.sin(player.rotation.y), 0, Math.cos(player.rotation.y));
+  const face = collision.climbableFaceAt(player.position, charH, forward);
+  if (!face) return;
+  climbNormal.copy(face.normal);
+  climbTopY = face.topY;
+  state = 'climb'; vy = 0;
+  player.position.x = face.snap.x;
+  player.position.z = face.snap.z;
+  player.rotation.y = Math.atan2(-climbNormal.x, -climbNormal.z); // face the wall
+  play('climb', TUNE.fade);
+}
+function exitClimb(): void { state = 'air'; vy = 0; play(actions['jump_loop'] ? 'jump_loop' : 'idle', 0.12); }
+
+function climbUpdate(dt: number): void {
+  player.position.y += (move.f - move.b) * TUNE.climbSpeed * charH * dt;
+  const floorY = collision ? collision.groundHeightAt(player.position.x, player.position.z, climbTopY + charH) : 0;
+  if (player.position.y >= climbTopY) { // mantle over the top
+    player.position.y = climbTopY;
+    player.position.addScaledVector(climbNormal, -charH * 0.35);
+    state = 'ground'; play('idle', TUNE.fade);
+  } else if (player.position.y <= floorY) { // slid back to the floor
+    player.position.y = floorY;
+    player.position.addScaledVector(climbNormal, charH * 0.05);
+    state = 'ground'; play('idle', TUNE.fade);
+  }
+}
+
 function updateController(dt: number): void {
   camera.getWorldDirection(camFwd); camFwd.y = 0; camFwd.normalize();
   camRight.crossVectors(camFwd, new THREE.Vector3(0, 1, 0)).negate();
@@ -273,12 +311,17 @@ function updateController(dt: number): void {
   if (moving) wishDir.normalize();
   const speed = (move.run ? TUNE.runSpeed : TUNE.walkSpeed) * charH;
 
+  if (state === 'climb') { climbUpdate(dt); return; }
+
   if (moving && state !== 'jump_start') {
     player.position.addScaledVector(wishDir, speed * dt);
     player.rotation.y = lerpAngle(player.rotation.y, Math.atan2(wishDir.x, wishDir.z), TUNE.turnLerp * dt);
   }
+  collision?.resolve(player.position, CHAR_RADIUS * charH);
 
-  const groundY = groundHeightAt(player.position.x, player.position.z);
+  // search for ground from just above the feet: finds low steps to snap onto and
+  // the floor *under* furniture (not the tabletop above), and lands from jumps.
+  const groundY = collision ? collision.groundHeightAt(player.position.x, player.position.z, player.position.y + charH * 0.5) : 0;
   if (state === 'air') {
     vy += TUNE.gravity * charH * dt;
     player.position.y += vy * dt;
@@ -288,7 +331,7 @@ function updateController(dt: number): void {
       else { state = 'ground'; play('idle', TUNE.fade); }
     }
   } else if (state === 'ground') {
-    if (player.position.y > groundY + 0.001) { state = 'air'; vy = 0; play(actions['jump_loop'] ? 'jump_loop' : 'idle', 0.15); }
+    if (player.position.y > groundY + charH * 0.06) { state = 'air'; vy = 0; play(actions['jump_loop'] ? 'jump_loop' : 'idle', 0.15); }
     else { player.position.y = groundY; if (moving) play(move.run && actions['run'] ? 'run' : 'walk'); else play('idle'); }
   }
 }
