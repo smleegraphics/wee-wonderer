@@ -12,6 +12,7 @@ import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import { GaussianSplat } from 'three/addons/objects/GaussianSplat.js';
 import { GaussianSplatPLYLoader } from 'three/addons/loaders/GaussianSplatPLYLoader.js';
 import { orientScan } from './orient-scan';
+import { voxelizeSplat, surfaceToGeometry } from './voxelize';
 
 const q = new URLSearchParams(location.search);
 // demo scans for the switcher UI — config, not logic (each auto-levels at load).
@@ -23,6 +24,12 @@ const SCANS: { file: string; label: string }[] = [
 ];
 const DEFAULT_SCAN = q.get('scan') ?? SCANS[0].file;
 const TARGET_RADIUS = 7; // normalize every scan to this world size (figurine ~0.45 tall)
+// Spike 1 — collision voxelization: build a blocky surface mesh from the splat
+// and show it as a debug overlay (toggle 'V', or ?voxel=1 to start visible).
+const VOXEL_SIZE = Number(q.get('vox')) || TARGET_RADIUS / 72; // ~0.097 world units
+const VOXEL_MIN = Number(q.get('voxmin')) || 2; // min splats for a voxel to be solid
+let showVoxels = q.get('voxel') === '1';
+let collisionDebug: THREE.Mesh | null = null;
 const app = document.getElementById('app')!;
 
 const renderer = new WebGPURenderer({ antialias: true });
@@ -64,13 +71,22 @@ function loadScan(file: string): void {
     (currentSplat as unknown as { dispose?: () => void }).dispose?.();
     currentSplat = null;
   }
+  if (collisionDebug) {
+    scene.remove(collisionDebug);
+    collisionDebug.geometry.dispose();
+    (collisionDebug.material as THREE.Material).dispose();
+    collisionDebug = null;
+  }
   room.quaternion.identity();
   room.position.set(0, 0, 0);
   room.scale.setScalar(1);
   new GaussianSplatPLYLoader().load(
     `${import.meta.env.BASE_URL}${file}`,
     (geometry) => {
-      const o = orientScan(geometry.getAttribute('position') as THREE.BufferAttribute);
+      // capture the real splat centers now — GaussianSplat swaps geometry for a
+      // billboard quad, so this attribute must be read before construction.
+      const centers = geometry.getAttribute('position') as THREE.BufferAttribute;
+      const o = orientScan(centers);
       // scans have arbitrary unit scales — normalize each to a consistent world
       // size so the fixed-size figurine stays a sensible fraction of every room.
       const k = TARGET_RADIUS / o.radius;
@@ -81,6 +97,8 @@ function loadScan(file: string): void {
       room.scale.setScalar(k);
       room.position.y = k * o.floorOffsetY; // floor at y=0 (in scaled space)
       currentSplat = splat;
+      room.updateMatrixWorld(true);
+      buildVoxelDebug(centers, splat.matrixWorld);
       if (charLoaded) resetToSpawn();
       console.log(`loaded ${file}: radius ${o.radius.toFixed(2)} → scaled ${k.toFixed(2)}x`);
     },
@@ -195,6 +213,7 @@ function keyEvent(e: KeyboardEvent, v: 0 | 1): void {
     case 'KeyD': move.r = v; break;
     case 'ShiftLeft': case 'ShiftRight': move.run = !!v; break;
     case 'Space': if (v && state === 'ground') startJump(); e.preventDefault(); break;
+    case 'KeyV': if (v) { showVoxels = !showVoxels; if (collisionDebug) collisionDebug.visible = showVoxels; } break;
   }
 }
 addEventListener('keydown', (e) => keyEvent(e, 1));
@@ -209,6 +228,25 @@ function startJump(): void {
 // M3a: flat room floor at y=0. Furniture/step collision (jump/climb targets)
 // comes next as hand-authored boxes plugged in here.
 function groundHeightAt(_x: number, _z: number): number { return 0; }
+
+// Spike 1: voxelize the loaded splat into a blocky surface mesh and show it as a
+// wireframe overlay, to eyeball whether it's a usable collider. No collision yet.
+function buildVoxelDebug(centers: THREE.BufferAttribute, matrixWorld: THREE.Matrix4): void {
+  const t0 = performance.now();
+  const surf = voxelizeSplat(centers, matrixWorld, VOXEL_SIZE, VOXEL_MIN);
+  const mesh = new THREE.Mesh(
+    surfaceToGeometry(surf),
+    new THREE.MeshBasicMaterial({ color: 0x35e08b, wireframe: true, transparent: true, opacity: 0.55 }),
+  );
+  mesh.visible = showVoxels;
+  scene.add(mesh);
+  collisionDebug = mesh;
+  console.log(
+    `voxelized: ${surf.occupiedCount.toLocaleString()} voxels, ` +
+    `${surf.triangleCount.toLocaleString()} tris @ ${surf.voxelSize.toFixed(3)}u ` +
+    `in ${(performance.now() - t0).toFixed(0)}ms — press V to toggle`,
+  );
+}
 
 // --- controller update ------------------------------------------------------
 const camFwd = new THREE.Vector3(), camRight = new THREE.Vector3(), wishDir = new THREE.Vector3();
