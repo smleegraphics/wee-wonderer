@@ -281,27 +281,24 @@ addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-/** A small button bar (top-left) to switch demo scans at runtime. */
+/** A dropdown (top-left) to switch demo scans at runtime. */
 function setupScanSwitcher(): void {
-  const bar = document.createElement('div');
-  bar.style.cssText =
-    'position:fixed;top:12px;left:12px;display:flex;gap:6px;z-index:10;' +
+  const sel = document.createElement('select');
+  sel.style.cssText =
+    'position:fixed;top:12px;left:12px;z-index:10;padding:7px 12px;' +
+    'border:1px solid #3a3b44;border-radius:8px;color:#e8e8ea;' +
+    'background:rgba(23,24,29,0.85);cursor:pointer;backdrop-filter:blur(4px);' +
     'font:13px ui-monospace,Menlo,monospace';
-  const setActive = (active: HTMLButtonElement) => {
-    for (const c of Array.from(bar.children) as HTMLButtonElement[])
-      c.style.background = c === active ? '#2e6cff' : 'rgba(23,24,29,0.85)';
-  };
   for (const s of SCANS) {
-    const btn = document.createElement('button');
-    btn.textContent = s.label;
-    btn.style.cssText =
-      'padding:6px 11px;border:1px solid #3a3b44;border-radius:8px;color:#e8e8ea;' +
-      'background:rgba(23,24,29,0.85);cursor:pointer;backdrop-filter:blur(4px)';
-    btn.onclick = () => { loadScan(s.file); setActive(btn); };
-    if (s.file === DEFAULT_SCAN) btn.style.background = '#2e6cff';
-    bar.appendChild(btn);
+    const opt = document.createElement('option');
+    opt.value = s.file;
+    opt.textContent = s.label;
+    opt.style.color = '#111';
+    if (s.file === DEFAULT_SCAN) opt.selected = true;
+    sel.appendChild(opt);
   }
-  document.body.appendChild(bar);
+  sel.onchange = () => loadScan(sel.value);
+  document.body.appendChild(sel);
 }
 
 function showBanner(msg: string): void {
