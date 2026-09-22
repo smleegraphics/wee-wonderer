@@ -77,14 +77,18 @@ export function voxelizeCore(
   const gy = Math.max(1, Math.ceil((maxY - minY) / voxelSize) + 2);
   const gz = Math.max(1, Math.ceil((maxZ - minZ) / voxelSize) + 2);
 
-  // pass 2: splat counts per voxel → dense occupancy grid
+  // pass 2: per voxel, count splats and sum their world height (for a data-driven
+  // top surface later) → dense occupancy grid.
   const counts = new Uint16Array(gx * gy * gz);
+  const sumY = new Float32Array(counts.length);
   for (let i = 0; i < count; i++) {
+    const y = wy(i);
     const vx = Math.floor((wx(i) - minX) / voxelSize);
-    const vy = Math.floor((wy(i) - minY) / voxelSize);
+    const vy = Math.floor((y - minY) / voxelSize);
     const vz = Math.floor((wz(i) - minZ) / voxelSize);
     const c = (vx * gy + vy) * gz + vz;
     if (counts[c] < 65535) counts[c]++;
+    sumY[c] += y;
   }
   let occ: Uint8Array = new Uint8Array(counts.length);
   for (let c = 0; c < counts.length; c++) occ[c] = counts[c] >= minCount ? 1 : 0;
@@ -98,26 +102,41 @@ export function voxelizeCore(
 
   // pass 3: emit exposed faces. Occupied voxels live in the padded interior, so
   // neighbors are read by flat offset. Offsets match FACES (+X,-X,+Y,-Y,+Z,-Z).
+  // The top of a voxel with nothing above it (a walkable surface) is placed at
+  // the MEAN SPLAT HEIGHT in that voxel, not the cell boundary — this de-quantizes
+  // the surface so feet seat on the real floor / furniture top with no constant
+  // offset. Synthesized voxels (filled holes/dilation, no splats) fall back to
+  // the cell centre. Buried and side faces keep the cell boundary.
   const sx = gy * gz, sy = gz;
   const faceOff = [sx, -sx, sy, -sy, 1, -1];
+  const halfV = voxelSize * 0.5;
   const positionsOut: number[] = [];
   const normalsOut: number[] = [];
   let occupied = 0;
-  const corner = (vx: number, vy: number, vz: number, ci: number) => {
+  let cvx = 0, cvz = 0, cyb = 0, cyt = 0; // current voxel: x, z, y-bottom, y-top
+  const corner = (ci: number) => {
     const o = CORNERS[ci];
-    positionsOut.push(minX + (vx + o[0]) * voxelSize, minY + (vy + o[1]) * voxelSize, minZ + (vz + o[2]) * voxelSize);
+    positionsOut.push(minX + (cvx + o[0]) * voxelSize, o[1] ? cyt : cyb, minZ + (cvz + o[2]) * voxelSize);
   };
   for (let vx = 1; vx < gx - 1; vx++)
     for (let vy = 1; vy < gy - 1; vy++) {
+      const yBottom = minY + vy * voxelSize;
+      const yCellTop = yBottom + voxelSize;
       let c = vx * sx + vy * sy + 1;
       for (let vz = 1; vz < gz - 1; vz++, c++) {
         if (!occ[c]) continue;
         occupied++;
+        cvx = vx; cvz = vz; cyb = yBottom;
+        cyt = occ[c + sy]
+          ? yCellTop // something solid above → not the walkable top
+          : counts[c] > 0
+            ? Math.min(yCellTop, Math.max(yBottom, sumY[c] / counts[c])) // real splat height
+            : yBottom + halfV; // synthesized voxel → cell centre
         for (let fi = 0; fi < 6; fi++) {
           if (occ[c + faceOff[fi]]) continue; // face buried between two solids
           const f = FACES[fi];
-          corner(vx, vy, vz, f.c[0]); corner(vx, vy, vz, f.c[1]); corner(vx, vy, vz, f.c[2]);
-          corner(vx, vy, vz, f.c[0]); corner(vx, vy, vz, f.c[2]); corner(vx, vy, vz, f.c[3]);
+          corner(f.c[0]); corner(f.c[1]); corner(f.c[2]);
+          corner(f.c[0]); corner(f.c[2]); corner(f.c[3]);
           for (let t = 0; t < 6; t++) normalsOut.push(f.n[0], f.n[1], f.n[2]);
         }
       }

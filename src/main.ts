@@ -38,8 +38,9 @@ const VOXEL_OPTS = {
   smooth: num('smooth', 1),      // majority-filter passes (flattens bumpiness)
   fillFloor: num('fillfloor', 1), // fill enclosed holes in the floor layer
 };
-// Seat feet on the visible splat floor, not the voxel top face (~1 voxel above).
-const GROUND_OFFSET = num('sink', VOXEL_SIZE);
+// Walkable surfaces are de-quantized to the real splat height in the voxelizer,
+// so no ground offset is needed; ?sink stays as a manual override (default 0).
+const GROUND_OFFSET = num('sink', 0);
 let showVoxels = q.get('voxel') === '1';
 let collisionDebug: THREE.Mesh | null = null;
 let voxelCheckbox: HTMLInputElement | null = null;

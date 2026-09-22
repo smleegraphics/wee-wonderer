@@ -8,6 +8,7 @@ import type { VoxelSurface } from './voxelize';
 
 const DB_NAME = 'wee-wonderer';
 const STORE = 'voxel-surface';
+const SCHEMA = 'g2'; // bump when the surface-generation algorithm changes (invalidates old entries)
 
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -25,7 +26,7 @@ export function voxelCacheKey(
   opts: { minCount: number; despeckle: number; close: number; smooth: number; fillFloor: number },
   targetRadius: number,
 ): string {
-  return `${file}|v${voxelSize.toFixed(4)}|r${targetRadius}|m${opts.minCount}|d${opts.despeckle}|c${opts.close}|s${opts.smooth}|f${opts.fillFloor}`;
+  return `${SCHEMA}|${file}|v${voxelSize.toFixed(4)}|r${targetRadius}|m${opts.minCount}|d${opts.despeckle}|c${opts.close}|s${opts.smooth}|f${opts.fillFloor}`;
 }
 
 export async function voxelCacheGet(key: string): Promise<VoxelSurface | null> {
