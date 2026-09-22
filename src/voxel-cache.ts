@@ -19,8 +19,13 @@ function openDB(): Promise<IDBDatabase> {
 }
 
 /** Cache key: identity of the scan + everything that changes the surface. */
-export function voxelCacheKey(file: string, voxelSize: number, minCount: number, targetRadius: number): string {
-  return `${file}|v${voxelSize.toFixed(4)}|m${minCount}|r${targetRadius}`;
+export function voxelCacheKey(
+  file: string,
+  voxelSize: number,
+  opts: { minCount: number; despeckle: number; close: number; smooth: number },
+  targetRadius: number,
+): string {
+  return `${file}|v${voxelSize.toFixed(4)}|r${targetRadius}|m${opts.minCount}|d${opts.despeckle}|c${opts.close}|s${opts.smooth}`;
 }
 
 export async function voxelCacheGet(key: string): Promise<VoxelSurface | null> {

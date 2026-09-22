@@ -27,10 +27,16 @@ const SCANS: { file: string; label: string }[] = [
 ];
 const DEFAULT_SCAN = q.get('scan') ?? SCANS[0].file;
 const TARGET_RADIUS = 7; // normalize every scan to this world size (figurine ~0.45 tall)
-// Spike 1 — collision voxelization: build a blocky surface mesh from the splat
-// and show it as a debug overlay (toggle 'V', or ?voxel=1 to start visible).
+// Collision voxelization: build a cleaned blocky surface mesh from the splat and
+// show it as a debug overlay (toggle 'V', or ?voxel=1 to start visible).
 const VOXEL_SIZE = Number(q.get('vox')) || TARGET_RADIUS / 72; // ~0.097 world units
-const VOXEL_MIN = Number(q.get('voxmin')) || 2; // min splats for a voxel to be solid
+const num = (key: string, def: number) => (q.has(key) ? Number(q.get(key)) : def);
+const VOXEL_OPTS = {
+  minCount: num('voxmin', 1),    // splats for a voxel to start solid
+  despeckle: num('despeckle', 12), // drop solid islands smaller than this (stray cubes)
+  close: num('close', 1),        // dilate→erode iterations (fills floor/wall holes)
+  smooth: num('smooth', 1),      // majority-filter passes (flattens bumpiness)
+};
 let showVoxels = q.get('voxel') === '1';
 let collisionDebug: THREE.Mesh | null = null;
 let collision: MeshCollision | null = null; // BVH over the voxel surface, rebuilt per scan
@@ -240,12 +246,12 @@ function startJump(): void {
 // after the user has already swapped to another scan.
 async function buildCollision(file: string, token: number, centers: THREE.BufferAttribute, matrixWorld: THREE.Matrix4): Promise<void> {
   const t0 = performance.now();
-  const key = voxelCacheKey(file, VOXEL_SIZE, VOXEL_MIN, TARGET_RADIUS);
+  const key = voxelCacheKey(file, VOXEL_SIZE, VOXEL_OPTS, TARGET_RADIUS);
   let surf: VoxelSurface | null = await voxelCacheGet(key);
   const cached = surf !== null;
   if (token !== loadToken) return; // superseded while awaiting the cache
   if (!surf) {
-    surf = voxelizeSplat(centers, matrixWorld, VOXEL_SIZE, VOXEL_MIN);
+    surf = voxelizeSplat(centers, matrixWorld, VOXEL_SIZE, VOXEL_OPTS);
     void voxelCachePut(key, surf);
   }
   const geom = surfaceToGeometry(surf);
