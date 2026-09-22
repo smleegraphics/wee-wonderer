@@ -36,7 +36,10 @@ const VOXEL_OPTS = {
   despeckle: num('despeckle', 12), // drop solid islands smaller than this (stray cubes)
   close: num('close', 1),        // dilate→erode iterations (fills floor/wall holes)
   smooth: num('smooth', 1),      // majority-filter passes (flattens bumpiness)
+  fillFloor: num('fillfloor', 1), // fill enclosed holes in the floor layer
 };
+// Seat feet on the visible splat floor, not the voxel top face (~1 voxel above).
+const GROUND_OFFSET = num('sink', VOXEL_SIZE);
 let showVoxels = q.get('voxel') === '1';
 let collisionDebug: THREE.Mesh | null = null;
 let voxelCheckbox: HTMLInputElement | null = null;
@@ -278,7 +281,7 @@ async function buildCollision(file: string, token: number, centers: THREE.Buffer
     void voxelCachePut(key, surf);
   }
   const geom = surfaceToGeometry(surf);
-  collision = new MeshCollision(geom); // note: MeshBVH indexes geom in place
+  collision = new MeshCollision(geom, GROUND_OFFSET); // note: MeshBVH indexes geom in place
   const mesh = new THREE.Mesh(
     geom,
     new THREE.MeshBasicMaterial({ color: 0x35e08b, wireframe: true, transparent: true, opacity: 0.55 }),

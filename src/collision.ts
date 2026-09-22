@@ -38,8 +38,10 @@ export class MeshCollision implements Collision {
     point: new THREE.Vector3(), distance: 0, faceIndex: 0,
   };
 
-  /** `geometry` is a world-space triangle soup (no mesh transform applied). */
-  constructor(geometry: THREE.BufferGeometry) {
+  /** `geometry` is a world-space triangle soup (no mesh transform applied).
+   *  `groundOffset` lowers reported ground heights so feet seat on the visible
+   *  splat surface rather than the voxel's top face (which sits ~a voxel above). */
+  constructor(geometry: THREE.BufferGeometry, private groundOffset = 0) {
     if (!geometry.index) geometry.setIndex([...Array(geometry.getAttribute('position').count).keys()]);
     this.bvh = new MeshBVH(geometry);
   }
@@ -57,7 +59,7 @@ export class MeshCollision implements Collision {
     this.ray.origin.set(x, fromY, z);
     this.ray.direction.copy(DOWN);
     const hit = this.bvh.raycastFirst(this.ray, THREE.DoubleSide);
-    return hit ? hit.point.y : 0;
+    return hit ? hit.point.y - this.groundOffset : 0;
   }
 
   resolve(pos: THREE.Vector3, radius: number): void {

@@ -18,6 +18,7 @@ export interface VoxelOptions {
   despeckle?: number;  // remove solid components smaller than this many voxels (default 12; 0 = off)
   close?: number;      // morphological-close iterations, fills holes/gaps (default 1; 0 = off)
   smooth?: number;     // majority-filter passes, flattens bumps (default 1; 0 = off)
+  fillFloor?: number;  // fill enclosed holes in the floor layer (default 1; 0 = off)
 }
 
 export interface VoxelSurface {
@@ -57,6 +58,7 @@ export function voxelizeCore(
   const despeckleMin = opts.despeckle ?? 12;
   const closeIters = opts.close ?? 1;
   const smoothPasses = opts.smooth ?? 1;
+  const doFillFloor = (opts.fillFloor ?? 1) !== 0;
 
   // affine transform of splat center i into world space (w = 1, no divide)
   const wx = (i: number) => m[0] * positions[i * 3] + m[4] * positions[i * 3 + 1] + m[8] * positions[i * 3 + 2] + m[12];
@@ -87,10 +89,11 @@ export function voxelizeCore(
   let occ: Uint8Array = new Uint8Array(counts.length);
   for (let c = 0; c < counts.length; c++) occ[c] = counts[c] >= minCount ? 1 : 0;
 
-  // cleanup: despeckle → close → smooth
+  // cleanup: despeckle → close → fill floor holes → smooth
   if (despeckleMin > 0) despeckle(occ, gy, gz, despeckleMin);
   for (let i = 0; i < closeIters; i++) occ = dilate(occ, gx, gy, gz);
   for (let i = 0; i < closeIters; i++) occ = erode(occ, gx, gy, gz);
+  if (doFillFloor) fillFloorHoles(occ, gx, gy, gz);
   for (let i = 0; i < smoothPasses; i++) occ = majority(occ, gx, gy, gz);
 
   // pass 3: emit exposed faces. Occupied voxels live in the padded interior, so
@@ -181,6 +184,50 @@ function erode(occ: Uint8Array, gx: number, gy: number, gz: number): Uint8Array 
         out[c] = (occ[c] && occ[c - 1] && occ[c + 1] && occ[c - sy] && occ[c + sy] && occ[c - sx] && occ[c + sx]) ? 1 : 0;
     }
   return out;
+}
+
+/**
+ * Fill enclosed holes in the floor. The floor is the most-occupied horizontal
+ * row in the lower third of the grid; for it (and the row above) we flood-fill
+ * the "outside" from the slice border through empty cells, then fill any empty
+ * cell the flood never reached — i.e. a gap surrounded by floor. Restricting this
+ * to the floor band is deliberate: a mid-height slice is mostly empty room
+ * interior enclosed by walls, which a blind hole-fill would wrongly solidify.
+ */
+function fillFloorHoles(occ: Uint8Array, gx: number, gy: number, gz: number): void {
+  const sx = gy * gz, sy = gz;
+  const rowCount = new Int32Array(gy);
+  for (let x = 1; x < gx - 1; x++)
+    for (let y = 1; y < gy - 1; y++) {
+      let c = x * sx + y * sy + 1;
+      for (let z = 1; z < gz - 1; z++, c++) if (occ[c]) rowCount[y]++;
+    }
+  const limit = Math.max(2, Math.floor(gy / 3));
+  let floorY = 1, best = -1;
+  for (let y = 1; y <= limit; y++) if (rowCount[y] > best) { best = rowCount[y]; floorY = y; }
+  for (let y = floorY; y <= Math.min(gy - 2, floorY + 1); y++) fillSlice(occ, gx, gy, gz, y);
+}
+
+/** Flood the outside of one horizontal (y=vy) slice from its border, then fill unreached empties. */
+function fillSlice(occ: Uint8Array, gx: number, gy: number, gz: number, vy: number): void {
+  const sx = gy * gz, base = vy * gz;
+  const at = (x: number, z: number) => x * sx + base + z;
+  const k2 = (x: number, z: number) => x * gz + z;
+  const seen = new Uint8Array(gx * gz);
+  const stack: number[] = [];
+  const push = (x: number, z: number) => { const k = k2(x, z); if (!occ[at(x, z)] && !seen[k]) { seen[k] = 1; stack.push(x, z); } };
+  for (let x = 0; x < gx; x++) { push(x, 0); push(x, gz - 1); }
+  for (let z = 0; z < gz; z++) { push(0, z); push(gx - 1, z); }
+  while (stack.length) {
+    const z = stack.pop()!, x = stack.pop()!;
+    if (x > 0) push(x - 1, z);
+    if (x < gx - 1) push(x + 1, z);
+    if (z > 0) push(x, z - 1);
+    if (z < gz - 1) push(x, z + 1);
+  }
+  for (let x = 0; x < gx; x++)
+    for (let z = 0; z < gz; z++)
+      if (!occ[at(x, z)] && !seen[k2(x, z)]) occ[at(x, z)] = 1;
 }
 
 /** Majority filter over the 26-neighborhood (incl. self): flips lone bumps/pits. */

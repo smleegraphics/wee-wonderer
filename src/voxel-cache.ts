@@ -22,10 +22,10 @@ function openDB(): Promise<IDBDatabase> {
 export function voxelCacheKey(
   file: string,
   voxelSize: number,
-  opts: { minCount: number; despeckle: number; close: number; smooth: number },
+  opts: { minCount: number; despeckle: number; close: number; smooth: number; fillFloor: number },
   targetRadius: number,
 ): string {
-  return `${file}|v${voxelSize.toFixed(4)}|r${targetRadius}|m${opts.minCount}|d${opts.despeckle}|c${opts.close}|s${opts.smooth}`;
+  return `${file}|v${voxelSize.toFixed(4)}|r${targetRadius}|m${opts.minCount}|d${opts.despeckle}|c${opts.close}|s${opts.smooth}|f${opts.fillFloor}`;
 }
 
 export async function voxelCacheGet(key: string): Promise<VoxelSurface | null> {
