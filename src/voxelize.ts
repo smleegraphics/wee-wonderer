@@ -18,10 +18,11 @@ export function voxelizeSplat(
   return voxelizeCore(pos.array, pos.count, matrixWorld.elements, voxelSize, opts);
 }
 
-/** Wrap a VoxelSurface's arrays in a BufferGeometry for rendering / BVH. */
+/** Wrap a VoxelSurface (indexed) in a BufferGeometry for rendering / BVH. */
 export function surfaceToGeometry(s: VoxelSurface): THREE.BufferGeometry {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(s.positions, 3));
-  g.setAttribute('normal', new THREE.BufferAttribute(s.normals, 3));
+  g.setIndex(new THREE.BufferAttribute(s.index, 1));
+  g.computeVertexNormals();
   return g;
 }

@@ -22,25 +22,35 @@ export interface VoxelOptions {
 }
 
 export interface VoxelSurface {
-  positions: Float32Array; // world-space triangle soup (blocky room surface)
-  normals: Float32Array;
+  positions: Float32Array; // world-space smooth surface vertices (x,y,z,...)
+  index: Uint32Array;      // triangle indices
   voxelSize: number;
   occupiedCount: number;
   triangleCount: number;
 }
 
-// Unit-cube corners and the 6 faces (corner indices ordered CCW from outside).
-const CORNERS: ReadonlyArray<readonly [number, number, number]> = [
-  [0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1],
-];
-const FACES: ReadonlyArray<{ c: readonly [number, number, number, number]; n: readonly [number, number, number] }> = [
-  { c: [1, 5, 6, 2], n: [1, 0, 0] },   // +X
-  { c: [0, 3, 7, 4], n: [-1, 0, 0] },  // -X
-  { c: [3, 2, 6, 7], n: [0, 1, 0] },   // +Y
-  { c: [0, 4, 5, 1], n: [0, -1, 0] },  // -Y
-  { c: [4, 7, 6, 5], n: [0, 0, 1] },   // +Z
-  { c: [0, 1, 2, 3], n: [0, 0, -1] },  // -Z
-];
+// Surface Nets tables: the 12 edges of the cube (as pairs of corner ids, where a
+// corner id's bits are +x=1, +y=2, +z=4), and, per 8-corner occupancy mask, which
+// edges are crossed by the surface. Built once at module load.
+const CUBE_EDGES = new Int32Array(24);
+const EDGE_TABLE = new Int32Array(256);
+(() => {
+  let k = 0;
+  for (let i = 0; i < 8; i++)
+    for (let j = 1; j <= 4; j <<= 1) {
+      const p = i ^ j;
+      if (i <= p) { CUBE_EDGES[k++] = i; CUBE_EDGES[k++] = p; }
+    }
+  for (let mask = 0; mask < 256; mask++) {
+    let em = 0;
+    for (let e = 0; e < 12; e++) {
+      const a = (mask >> CUBE_EDGES[e * 2]) & 1;
+      const b = (mask >> CUBE_EDGES[e * 2 + 1]) & 1;
+      if (a !== b) em |= 1 << e;
+    }
+    EDGE_TABLE[mask] = em;
+  }
+})();
 
 /**
  * Voxelize packed splat centers into a cleaned blocky surface. `positions` is a
@@ -77,18 +87,14 @@ export function voxelizeCore(
   const gy = Math.max(1, Math.ceil((maxY - minY) / voxelSize) + 2);
   const gz = Math.max(1, Math.ceil((maxZ - minZ) / voxelSize) + 2);
 
-  // pass 2: per voxel, count splats and sum their world height (for a data-driven
-  // top surface later) → dense occupancy grid.
+  // pass 2: splat counts per voxel → dense occupancy grid
   const counts = new Uint16Array(gx * gy * gz);
-  const sumY = new Float32Array(counts.length);
   for (let i = 0; i < count; i++) {
-    const y = wy(i);
     const vx = Math.floor((wx(i) - minX) / voxelSize);
-    const vy = Math.floor((y - minY) / voxelSize);
+    const vy = Math.floor((wy(i) - minY) / voxelSize);
     const vz = Math.floor((wz(i) - minZ) / voxelSize);
     const c = (vx * gy + vy) * gz + vz;
     if (counts[c] < 65535) counts[c]++;
-    sumY[c] += y;
   }
   let occ: Uint8Array = new Uint8Array(counts.length);
   for (let c = 0; c < counts.length; c++) occ[c] = counts[c] >= minCount ? 1 : 0;
@@ -100,55 +106,111 @@ export function voxelizeCore(
   if (doFillFloor) fillFloorHoles(occ, gx, gy, gz);
   for (let i = 0; i < smoothPasses; i++) occ = majority(occ, gx, gy, gz);
 
-  // pass 3: emit exposed faces. Occupied voxels live in the padded interior, so
-  // neighbors are read by flat offset. Offsets match FACES (+X,-X,+Y,-Y,+Z,-Z).
-  // The top of a voxel with nothing above it (a walkable surface) is placed at
-  // the MEAN SPLAT HEIGHT in that voxel, not the cell boundary — this de-quantizes
-  // the surface so feet seat on the real floor / furniture top with no constant
-  // offset. Synthesized voxels (filled holes/dilation, no splats) fall back to
-  // the cell centre. Buried and side faces keep the cell boundary.
-  const sx = gy * gz, sy = gz;
-  const faceOff = [sx, -sx, sy, -sy, 1, -1];
-  const halfV = voxelSize * 0.5;
-  const positionsOut: number[] = [];
-  const normalsOut: number[] = [];
   let occupied = 0;
-  let cvx = 0, cvz = 0, cyb = 0, cyt = 0; // current voxel: x, z, y-bottom, y-top
-  const corner = (ci: number) => {
-    const o = CORNERS[ci];
-    positionsOut.push(minX + (cvx + o[0]) * voxelSize, o[1] ? cyt : cyb, minZ + (cvz + o[2]) * voxelSize);
-  };
-  for (let vx = 1; vx < gx - 1; vx++)
-    for (let vy = 1; vy < gy - 1; vy++) {
-      const yBottom = minY + vy * voxelSize;
-      const yCellTop = yBottom + voxelSize;
-      let c = vx * sx + vy * sy + 1;
-      for (let vz = 1; vz < gz - 1; vz++, c++) {
-        if (!occ[c]) continue;
-        occupied++;
-        cvx = vx; cvz = vz; cyb = yBottom;
-        cyt = occ[c + sy]
-          ? yCellTop // something solid above → not the walkable top
-          : counts[c] > 0
-            ? Math.min(yCellTop, Math.max(yBottom, sumY[c] / counts[c])) // real splat height
-            : yBottom + halfV; // synthesized voxel → cell centre
-        for (let fi = 0; fi < 6; fi++) {
-          if (occ[c + faceOff[fi]]) continue; // face buried between two solids
-          const f = FACES[fi];
-          corner(f.c[0]); corner(f.c[1]); corner(f.c[2]);
-          corner(f.c[0]); corner(f.c[2]); corner(f.c[3]);
-          for (let t = 0; t < 6; t++) normalsOut.push(f.n[0], f.n[1], f.n[2]);
-        }
-      }
-    }
+  for (let c = 0; c < occ.length; c++) occupied += occ[c];
+
+  // pass 3: Surface Nets — one vertex per surface-straddling cell, placed at the
+  // average of its crossing-edge midpoints, then relaxed (Taubin smoothing) into a
+  // smooth mesh. This replaces blocky cube faces: the floor becomes a smooth plane
+  // instead of stairs, sub-voxel accurate so feet still seat on the real surface.
+  const sn = surfaceNets(occ, gx, gy, gz, minX, minY, minZ, voxelSize);
+  taubinSmooth(sn.positions, sn.index, smoothPasses > 0 ? 8 : 0);
 
   return {
-    positions: new Float32Array(positionsOut),
-    normals: new Float32Array(normalsOut),
+    positions: sn.positions,
+    index: sn.index,
     voxelSize,
     occupiedCount: occupied,
-    triangleCount: positionsOut.length / 9,
+    triangleCount: sn.index.length / 3,
   };
+}
+
+/** Naive Surface Nets over a binary occupancy grid → smooth indexed mesh. */
+function surfaceNets(
+  occ: Uint8Array, gx: number, gy: number, gz: number,
+  minX: number, minY: number, minZ: number, vs: number,
+): { positions: Float32Array; index: Uint32Array } {
+  const sx = gy * gz, sy = gz; // strides; R per axis = [sx, sy, 1]
+  const R = [sx, sy, 1];
+  const cellVert = new Int32Array(occ.length).fill(-1);
+  const pos: number[] = [];
+  const idx: number[] = [];
+  const midAxis = (a: number, b: number, axis: number) => {
+    const av = (a >> axis) & 1, bv = (b >> axis) & 1;
+    return av === bv ? av : 0.5;
+  };
+  for (let x = 0; x < gx - 1; x++)
+    for (let y = 0; y < gy - 1; y++)
+      for (let z = 0; z < gz - 1; z++) {
+        const cur = (x * gy + y) * gz + z;
+        // 8 corner occupancies → mask (bit g, corner g bits: +x=1,+y=2,+z=4)
+        const mask =
+          occ[cur] |
+          (occ[cur + sx] << 1) |
+          (occ[cur + sy] << 2) |
+          (occ[cur + sx + sy] << 3) |
+          (occ[cur + 1] << 4) |
+          (occ[cur + sx + 1] << 5) |
+          (occ[cur + sy + 1] << 6) |
+          (occ[cur + sx + sy + 1] << 7);
+        if (mask === 0 || mask === 255) continue;
+        // vertex = mean of crossing-edge midpoints (local cell coords 0..1)
+        const em = EDGE_TABLE[mask];
+        let ex = 0, ey = 0, ez = 0, ec = 0;
+        for (let e = 0; e < 12; e++) {
+          if (!(em & (1 << e))) continue;
+          const a = CUBE_EDGES[e * 2], b = CUBE_EDGES[e * 2 + 1];
+          ex += midAxis(a, b, 0); ey += midAxis(a, b, 1); ez += midAxis(a, b, 2); ec++;
+        }
+        const inv = 1 / ec;
+        cellVert[cur] = pos.length / 3;
+        pos.push(
+          minX + (x + ex * inv + 0.5) * vs,
+          minY + (y + ey * inv + 0.5) * vs,
+          minZ + (z + ez * inv + 0.5) * vs,
+        );
+        // emit a quad for each of the 3 base edges (+x,+y,+z) that the surface crosses
+        for (let axis = 0; axis < 3; axis++) {
+          if (!(em & (1 << axis))) continue;
+          const iu = (axis + 1) % 3, iv = (axis + 2) % 3;
+          const cu = iu === 0 ? x : iu === 1 ? y : z; // coord along the iu axis
+          const cv = iv === 0 ? x : iv === 1 ? y : z; // coord along the iv axis
+          if (cu === 0 || cv === 0) continue;
+          const du = R[iu], dv = R[iv];
+          const v0 = cellVert[cur], v1 = cellVert[cur - du], v2 = cellVert[cur - du - dv], v3 = cellVert[cur - dv];
+          if (v0 < 0 || v1 < 0 || v2 < 0 || v3 < 0) continue;
+          if (mask & 1) { idx.push(v0, v1, v2, v0, v2, v3); }
+          else { idx.push(v0, v3, v2, v0, v2, v1); }
+        }
+      }
+  return { positions: new Float32Array(pos), index: new Uint32Array(idx) };
+}
+
+/** Taubin smoothing (λ|μ) over the mesh graph — smooths without net shrinkage. */
+function taubinSmooth(pos: Float32Array, index: Uint32Array, iterations: number): void {
+  if (iterations <= 0) return;
+  const n = pos.length / 3;
+  // build neighbor lists from triangle edges
+  const nbr: Set<number>[] = Array.from({ length: n }, () => new Set<number>());
+  for (let i = 0; i < index.length; i += 3) {
+    const a = index[i], b = index[i + 1], c = index[i + 2];
+    nbr[a].add(b); nbr[a].add(c); nbr[b].add(a); nbr[b].add(c); nbr[c].add(a); nbr[c].add(b);
+  }
+  const tmp = new Float32Array(pos.length);
+  const step = (factor: number) => {
+    for (let v = 0; v < n; v++) {
+      const ns = nbr[v]; const k = ns.size;
+      if (k === 0) { tmp[v * 3] = pos[v * 3]; tmp[v * 3 + 1] = pos[v * 3 + 1]; tmp[v * 3 + 2] = pos[v * 3 + 2]; continue; }
+      let ax = 0, ay = 0, az = 0;
+      for (const u of ns) { ax += pos[u * 3]; ay += pos[u * 3 + 1]; az += pos[u * 3 + 2]; }
+      const inv = 1 / k;
+      tmp[v * 3] = pos[v * 3] + factor * (ax * inv - pos[v * 3]);
+      tmp[v * 3 + 1] = pos[v * 3 + 1] + factor * (ay * inv - pos[v * 3 + 1]);
+      tmp[v * 3 + 2] = pos[v * 3 + 2] + factor * (az * inv - pos[v * 3 + 2]);
+    }
+    pos.set(tmp);
+  };
+  for (let i = 0; i < iterations; i++) { step(0.5); step(-0.53); } // λ then μ
 }
 
 // --- binary-grid cleanup ops -------------------------------------------------

@@ -17,5 +17,5 @@ interface Req {
 self.onmessage = (e: MessageEvent<Req>) => {
   const { id, positions, count, matrix, voxelSize, opts } = e.data;
   const surface = voxelizeCore(positions, count, matrix, voxelSize, opts);
-  (self as unknown as Worker).postMessage({ id, surface }, [surface.positions.buffer, surface.normals.buffer]);
+  (self as unknown as Worker).postMessage({ id, surface }, [surface.positions.buffer, surface.index.buffer]);
 };
