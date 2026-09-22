@@ -12,10 +12,10 @@ import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import { GaussianSplat } from 'three/addons/objects/GaussianSplat.js';
 import { GaussianSplatPLYLoader } from 'three/addons/loaders/GaussianSplatPLYLoader.js';
 import { orientScan } from './orient-scan';
-import { voxelizeSplat, surfaceToGeometry } from './voxelize';
+import { surfaceToGeometry } from './voxelize';
 import { MeshCollision } from './collision';
 import { voxelCacheKey, voxelCacheGet, voxelCachePut } from './voxel-cache';
-import type { VoxelSurface } from './voxelize';
+import type { VoxelSurface, VoxelOptions } from './voxelize';
 
 const q = new URLSearchParams(location.search);
 // demo scans for the switcher UI — config, not logic (each auto-levels at load).
@@ -39,6 +39,7 @@ const VOXEL_OPTS = {
 };
 let showVoxels = q.get('voxel') === '1';
 let collisionDebug: THREE.Mesh | null = null;
+let voxelCheckbox: HTMLInputElement | null = null;
 let collision: MeshCollision | null = null; // BVH over the voxel surface, rebuilt per scan
 const CHAR_RADIUS = 0.14; // in char-heights, for wall push-out
 let loadToken = 0; // guards against a slow async collision build landing after a scan swap
@@ -228,7 +229,7 @@ function keyEvent(e: KeyboardEvent, v: 0 | 1): void {
     case 'ShiftLeft': case 'ShiftRight': move.run = !!v; break;
     case 'Space': if (v && state === 'ground') startJump(); e.preventDefault(); break;
     case 'KeyC': if (v) toggleClimb(); break;
-    case 'KeyV': if (v) { showVoxels = !showVoxels; if (collisionDebug) collisionDebug.visible = showVoxels; } break;
+    case 'KeyV': if (v) setVoxelOverlay(!showVoxels); break;
   }
 }
 addEventListener('keydown', (e) => keyEvent(e, 1));
@@ -240,10 +241,31 @@ function startJump(): void {
 }
 
 // --- collision ---------------------------------------------------------------
-// Voxelize the loaded splat into a blocky surface (cached after the first load),
-// build a three-mesh-bvh over it for the controller, and keep the surface as a
-// toggleable debug overlay (V). `token` guards a slow async build from landing
-// after the user has already swapped to another scan.
+// Voxelization runs in a Web Worker so the ~1s+ first build doesn't freeze the
+// frame. Requests are matched to responses by id.
+const voxelWorker = new Worker(new URL('./voxelize.worker.ts', import.meta.url), { type: 'module' });
+const voxelPending = new Map<number, (s: VoxelSurface) => void>();
+let voxelReqId = 0;
+voxelWorker.onmessage = (e: MessageEvent<{ id: number; surface: VoxelSurface }>) => {
+  const resolve = voxelPending.get(e.data.id);
+  if (resolve) { voxelPending.delete(e.data.id); resolve(e.data.surface); }
+};
+
+function voxelizeInWorker(centers: THREE.BufferAttribute, matrixWorld: THREE.Matrix4, opts: VoxelOptions): Promise<VoxelSurface> {
+  return new Promise((resolve) => {
+    const id = ++voxelReqId;
+    voxelPending.set(id, resolve);
+    const positions = (centers.array as Float32Array).slice(); // copy so we can transfer it
+    voxelWorker.postMessage(
+      { id, positions, count: centers.count, matrix: Array.from(matrixWorld.elements), voxelSize: VOXEL_SIZE, opts },
+      [positions.buffer],
+    );
+  });
+}
+
+// Build the surface (cached after the first load), a three-mesh-bvh over it for
+// the controller, and a toggleable debug overlay. `token` guards a slow async
+// build from landing after the user has already swapped to another scan.
 async function buildCollision(file: string, token: number, centers: THREE.BufferAttribute, matrixWorld: THREE.Matrix4): Promise<void> {
   const t0 = performance.now();
   const key = voxelCacheKey(file, VOXEL_SIZE, VOXEL_OPTS, TARGET_RADIUS);
@@ -251,7 +273,8 @@ async function buildCollision(file: string, token: number, centers: THREE.Buffer
   const cached = surf !== null;
   if (token !== loadToken) return; // superseded while awaiting the cache
   if (!surf) {
-    surf = voxelizeSplat(centers, matrixWorld, VOXEL_SIZE, VOXEL_OPTS);
+    surf = await voxelizeInWorker(centers, matrixWorld, VOXEL_OPTS);
+    if (token !== loadToken) return; // superseded while voxelizing
     void voxelCachePut(key, surf);
   }
   const geom = surfaceToGeometry(surf);
@@ -371,6 +394,7 @@ async function main(): Promise<void> {
   await renderer.init();
   loadScan(DEFAULT_SCAN);
   setupScanSwitcher();
+  setupDebugMenu();
   new GLTFLoader().load(`${import.meta.env.BASE_URL}character.glb`, onLoaded, undefined, (err) => showBanner(`character.glb load failed: ${String(err)}`));
 
   renderer.setAnimationLoop(() => {
@@ -407,6 +431,38 @@ function setupScanSwitcher(): void {
   }
   sel.onchange = () => loadScan(sel.value);
   document.body.appendChild(sel);
+}
+
+/** Show/hide the voxel collision overlay, keeping key + checkbox in sync. */
+function setVoxelOverlay(on: boolean): void {
+  showVoxels = on;
+  if (collisionDebug) collisionDebug.visible = on;
+  if (voxelCheckbox) voxelCheckbox.checked = on;
+}
+
+/** A small debug panel (top-right) with visualization toggles. */
+function setupDebugMenu(): void {
+  const panel = document.createElement('div');
+  panel.style.cssText =
+    'position:fixed;top:12px;right:12px;z-index:10;display:flex;flex-direction:column;gap:8px;' +
+    'padding:10px 12px;border:1px solid #3a3b44;border-radius:8px;background:rgba(23,24,29,0.85);' +
+    'color:#e8e8ea;font:12px ui-monospace,Menlo,monospace;backdrop-filter:blur(4px)';
+  const title = document.createElement('div');
+  title.textContent = 'Debug';
+  title.style.cssText = 'opacity:0.55;font-size:10px;letter-spacing:0.08em;text-transform:uppercase';
+  panel.appendChild(title);
+
+  const row = document.createElement('label');
+  row.style.cssText = 'display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none';
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.checked = showVoxels;
+  cb.onchange = () => setVoxelOverlay(cb.checked);
+  voxelCheckbox = cb;
+  row.append(cb, 'Voxel wireframe (V)');
+  panel.appendChild(row);
+
+  document.body.appendChild(panel);
 }
 
 function showBanner(msg: string): void {
