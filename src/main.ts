@@ -153,6 +153,9 @@ let state: 'ground' | 'jump_start' | 'air' | 'land' | 'climb' = 'ground';
 const velocity = new THREE.Vector3(); // gravity/jump; horizontal input is applied per-frame
 let wasGrounded = false;
 let charH = 1;
+let charModel: THREE.Object3D | null = null;
+let charFeetOffset = 0;   // model's local y so its feet sit at the player origin
+let smoothFeetY = 0;      // damped feet height for RENDER only (physics stays crisp)
 let mixer: THREE.AnimationMixer | null = null;
 const actions: Record<string, THREE.AnimationAction> = {};
 let activeAction: THREE.AnimationAction | null = null;
@@ -167,6 +170,8 @@ function onLoaded(gltf: GLTF): void {
   const bb = measureSkinnedBounds(model);
   charH = Math.max(bb.max.y - bb.min.y, 1e-4);
   model.position.y = -bb.min.y; // feet at the player origin
+  charModel = model;
+  charFeetOffset = -bb.min.y;
 
   camera.near = charH * 0.02;
   camera.far = charH * 400;
@@ -186,6 +191,8 @@ function resetToSpawn(): void {
   player.rotation.set(0, 0, 0);
   velocity.set(0, 0, 0);
   wasGrounded = false;
+  smoothFeetY = player.position.y;
+  if (charModel) charModel.position.y = charFeetOffset;
   state = 'ground';
   camera.position.copy(player.position).add(new THREE.Vector3(charH * 1.2, charH * 2.6, charH * 4.5));
   orbit.target.set(player.position.x, player.position.y + charH * 0.7, player.position.z);
@@ -314,7 +321,7 @@ const camLook = new THREE.Vector3(), camDir = new THREE.Vector3();
 /** Glue the orbit pivot to the figurine so the camera follows while the user
  *  orbits/zooms, and pull the camera in if a wall is between it and the pivot. */
 function updateCamera(): void {
-  camLook.set(player.position.x, player.position.y + charH * 0.7, player.position.z);
+  camLook.set(player.position.x, smoothFeetY + charH * 0.7, player.position.z);
   orbit.target.lerp(camLook, 0.15);
   orbit.update();
   if (!collision) return;
@@ -416,6 +423,14 @@ function updateController(dt: number): void {
     }
   }
   wasGrounded = grounded;
+
+  // Visual-only vertical smoothing: physics feet (player.position.y) can bob as the
+  // capsule rides small bumps; damp the RENDERED height when grounded so it reads
+  // smooth. Airborne (jump/fall) follows physics exactly so the arc stays crisp.
+  if (grounded) smoothFeetY += (player.position.y - smoothFeetY) * Math.min(1, 10 * dt);
+  else smoothFeetY = player.position.y;
+  if (charModel) charModel.position.y = charFeetOffset + (smoothFeetY - player.position.y);
+
   updateLocomotion(grounded, moving);
 }
 

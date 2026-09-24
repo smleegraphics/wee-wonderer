@@ -140,12 +140,26 @@ export function voxelizeCore(
   const sn = surfaceNets(field, gx, gy, gz, minX, minY, minZ, voxelSize);
   taubinSmooth(sn.positions, sn.index, taubinIters);
 
+  // Safety floor plane at y=0. Leveling puts the real floor there, and the
+  // reconstructed mesh isn't watertight (holes in walls/cabinet fronts let a
+  // capsule slip through and fall). A plane spanning the grid backstops every
+  // gap — the character always has floor — while walls/furniture (above it) still
+  // collide from the surface mesh.
+  const nv = sn.positions.length / 3;
+  const px0 = minX, px1 = minX + gx * voxelSize, pz0 = minZ, pz1 = minZ + gz * voxelSize;
+  const meshPos = new Float32Array(sn.positions.length + 12);
+  meshPos.set(sn.positions);
+  meshPos.set([px0, 0, pz0, px1, 0, pz0, px1, 0, pz1, px0, 0, pz1], sn.positions.length);
+  const meshIdx = new Uint32Array(sn.index.length + 6);
+  meshIdx.set(sn.index);
+  meshIdx.set([nv, nv + 2, nv + 1, nv, nv + 3, nv + 2], sn.index.length); // +Y-facing
+
   return {
-    positions: sn.positions,
-    index: sn.index,
+    positions: meshPos,
+    index: meshIdx,
     voxelSize,
     occupiedCount: occupied,
-    triangleCount: sn.index.length / 3,
+    triangleCount: meshIdx.length / 3,
   };
 }
 
