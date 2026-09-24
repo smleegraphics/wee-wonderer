@@ -8,14 +8,16 @@ import { voxelizeCore, type VoxelOptions, type VoxelSurface } from './voxelize-c
 export type { VoxelOptions, VoxelSurface };
 
 /** Synchronous voxelization (fallback / non-worker path). `pos` is the loader's
- *  raw position attribute; `matrixWorld` maps centers into the leveled world. */
+ *  raw position attribute, `opacity` the matching per-splat opacity; `matrixWorld`
+ *  maps centers into the leveled world. */
 export function voxelizeSplat(
   pos: THREE.BufferAttribute,
+  opacity: ArrayLike<number>,
   matrixWorld: THREE.Matrix4,
   voxelSize: number,
   opts: VoxelOptions = {},
 ): VoxelSurface {
-  return voxelizeCore(pos.array, pos.count, matrixWorld.elements, voxelSize, opts);
+  return voxelizeCore(pos.array, pos.count, opacity, matrixWorld.elements, voxelSize, opts);
 }
 
 /** Wrap a VoxelSurface (indexed) in a BufferGeometry for rendering / BVH. */

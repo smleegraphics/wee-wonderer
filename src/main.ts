@@ -32,11 +32,12 @@ const TARGET_RADIUS = 7; // normalize every scan to this world size (figurine ~0
 const VOXEL_SIZE = Number(q.get('vox')) || TARGET_RADIUS / 72; // ~0.097 world units
 const num = (key: string, def: number) => (q.has(key) ? Number(q.get(key)) : def);
 const VOXEL_OPTS = {
-  minCount: num('voxmin', 1),    // splats for a voxel to start solid
+  iso: num('iso', 0.5),          // isovalue as a fraction of median surface density
   despeckle: num('despeckle', 12), // drop solid islands smaller than this (stray cubes)
   close: num('close', 1),        // dilate→erode iterations (fills floor/wall holes)
-  smooth: num('smooth', 1),      // majority-filter passes (flattens bumpiness)
   fillFloor: num('fillfloor', 1), // fill enclosed holes in the floor layer
+  smooth: num('smooth', 0),      // majority occupancy passes (Taubin handles smoothing)
+  taubin: num('taubin', 6),      // Taubin mesh-smoothing iterations
 };
 // Walkable surfaces are de-quantized to the real splat height in the voxelizer,
 // so no ground offset is needed; ?sink stays as a manual override (default 0).
@@ -45,7 +46,8 @@ let showVoxels = q.get('voxel') === '1';
 let collisionDebug: THREE.Mesh | null = null;
 let voxelCheckbox: HTMLInputElement | null = null;
 let collision: MeshCollision | null = null; // BVH over the voxel surface, rebuilt per scan
-const CHAR_RADIUS = 0.14; // in char-heights, for wall push-out
+const CAPSULE_RADIUS = 0.22; // capsule hemisphere radius, in char-heights
+const PHYSICS_STEPS = 5;     // collide-and-slide substeps per frame
 let loadToken = 0; // guards against a slow async collision build landing after a scan swap
 const app = document.getElementById('app')!;
 
@@ -102,9 +104,13 @@ function loadScan(file: string): void {
   new GaussianSplatPLYLoader().load(
     `${import.meta.env.BASE_URL}${file}`,
     async (geometry) => {
-      // capture the real splat centers now — GaussianSplat swaps geometry for a
-      // billboard quad, so this attribute must be read before construction.
+      // capture the real splat centers + per-splat opacity now — GaussianSplat
+      // swaps geometry for a billboard quad, so these must be read before
+      // construction. Opacity is the alpha of the loader's color attribute.
       const centers = geometry.getAttribute('position') as THREE.BufferAttribute;
+      const color = geometry.getAttribute('color') as THREE.BufferAttribute;
+      const opacity = new Float32Array(centers.count);
+      for (let i = 0; i < opacity.length; i++) opacity[i] = color.getW(i);
       const o = orientScan(centers);
       // scans have arbitrary unit scales — normalize each to a consistent world
       // size so the fixed-size figurine stays a sensible fraction of every room.
@@ -118,7 +124,7 @@ function loadScan(file: string): void {
       currentSplat = splat;
       room.updateMatrixWorld(true);
       console.log(`loaded ${file}: radius ${o.radius.toFixed(2)} → scaled ${k.toFixed(2)}x`);
-      await buildCollision(file, token, centers, splat.matrixWorld);
+      await buildCollision(file, token, centers, opacity, splat.matrixWorld);
       if (token === loadToken && charLoaded) resetToSpawn();
     },
     undefined,
@@ -144,7 +150,8 @@ const TUNE = { walkSpeed: 1.6, runSpeed: 4.0, jumpVel: 3.2, gravity: -9.0, climb
 
 const move = { f: 0, b: 0, l: 0, r: 0, run: false };
 let state: 'ground' | 'jump_start' | 'air' | 'land' | 'climb' = 'ground';
-let vy = 0;
+const velocity = new THREE.Vector3(); // gravity/jump; horizontal input is applied per-frame
+let wasGrounded = false;
 let charH = 1;
 let mixer: THREE.AnimationMixer | null = null;
 const actions: Record<string, THREE.AnimationAction> = {};
@@ -177,7 +184,8 @@ function onLoaded(gltf: GLTF): void {
 function resetToSpawn(): void {
   player.position.set(Number(q.get('fx') ?? 0), 0, Number(q.get('fz') ?? 0));
   player.rotation.set(0, 0, 0);
-  vy = 0;
+  velocity.set(0, 0, 0);
+  wasGrounded = false;
   state = 'ground';
   camera.position.copy(player.position).add(new THREE.Vector3(charH * 1.2, charH * 2.6, charH * 4.5));
   orbit.target.set(player.position.x, player.position.y + charH * 0.7, player.position.z);
@@ -220,7 +228,7 @@ function play(name: string, fade = TUNE.fade): void {
 
 function onActionFinished(e: { action: THREE.AnimationAction }): void {
   const name = e.action.getClip().name;
-  if (name === 'jump_start') { vy = TUNE.jumpVel * charH; state = 'air'; play('jump_loop', 0.08); }
+  if (name === 'jump_start') { velocity.y = TUNE.jumpVel * charH; state = 'air'; play('jump_loop', 0.08); }
   else if (name === 'jump_land') { state = 'ground'; play('idle', 0.25); }
 }
 
@@ -241,7 +249,7 @@ addEventListener('keyup', (e) => keyEvent(e, 0));
 
 function startJump(): void {
   if (actions['jump_start']) { state = 'jump_start'; play('jump_start', 0.06); }
-  else { vy = TUNE.jumpVel * charH; state = 'air'; play(actions['jump_loop'] ? 'jump_loop' : 'idle', 0.08); }
+  else { velocity.y = TUNE.jumpVel * charH; state = 'air'; play(actions['jump_loop'] ? 'jump_loop' : 'idle', 0.08); }
 }
 
 // --- collision ---------------------------------------------------------------
@@ -250,19 +258,21 @@ function startJump(): void {
 const voxelWorker = new Worker(new URL('./voxelize.worker.ts', import.meta.url), { type: 'module' });
 const voxelPending = new Map<number, (s: VoxelSurface) => void>();
 let voxelReqId = 0;
-voxelWorker.onmessage = (e: MessageEvent<{ id: number; surface: VoxelSurface }>) => {
+voxelWorker.onmessage = (e: MessageEvent<{ id: number; surface?: VoxelSurface; error?: string }>) => {
+  if (e.data.error) { console.error('voxel worker failed:', e.data.error); return; }
   const resolve = voxelPending.get(e.data.id);
-  if (resolve) { voxelPending.delete(e.data.id); resolve(e.data.surface); }
+  if (resolve && e.data.surface) { voxelPending.delete(e.data.id); resolve(e.data.surface); }
 };
+voxelWorker.onerror = (e) => console.error('voxel worker error:', e.message, e.filename, e.lineno);
 
-function voxelizeInWorker(centers: THREE.BufferAttribute, matrixWorld: THREE.Matrix4, opts: VoxelOptions): Promise<VoxelSurface> {
+function voxelizeInWorker(centers: THREE.BufferAttribute, opacity: Float32Array, matrixWorld: THREE.Matrix4, opts: VoxelOptions): Promise<VoxelSurface> {
   return new Promise((resolve) => {
     const id = ++voxelReqId;
     voxelPending.set(id, resolve);
     const positions = (centers.array as Float32Array).slice(); // copy so we can transfer it
     voxelWorker.postMessage(
-      { id, positions, count: centers.count, matrix: Array.from(matrixWorld.elements), voxelSize: VOXEL_SIZE, opts },
-      [positions.buffer],
+      { id, positions, opacity, count: centers.count, matrix: Array.from(matrixWorld.elements), voxelSize: VOXEL_SIZE, opts },
+      [positions.buffer, opacity.buffer],
     );
   });
 }
@@ -270,14 +280,14 @@ function voxelizeInWorker(centers: THREE.BufferAttribute, matrixWorld: THREE.Mat
 // Build the surface (cached after the first load), a three-mesh-bvh over it for
 // the controller, and a toggleable debug overlay. `token` guards a slow async
 // build from landing after the user has already swapped to another scan.
-async function buildCollision(file: string, token: number, centers: THREE.BufferAttribute, matrixWorld: THREE.Matrix4): Promise<void> {
+async function buildCollision(file: string, token: number, centers: THREE.BufferAttribute, opacity: Float32Array, matrixWorld: THREE.Matrix4): Promise<void> {
   const t0 = performance.now();
   const key = voxelCacheKey(file, VOXEL_SIZE, VOXEL_OPTS, TARGET_RADIUS);
   let surf: VoxelSurface | null = await voxelCacheGet(key);
   const cached = surf !== null;
   if (token !== loadToken) return; // superseded while awaiting the cache
   if (!surf) {
-    surf = await voxelizeInWorker(centers, matrixWorld, VOXEL_OPTS);
+    surf = await voxelizeInWorker(centers, opacity, matrixWorld, VOXEL_OPTS);
     if (token !== loadToken) return; // superseded while voxelizing
     void voxelCachePut(key, surf);
   }
@@ -335,13 +345,13 @@ function toggleClimb(): void {
   if (!face) return;
   climbNormal.copy(face.normal);
   climbTopY = face.topY;
-  state = 'climb'; vy = 0;
+  state = 'climb'; velocity.set(0, 0, 0);
   player.position.x = face.snap.x;
   player.position.z = face.snap.z;
   player.rotation.y = Math.atan2(-climbNormal.x, -climbNormal.z); // face the wall
   play('climb', TUNE.fade);
 }
-function exitClimb(): void { state = 'air'; vy = 0; play(actions['jump_loop'] ? 'jump_loop' : 'idle', 0.12); }
+function exitClimb(): void { state = 'air'; velocity.set(0, 0, 0); play(actions['jump_loop'] ? 'jump_loop' : 'idle', 0.12); }
 
 function climbUpdate(dt: number): void {
   player.position.y += (move.f - move.b) * TUNE.climbSpeed * charH * dt;
@@ -357,37 +367,71 @@ function climbUpdate(dt: number): void {
   }
 }
 
+// scratch vectors for the collide-and-slide loop (avoid per-frame allocation)
+const hVel = new THREE.Vector3(), disp = new THREE.Vector3(), posBefore = new THREE.Vector3(), slideN = new THREE.Vector3();
+
 function updateController(dt: number): void {
   camera.getWorldDirection(camFwd); camFwd.y = 0; camFwd.normalize();
   camRight.crossVectors(camFwd, new THREE.Vector3(0, 1, 0)).negate();
   wishDir.set(0, 0, 0).addScaledVector(camFwd, move.f - move.b).addScaledVector(camRight, move.l - move.r);
   const moving = wishDir.lengthSq() > 0;
   if (moving) wishDir.normalize();
-  const speed = (move.run ? TUNE.runSpeed : TUNE.walkSpeed) * charH;
 
   if (state === 'climb') { climbUpdate(dt); return; }
+  if (state === 'jump_start') return;        // anticipation freeze; onActionFinished launches
+  if (!collision) return;
+  if (player.position.y < -charH * 3) { resetToSpawn(); return; } // fell out of the world → respawn
 
-  if (moving && state !== 'jump_start') {
-    player.position.addScaledVector(wishDir, speed * dt);
-    player.rotation.y = lerpAngle(player.rotation.y, Math.atan2(wishDir.x, wishDir.z), TUNE.turnLerp * dt);
-  }
-  collision?.resolve(player.position, CHAR_RADIUS * charH);
+  if (moving) player.rotation.y = lerpAngle(player.rotation.y, Math.atan2(wishDir.x, wishDir.z), TUNE.turnLerp * dt);
+  const speed = (move.run ? TUNE.runSpeed : TUNE.walkSpeed) * charH;
+  hVel.copy(wishDir).multiplyScalar(moving ? speed : 0);
 
-  // search for ground from just above the feet: finds low steps to snap onto and
-  // the floor *under* furniture (not the tabletop above), and lands from jumps.
-  const groundY = collision ? collision.groundHeightAt(player.position.x, player.position.z, player.position.y + charH * 0.5) : 0;
-  if (state === 'air') {
-    vy += TUNE.gravity * charH * dt;
-    player.position.y += vy * dt;
-    if (vy <= 0 && player.position.y <= groundY) {
-      player.position.y = groundY; vy = 0;
-      if (actions['jump_land']) { state = 'land'; play('jump_land', 0.06); }
-      else { state = 'ground'; play('idle', TUNE.fade); }
+  // Capsule collide-and-slide: apply gravity + horizontal input, depenetrate the
+  // capsule out of the mesh, and slide along contacts. One unified pass handles
+  // walls, floor, steps and slopes — no separate wall-push vs ground-snap conflict.
+  const radius = CAPSULE_RADIUS * charH;
+  const segLen = Math.max(0.02, charH - 2 * radius);
+  const subdt = dt / PHYSICS_STEPS;
+  let grounded = false;
+  for (let s = 0; s < PHYSICS_STEPS; s++) {
+    velocity.y += TUNE.gravity * charH * subdt;
+    disp.set(hVel.x * subdt, velocity.y * subdt, hVel.z * subdt);
+    posBefore.copy(player.position);
+    collision.moveCapsule(player.position, radius, segLen, disp);
+    disp.subVectors(player.position, posBefore); // net move after depenetration
+    if (disp.y > Math.abs(subdt * velocity.y * 0.25)) {   // pushed up ⇒ standing on ground
+      velocity.set(0, 0, 0); grounded = true;
+    } else if (disp.lengthSq() > 1e-12) {                 // hit a wall ⇒ slide along it
+      slideN.copy(disp).normalize();
+      velocity.addScaledVector(slideN, -slideN.dot(velocity));
     }
-  } else if (state === 'ground') {
-    if (player.position.y > groundY + charH * 0.06) { state = 'air'; vy = 0; play(actions['jump_loop'] ? 'jump_loop' : 'idle', 0.15); }
-    else { player.position.y = groundY; if (moving) play(move.run && actions['run'] ? 'run' : 'walk'); else play('idle'); }
   }
+
+  // Ground snapping: if we just walked off a small down-step, stick to it rather
+  // than briefly launching (kills stair-edge jitter). Only heading downward.
+  if (!grounded && wasGrounded && velocity.y <= 0) {
+    const gy = collision.groundHeightAt(player.position.x, player.position.z, player.position.y + radius);
+    if (gy <= player.position.y && player.position.y - gy < charH * 0.35) {
+      player.position.y = gy; velocity.set(0, 0, 0); grounded = true;
+    }
+  }
+  wasGrounded = grounded;
+  updateLocomotion(grounded, moving);
+}
+
+/** Drive the animation state machine from grounded + movement. */
+function updateLocomotion(grounded: boolean, moving: boolean): void {
+  if (!grounded) {
+    if (state !== 'air') { state = 'air'; play(actions['jump_loop'] ? 'jump_loop' : 'idle', 0.15); }
+    return;
+  }
+  if (state === 'air') { // just landed
+    if (actions['jump_land']) { state = 'land'; play('jump_land', 0.06); return; }
+    state = 'ground';
+  }
+  if (state === 'land') return; // let the land clip finish (onActionFinished → ground)
+  state = 'ground';
+  play(moving ? (move.run && actions['run'] ? 'run' : 'walk') : 'idle');
 }
 
 // --- boot --------------------------------------------------------------------

@@ -5,7 +5,7 @@
 // onto them. An earlier hand-authored BoxCollision implemented the same seam.
 
 import * as THREE from 'three';
-import { MeshBVH } from 'three-mesh-bvh';
+import { MeshBVH, type ExtendedTriangle } from 'three-mesh-bvh';
 
 /** A climbable surface: outward face normal (points back at the character), the
  *  height to mantle onto, and the flush stand position to snap to. */
@@ -21,8 +21,10 @@ export interface Collision {
    *  Casting from just above the feet (not infinity) finds the floor *under* a
    *  table rather than the tabletop. Floor fallback is 0. */
   groundHeightAt(x: number, z: number, fromY?: number): number;
-  /** Push `pos` horizontally out of nearby walls/solids (capsule approximation). Mutates x/z. */
-  resolve(pos: THREE.Vector3, radius: number): void;
+  /** Move a vertical capsule (feet at `feet`, hemisphere `radius`, straight
+   *  `segLength`) by `displacement`, then depenetrate it out of the mesh.
+   *  Mutates `feet` to the resolved position — the collide-and-slide core. */
+  moveCapsule(feet: THREE.Vector3, radius: number, segLength: number, displacement: THREE.Vector3): void;
   /** Nearest climbable vertical face along `forward`, or null. */
   climbableFaceAt(pos: THREE.Vector3, charH: number, forward: THREE.Vector3): ClimbFace | null;
 }
@@ -33,10 +35,10 @@ const DOWN = new THREE.Vector3(0, -1, 0);
 export class MeshCollision implements Collision {
   private bvh: MeshBVH;
   private ray = new THREE.Ray();
-  private probe = new THREE.Vector3();
-  private near: { point: THREE.Vector3; distance: number; faceIndex: number } = {
-    point: new THREE.Vector3(), distance: 0, faceIndex: 0,
-  };
+  private seg = new THREE.Line3();
+  private capsBox = new THREE.Box3();
+  private triPoint = new THREE.Vector3();
+  private capsPoint = new THREE.Vector3();
 
   /** `geometry` is a world-space triangle soup (no mesh transform applied).
    *  `groundOffset` lowers reported ground heights so feet seat on the visible
@@ -62,19 +64,30 @@ export class MeshCollision implements Collision {
     return hit ? hit.point.y - this.groundOffset : 0;
   }
 
-  resolve(pos: THREE.Vector3, radius: number): void {
-    // sample a few heights up the body; push out of the nearest surface at each.
-    for (const h of [1, 3, 5]) {
-      this.probe.set(pos.x, pos.y + radius * h, pos.z);
-      const res = this.bvh.closestPointToPoint(this.probe, this.near, 0, radius);
-      if (!res) continue;
-      const dx = this.probe.x - res.point.x, dz = this.probe.z - res.point.z;
-      const len = Math.hypot(dx, dz);
-      if (len < 1e-6) continue; // purely vertical (floor/ceiling) — not a wall
-      const push = radius - res.distance;
-      pos.x += (dx / len) * push;
-      pos.z += (dz / len) * push;
-    }
+  moveCapsule(feet: THREE.Vector3, radius: number, segLength: number, displacement: THREE.Vector3): void {
+    feet.add(displacement);
+    const seg = this.seg, box = this.capsBox, tp = this.triPoint, cp = this.capsPoint;
+    // capsule = segment between the two hemisphere centers (world space)
+    seg.start.set(feet.x, feet.y + radius, feet.z);
+    seg.end.set(feet.x, feet.y + radius + segLength, feet.z);
+    box.makeEmpty();
+    box.expandByPoint(seg.start);
+    box.expandByPoint(seg.end);
+    box.expandByScalar(radius);
+    // iterative depenetration: push the capsule out of every triangle it overlaps
+    this.bvh.shapecast({
+      intersectsBounds: (b) => b.intersectsBox(box),
+      intersectsTriangle: (tri: ExtendedTriangle) => {
+        const dist = tri.closestPointToSegment(seg, tp, cp);
+        if (dist < radius) {
+          const depth = radius - dist;
+          cp.sub(tp).normalize(); // direction from surface toward the capsule
+          seg.start.addScaledVector(cp, depth);
+          seg.end.addScaledVector(cp, depth);
+        }
+      },
+    });
+    feet.set(seg.start.x, seg.start.y - radius, seg.start.z);
   }
 
   climbableFaceAt(pos: THREE.Vector3, charH: number, forward: THREE.Vector3): ClimbFace | null {

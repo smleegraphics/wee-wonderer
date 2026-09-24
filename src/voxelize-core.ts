@@ -1,24 +1,28 @@
-// Voxelize a Gaussian-splat scan into a blocky collision surface — the pure
+// Voxelize a Gaussian-splat scan into a smooth collision surface — the pure
 // compute, with NO three.js dependency so it can run inside a Web Worker (keeps
 // the ~1s+ first-build off the main thread). The three.js-facing wrapper and
 // BufferGeometry conversion live in voxelize.ts.
 //
-// Splats sit on the room's real surfaces. We bin their centers into a voxel
-// grid, mark voxels holding enough centers as "solid", CLEAN UP the raw
-// occupancy, then emit the exposed cube faces between solid and empty voxels.
+// Splats sit on the room's real surfaces. We accumulate each splat's OPACITY into
+// a voxel grid — a density field — and extract the isosurface where density
+// crosses a threshold. Because the field is continuous, Surface Nets places
+// vertices SUB-VOXEL (interpolating the crossing), so the mesh hugs the real
+// Gaussian surface; and floaters, being low-opacity, never reach the threshold,
+// so they don't produce phantom geometry.
 //
-// Raw occupancy is noisy: stray floater voxels, holes in flat surfaces, and a
-// bumpy ±1-voxel top. Three binary-grid passes fix that before meshing:
-//   despeckle — drop solid components smaller than K voxels (removes stray cubes)
+// The thresholded field is also cleaned as a binary grid before meshing:
+//   despeckle — drop solid components smaller than K voxels (dense stray blobs)
 //   close     — dilate then erode (fills holes / small gaps in floors & walls)
-//   smooth    — 26-neighborhood majority filter (flattens the bumpiness)
+//   fillFloor — fill enclosed holes in the floor layer
+// then Taubin smoothing relaxes the mesh (no occupancy drift).
 
 export interface VoxelOptions {
-  minCount?: number;   // splat centers for a voxel to start solid (default 1)
+  iso?: number;        // isovalue as a fraction of the median surface density (default 0.5)
   despeckle?: number;  // remove solid components smaller than this many voxels (default 12; 0 = off)
   close?: number;      // morphological-close iterations, fills holes/gaps (default 1; 0 = off)
-  smooth?: number;     // majority-filter passes, flattens bumps (default 1; 0 = off)
   fillFloor?: number;  // fill enclosed holes in the floor layer (default 1; 0 = off)
+  smooth?: number;     // majority-filter passes on occupancy (default 0; Taubin handles smoothing)
+  taubin?: number;     // Taubin mesh-smoothing iterations (default 6; 0 = off)
 }
 
 export interface VoxelSurface {
@@ -53,21 +57,24 @@ const EDGE_TABLE = new Int32Array(256);
 })();
 
 /**
- * Voxelize packed splat centers into a cleaned blocky surface. `positions` is a
- * flat [x,y,z,...] array of `count` centers; `m` is a column-major 4x4 matrix
- * (three's Matrix4.elements) mapping them into the leveled/scaled world.
+ * Voxelize splats into a smooth collision surface. `positions` is a flat
+ * [x,y,z,...] array of `count` centers, `opacity` the matching per-splat rendered
+ * opacity (0..1), and `m` a column-major 4x4 matrix (three's Matrix4.elements)
+ * mapping centers into the leveled/scaled world.
  */
 export function voxelizeCore(
   positions: ArrayLike<number>,
   count: number,
+  opacity: ArrayLike<number>,
   m: ArrayLike<number>,
   voxelSize: number,
   opts: VoxelOptions = {},
 ): VoxelSurface {
-  const minCount = opts.minCount ?? 1;
+  const isoFactor = opts.iso ?? 0.5;
   const despeckleMin = opts.despeckle ?? 12;
   const closeIters = opts.close ?? 1;
-  const smoothPasses = opts.smooth ?? 1;
+  const smoothPasses = opts.smooth ?? 0;
+  const taubinIters = opts.taubin ?? 6;
   const doFillFloor = (opts.fillFloor ?? 1) !== 0;
 
   // affine transform of splat center i into world space (w = 1, no divide)
@@ -87,19 +94,26 @@ export function voxelizeCore(
   const gy = Math.max(1, Math.ceil((maxY - minY) / voxelSize) + 2);
   const gz = Math.max(1, Math.ceil((maxZ - minZ) / voxelSize) + 2);
 
-  // pass 2: splat counts per voxel → dense occupancy grid
-  const counts = new Uint16Array(gx * gy * gz);
+  // pass 2: accumulate opacity mass per voxel → a density field
+  const dens = new Float32Array(gx * gy * gz);
   for (let i = 0; i < count; i++) {
     const vx = Math.floor((wx(i) - minX) / voxelSize);
     const vy = Math.floor((wy(i) - minY) / voxelSize);
     const vz = Math.floor((wz(i) - minZ) / voxelSize);
-    const c = (vx * gy + vy) * gz + vz;
-    if (counts[c] < 65535) counts[c]++;
+    dens[(vx * gy + vy) * gz + vz] += opacity[i];
   }
-  let occ: Uint8Array = new Uint8Array(counts.length);
-  for (let c = 0; c < counts.length; c++) occ[c] = counts[c] >= minCount ? 1 : 0;
 
-  // cleanup: despeckle → close → fill floor holes → smooth
+  // isovalue: a fraction of the median density among voxels that hold real
+  // surface (>= ~1 opaque splat) — derived, so it scales to any scan.
+  const strong: number[] = [];
+  for (let c = 0; c < dens.length; c++) if (dens[c] >= 1) strong.push(dens[c]);
+  strong.sort((a, b) => a - b);
+  const medianStrong = strong.length ? strong[strong.length >> 1] : 1;
+  const iso = Math.max(0.2, isoFactor * medianStrong);
+
+  // binary occupancy (density above the isovalue) for the cleanup passes
+  let occ: Uint8Array = new Uint8Array(dens.length);
+  for (let c = 0; c < dens.length; c++) occ[c] = dens[c] >= iso ? 1 : 0;
   if (despeckleMin > 0) despeckle(occ, gy, gz, despeckleMin);
   for (let i = 0; i < closeIters; i++) occ = dilate(occ, gx, gy, gz);
   for (let i = 0; i < closeIters; i++) occ = erode(occ, gx, gy, gz);
@@ -109,12 +123,22 @@ export function voxelizeCore(
   let occupied = 0;
   for (let c = 0; c < occ.length; c++) occupied += occ[c];
 
-  // pass 3: Surface Nets — one vertex per surface-straddling cell, placed at the
-  // average of its crossing-edge midpoints, then relaxed (Taubin smoothing) into a
-  // smooth mesh. This replaces blocky cube faces: the floor becomes a smooth plane
-  // instead of stairs, sub-voxel accurate so feet still seat on the real surface.
-  const sn = surfaceNets(occ, gx, gy, gz, minX, minY, minZ, voxelSize);
-  taubinSmooth(sn.positions, sn.index, smoothPasses > 0 ? 8 : 0);
+  // signed field for Surface Nets: sign follows the cleaned occupancy (so the
+  // cleanup's hole-fills and floater-removals are respected), magnitude follows
+  // the real density (so the isosurface crossing lands sub-voxel on the actual
+  // Gaussian surface). Synthesized voxels sit ~at the cell boundary.
+  const EPS = 1e-3;
+  const field = new Float32Array(dens.length);
+  for (let c = 0; c < dens.length; c++) {
+    const d = dens[c] - iso;
+    field[c] = occ[c] ? Math.max(EPS, d) : Math.min(-EPS, d);
+  }
+
+  // pass 3: Surface Nets on the density field — one vertex per surface-straddling
+  // cell, placed at the interpolated (sub-voxel) crossing of its edges, then
+  // relaxed with Taubin smoothing into a smooth mesh that hugs the real surface.
+  const sn = surfaceNets(field, gx, gy, gz, minX, minY, minZ, voxelSize);
+  taubinSmooth(sn.positions, sn.index, taubinIters);
 
   return {
     positions: sn.positions,
@@ -125,42 +149,43 @@ export function voxelizeCore(
   };
 }
 
-/** Naive Surface Nets over a binary occupancy grid → smooth indexed mesh. */
+/** Naive Surface Nets over a signed scalar field (>0 inside) → smooth indexed
+ *  mesh. Edge crossings are interpolated from the field, so vertices land
+ *  sub-voxel on the real isosurface rather than at cell boundaries. */
 function surfaceNets(
-  occ: Uint8Array, gx: number, gy: number, gz: number,
+  field: Float32Array, gx: number, gy: number, gz: number,
   minX: number, minY: number, minZ: number, vs: number,
 ): { positions: Float32Array; index: Uint32Array } {
   const sx = gy * gz, sy = gz; // strides; R per axis = [sx, sy, 1]
   const R = [sx, sy, 1];
-  const cellVert = new Int32Array(occ.length).fill(-1);
+  const cellVert = new Int32Array(field.length).fill(-1);
   const pos: number[] = [];
   const idx: number[] = [];
-  const midAxis = (a: number, b: number, axis: number) => {
-    const av = (a >> axis) & 1, bv = (b >> axis) & 1;
-    return av === bv ? av : 0.5;
-  };
+  const g = new Float32Array(8); // the cell's 8 corner field values
   for (let x = 0; x < gx - 1; x++)
     for (let y = 0; y < gy - 1; y++)
       for (let z = 0; z < gz - 1; z++) {
         const cur = (x * gy + y) * gz + z;
-        // 8 corner occupancies → mask (bit g, corner g bits: +x=1,+y=2,+z=4)
-        const mask =
-          occ[cur] |
-          (occ[cur + sx] << 1) |
-          (occ[cur + sy] << 2) |
-          (occ[cur + sx + sy] << 3) |
-          (occ[cur + 1] << 4) |
-          (occ[cur + sx + 1] << 5) |
-          (occ[cur + sy + 1] << 6) |
-          (occ[cur + sx + sy + 1] << 7);
+        // 8 corner values (corner g bits: +x=1, +y=2, +z=4) → sign mask
+        g[0] = field[cur]; g[1] = field[cur + sx]; g[2] = field[cur + sy]; g[3] = field[cur + sx + sy];
+        g[4] = field[cur + 1]; g[5] = field[cur + sx + 1]; g[6] = field[cur + sy + 1]; g[7] = field[cur + sx + sy + 1];
+        let mask = 0;
+        for (let i = 0; i < 8; i++) if (g[i] > 0) mask |= 1 << i;
         if (mask === 0 || mask === 255) continue;
-        // vertex = mean of crossing-edge midpoints (local cell coords 0..1)
+        // vertex = mean of the interpolated crossing points (local cell coords 0..1)
         const em = EDGE_TABLE[mask];
         let ex = 0, ey = 0, ez = 0, ec = 0;
         for (let e = 0; e < 12; e++) {
           if (!(em & (1 << e))) continue;
           const a = CUBE_EDGES[e * 2], b = CUBE_EDGES[e * 2 + 1];
-          ex += midAxis(a, b, 0); ey += midAxis(a, b, 1); ez += midAxis(a, b, 2); ec++;
+          const fa = g[a], fb = g[b], denom = fa - fb;
+          const t = Math.abs(denom) > 1e-8 ? fa / denom : 0.5; // crossing param a→b
+          for (let axis = 0; axis < 3; axis++) {
+            const aa = (a >> axis) & 1, bb = (b >> axis) & 1;
+            const coord = aa === bb ? aa : aa + t * (bb - aa);
+            if (axis === 0) ex += coord; else if (axis === 1) ey += coord; else ez += coord;
+          }
+          ec++;
         }
         const inv = 1 / ec;
         cellVert[cur] = pos.length / 3;

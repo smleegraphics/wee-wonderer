@@ -8,6 +8,7 @@ import { voxelizeCore, type VoxelOptions } from './voxelize-core';
 interface Req {
   id: number;
   positions: Float32Array;
+  opacity: Float32Array;
   count: number;
   matrix: number[];
   voxelSize: number;
@@ -15,7 +16,11 @@ interface Req {
 }
 
 self.onmessage = (e: MessageEvent<Req>) => {
-  const { id, positions, count, matrix, voxelSize, opts } = e.data;
-  const surface = voxelizeCore(positions, count, matrix, voxelSize, opts);
-  (self as unknown as Worker).postMessage({ id, surface }, [surface.positions.buffer, surface.index.buffer]);
+  const { id, positions, opacity, count, matrix, voxelSize, opts } = e.data;
+  try {
+    const surface = voxelizeCore(positions, count, opacity, matrix, voxelSize, opts);
+    (self as unknown as Worker).postMessage({ id, surface }, [surface.positions.buffer, surface.index.buffer]);
+  } catch (err) {
+    (self as unknown as Worker).postMessage({ id, error: String(err instanceof Error ? err.stack : err) });
+  }
 };
