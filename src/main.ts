@@ -529,9 +529,10 @@ function setVoxelOverlay(on: boolean): void {
 let debugPanel: HTMLDivElement | null = null;
 
 /** A checkbox row; returns the input so callers can keep it in sync. */
-function addToggle(label: string, initial: boolean, onChange: (v: boolean) => void): HTMLInputElement {
+function addToggle(label: string, initial: boolean, onChange: (v: boolean) => void, tooltip?: string): HTMLInputElement {
   const row = document.createElement('label');
   row.style.cssText = 'display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none';
+  if (tooltip) row.title = tooltip;
   const cb = document.createElement('input');
   cb.type = 'checkbox';
   cb.checked = initial;
@@ -542,9 +543,10 @@ function addToggle(label: string, initial: boolean, onChange: (v: boolean) => vo
 }
 
 /** A labelled slider with a live value readout; fires `onChange` on release. */
-function addSlider(label: string, initial: number, min: number, max: number, step: number, onChange: (v: number) => void): void {
+function addSlider(label: string, initial: number, min: number, max: number, step: number, onChange: (v: number) => void, tooltip?: string): void {
   const wrap = document.createElement('div');
   wrap.style.cssText = 'display:flex;flex-direction:column;gap:3px';
+  if (tooltip) wrap.title = tooltip;
   const head = document.createElement('div');
   head.style.cssText = 'display:flex;justify-content:space-between;gap:10px';
   const name = document.createElement('span'); name.textContent = label;
@@ -577,7 +579,9 @@ function setupDebugMenu(): void {
   addSlider('Floor flatten (voxels)', VOXEL_OPTS.floorFlat, 0, 2, 0.05, (v) => {
     VOXEL_OPTS.floorFlat = v;
     rebuildCollision();
-  });
+  }, 'Height of the band above the floor (in voxels) snapped perfectly flat. ' +
+     'Higher = flatter floor but low clutter (toys) gets absorbed; ' +
+     'lower = keeps low clutter but more floor waviness returns. 0 = off.');
 
   document.body.appendChild(panel);
 }
