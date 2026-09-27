@@ -29,9 +29,11 @@ export interface Collision {
   moveCapsule(feet: THREE.Vector3, radius: number, segLength: number, displacement: THREE.Vector3, outCorrection: THREE.Vector3): void;
   /** Nearest climbable vertical face along `forward`, or null. */
   climbableFaceAt(pos: THREE.Vector3, charH: number, forward: THREE.Vector3): ClimbFace | null;
-  /** Find a sensible spawn: a clear floor spot (no wall overlap, headroom to
-   *  stand) nearest the room centre. Writes {x, 0, z} into `out`. */
-  findSpawn(radius: number, segLength: number, out: THREE.Vector3): void;
+  /** Find a sensible spawn near the content centre: a clear standable surface
+   *  (no wall overlap, headroom) — the floor in a room, or the table top in a
+   *  tabletop scan. `fromY` is the content-centre height to search down from
+   *  (avoids landing on a ceiling). Writes {x, surfaceY, z} into `out`. */
+  findSpawn(radius: number, segLength: number, fromY: number, out: THREE.Vector3): void;
 }
 
 const DOWN = new THREE.Vector3(0, -1, 0);
@@ -127,7 +129,7 @@ export class MeshCollision implements Collision {
     };
   }
 
-  findSpawn(radius: number, segLength: number, out: THREE.Vector3): void {
+  findSpawn(radius: number, segLength: number, fromY: number, out: THREE.Vector3): void {
     // Search from the ORIGIN — the scan's recentered content centre (splat median),
     // which sits inside the real room — NOT the mesh bbox centre, which is biased
     // by the full-grid floor plane and can land in empty space.
@@ -142,21 +144,23 @@ export class MeshCollision implements Collision {
       for (let a = 0; a < n; a++) {
         const ang = (a / n) * Math.PI * 2;
         const x = r * Math.cos(ang), z = r * Math.sin(ang);
-        if (this.isClearSpawn(x, z, radius, segLength, capH)) { out.set(x, 0, z); return; }
+        // topmost standable surface below the content height (floor, or table top)
+        const sy = this.groundHeightAt(x, z, fromY);
+        if (this.isClearSpawn(x, sy, z, radius, segLength, capH)) { out.set(x, sy, z); return; }
       }
     }
-    out.set(0, 0, 0); // nothing clear found — fall back to the origin
+    out.set(0, this.groundHeightAt(0, 0, fromY), 0); // nothing clear — origin's surface
   }
 
-  /** True if a capsule at floor level (x,0,z) has headroom to stand and isn't
-   *  inside a wall/furniture (depenetration doesn't shove it sideways or up). */
-  private isClearSpawn(x: number, z: number, radius: number, segLength: number, capH: number): boolean {
-    this.spawnOrigin.set(x, radius * 0.5, z);
+  /** True if a capsule standing on (x,y,z) has headroom and isn't inside a
+   *  wall/furniture (depenetration doesn't shove it sideways or off the surface). */
+  private isClearSpawn(x: number, y: number, z: number, radius: number, segLength: number, capH: number): boolean {
+    this.spawnOrigin.set(x, y + radius * 0.5, z);
     if (this.rayDistance(this.spawnOrigin, UP, capH) < capH * 0.9) return false; // low overhead
-    this.spawnFeet.set(x, 0, z);
+    this.spawnFeet.set(x, y, z);
     this.zeroDisp.set(0, 0, 0);
     this.moveCapsule(this.spawnFeet, radius, segLength, this.zeroDisp, this.spawnCorr);
     const horiz = Math.hypot(this.spawnCorr.x, this.spawnCorr.z);
-    return horiz < radius * 0.4 && this.spawnFeet.y < radius * 0.8; // not in a wall, stayed on floor
+    return horiz < radius * 0.4 && Math.abs(this.spawnFeet.y - y) < radius * 0.8; // not in a wall, stayed put
   }
 }

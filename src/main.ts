@@ -52,6 +52,7 @@ let currentFile = DEFAULT_SCAN;
 let lastCenters: THREE.BufferAttribute | null = null;
 let lastOpacity: Float32Array | null = null;
 const lastMatrix = new THREE.Matrix4();
+let spawnContentY = 0; // world height of the scan's content centre (splat median), for spawn search
 const CAPSULE_RADIUS = 0.22; // capsule hemisphere radius, in char-heights
 const PHYSICS_STEPS = 5;     // collide-and-slide substeps per frame
 let loadToken = 0; // guards against a slow async collision build landing after a scan swap
@@ -132,6 +133,7 @@ function loadScan(file: string): void {
       room.quaternion.copy(o.quaternion); // auto-leveled: floor normal → +Y
       room.scale.setScalar(k);
       room.position.y = k * o.floorOffsetY; // floor at y=0 (in scaled space)
+      spawnContentY = room.position.y; // the splat median maps to this world height
       currentSplat = splat;
       room.updateMatrixWorld(true);
       lastCenters = centers; lastOpacity = opacity; lastMatrix.copy(splat.matrixWorld);
@@ -204,7 +206,7 @@ function resetToSpawn(): void {
     player.position.set(Number(q.get('fx') ?? 0), 0, Number(q.get('fz') ?? 0));
   } else if (collision && charH > 0) {
     const radius = CAPSULE_RADIUS * charH, segLen = Math.max(0.02, charH - 2 * radius);
-    collision.findSpawn(radius, segLen, player.position);
+    collision.findSpawn(radius, segLen, spawnContentY + charH, player.position);
   } else {
     player.position.set(0, 0, 0);
   }
