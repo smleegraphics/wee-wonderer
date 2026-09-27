@@ -199,7 +199,15 @@ function onLoaded(gltf: GLTF): void {
 
 /** Put the figurine on the floor at the spawn point and re-frame the camera behind it. */
 function resetToSpawn(): void {
-  player.position.set(Number(q.get('fx') ?? 0), 0, Number(q.get('fz') ?? 0));
+  // pick a clear floor spot for this scan (unless overridden with ?fx=&fz=)
+  if (q.has('fx') || q.has('fz')) {
+    player.position.set(Number(q.get('fx') ?? 0), 0, Number(q.get('fz') ?? 0));
+  } else if (collision && charH > 0) {
+    const radius = CAPSULE_RADIUS * charH, segLen = Math.max(0.02, charH - 2 * radius);
+    collision.findSpawn(radius, segLen, player.position);
+  } else {
+    player.position.set(0, 0, 0);
+  }
   player.rotation.set(0, 0, 0);
   velocity.set(0, 0, 0);
   wasGrounded = false;
