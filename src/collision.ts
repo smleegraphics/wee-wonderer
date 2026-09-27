@@ -15,6 +15,17 @@ export interface ClimbFace {
   snap: THREE.Vector3;
 }
 
+/** A decomposition of the reachable geometry into connected walkable surfaces
+ *  ("platforms" — the floor, a couch seat, a counter top). One entry per sampled
+ *  walkable cell; `platformId` labels which connected surface it belongs to.
+ *  Cells in different platforms are reached by climbing/jumping, not walking. */
+export interface PlatformField {
+  positions: Float32Array; // x,y,z per surviving walkable cell
+  platformId: Int32Array;  // 0..platformCount-1, which platform each cell is in
+  platformCount: number;
+  sampleStep: number;      // grid spacing the columns were sampled at
+}
+
 /** The controller/collision seam. Any backend (hand-authored or generated). */
 export interface Collision {
   /** Highest standable surface under (x,z), searched downward from `fromY`.
@@ -193,6 +204,77 @@ export class MeshCollision implements Collision {
       if (!plane) plane = { y, real: false }; // backstop plane, kept as a fallback
     }
     return plane;
+  }
+
+  /** Decompose the reachable geometry into connected walkable platforms. Sample a
+   *  grid of downward columns; at each, every up-facing surface (not the backstop
+   *  plane, not a ceiling/underside) with `headroom` clearance above is a walkable
+   *  cell — a column can yield several (floor AND counter top). Cells in adjacent
+   *  columns whose heights differ by at most `stepThreshold` are the same platform
+   *  (a gentle slope/step you walk); bigger gaps are separate platforms (a climb).
+   *  Platforms smaller than `minCells` cells are dropped as floater noise. */
+  extractPlatforms(sampleStep: number, headroom: number, stepThreshold: number, minCells: number, bridge = 2): PlatformField {
+    const b = this.bounds;
+    const nx = Math.max(1, Math.ceil((b.max.x - b.min.x) / sampleStep));
+    const nz = Math.max(1, Math.ceil((b.max.z - b.min.z) / sampleStep));
+    const SLOPE_MIN = 0.4; // normal.y below this is a wall/ceiling, not standable
+    // walkable cells, kept in parallel arrays; per column a singly-linked list
+    // (head in `colHead`, next in `cnext`) threads its cells for neighbor lookup.
+    const cx: number[] = [], cy: number[] = [], cz: number[] = [], cix: number[] = [], ciz: number[] = [], cnext: number[] = [];
+    const colHead = new Int32Array(nx * nz).fill(-1);
+    for (let ix = 0; ix < nx; ix++)
+      for (let iz = 0; iz < nz; iz++) {
+        const x = b.min.x + (ix + 0.5) * sampleStep, z = b.min.z + (iz + 0.5) * sampleStep;
+        this.ray.origin.set(x, b.max.y + 1, z);
+        this.ray.direction.copy(DOWN);
+        const hits = this.bvh.raycast(this.ray, THREE.DoubleSide);
+        if (!hits.length) continue;
+        hits.sort((h1, h2) => h1.point.y - h2.point.y);
+        for (let i = 0; i < hits.length; i++) {
+          const h = hits[i];
+          if ((h.face?.normal.y ?? 1) <= SLOPE_MIN) continue;          // not up-facing
+          if ((h.faceIndex ?? 0) >= this.planeStartTri) continue;      // backstop plane, not real ground
+          let above = Infinity;
+          for (let j = 0; j < hits.length; j++) { const yj = hits[j].point.y; if (yj > h.point.y + 0.02 && yj < above) above = yj; }
+          if (above - h.point.y < headroom) continue;                  // no room to stand
+          const id = cx.length;
+          cx.push(x); cy.push(h.point.y - this.groundOffset); cz.push(z); cix.push(ix); ciz.push(iz);
+          cnext.push(colHead[ix * nz + iz]); colHead[ix * nz + iz] = id;
+        }
+      }
+    // union adjacent same-height cells into platforms (8-connected columns)
+    const n = cx.length;
+    const parent = new Int32Array(n);
+    for (let i = 0; i < n; i++) parent[i] = i;
+    const find = (a: number): number => { while (parent[a] !== a) { parent[a] = parent[parent[a]]; a = parent[a]; } return a; };
+    // Search a `bridge`-cell window (not just immediate neighbors): small gaps in
+    // the sampling — holes in the mesh, occluders — would otherwise split one
+    // continuous floor into many platforms. Bridging same-height cells across the
+    // gap keeps it one surface (and is the same span the real hole-fill will span).
+    for (let i = 0; i < n; i++) {
+      const ix = cix[i], iz = ciz[i], y = cy[i];
+      for (let dx = -bridge; dx <= bridge; dx++)
+        for (let dz = -bridge; dz <= bridge; dz++) {
+          if (dx === 0 && dz === 0) continue;
+          const jx = ix + dx, jz = iz + dz;
+          if (jx < 0 || jx >= nx || jz < 0 || jz >= nz) continue;
+          for (let j = colHead[jx * nz + jz]; j !== -1; j = cnext[j])
+            if (Math.abs(cy[j] - y) <= stepThreshold) { const ra = find(i), rb = find(j); if (ra !== rb) parent[ra] = rb; }
+        }
+    }
+    // drop tiny (floater) components, renumber survivors to 0..platformCount-1
+    const size = new Map<number, number>();
+    for (let i = 0; i < n; i++) { const r = find(i); size.set(r, (size.get(r) ?? 0) + 1); }
+    const remap = new Map<number, number>();
+    let platformCount = 0;
+    for (const [root, sz] of size) if (sz >= minCells) remap.set(root, platformCount++);
+    const outPos: number[] = [], outId: number[] = [];
+    for (let i = 0; i < n; i++) {
+      const pid = remap.get(find(i));
+      if (pid === undefined) continue;
+      outPos.push(cx[i], cy[i], cz[i]); outId.push(pid);
+    }
+    return { positions: new Float32Array(outPos), platformId: new Int32Array(outId), platformCount, sampleStep };
   }
 
   /** True if a capsule standing on (x,y,z) has headroom and isn't inside a

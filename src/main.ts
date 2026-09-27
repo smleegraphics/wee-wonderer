@@ -47,6 +47,14 @@ const GROUND_OFFSET = num('sink', 0);
 let showVoxels = q.get('voxel') === '1';
 let collisionDebug: THREE.Mesh | null = null;
 let voxelCheckbox: HTMLInputElement | null = null;
+// Spike 1: platform-decomposition overlay (colored walkable surfaces). stepFactor
+// = max step (in char-heights) two cells can differ and still be one platform;
+// minCells drops floater specks. Tuned live to see how scans decompose.
+let showPlatforms = q.get('platforms') === '1';
+let platformDebug: THREE.InstancedMesh | null = null;
+let platformCheckbox: HTMLInputElement | null = null;
+let lastVoxelSize = TARGET_RADIUS / 72;
+const PLATFORM_OPTS = { stepFactor: 0.35, minCells: 6 };
 let collision: MeshCollision | null = null; // BVH over the voxel surface, rebuilt per scan
 let currentFile = DEFAULT_SCAN;
 // last-loaded scan data, kept so debug tunables can re-voxelize without reloading the PLY
@@ -102,7 +110,16 @@ function disposeCollision(): void {
     (collisionDebug.material as THREE.Material).dispose();
     collisionDebug = null;
   }
+  disposePlatformOverlay();
   collision = null;
+}
+
+function disposePlatformOverlay(): void {
+  if (!platformDebug) return;
+  scene.remove(platformDebug);
+  platformDebug.geometry.dispose();
+  (platformDebug.material as THREE.Material).dispose();
+  platformDebug = null;
 }
 
 /** Load a bundled demo scan from public/. */
@@ -283,6 +300,7 @@ function keyEvent(e: KeyboardEvent, v: 0 | 1): void {
     case 'Space': if (v && state === 'ground') startJump(); e.preventDefault(); break;
     case 'KeyC': if (v) toggleClimb(); break;
     case 'KeyV': if (v) setVoxelOverlay(!showVoxels); break;
+    case 'KeyP': if (v) setPlatformOverlay(!showPlatforms); break;
   }
 }
 addEventListener('keydown', (e) => keyEvent(e, 1));
@@ -345,6 +363,8 @@ async function buildCollision(file: string, token: number, centers: THREE.Buffer
   mesh.visible = showVoxels;
   scene.add(mesh);
   collisionDebug = mesh;
+  lastVoxelSize = surf.voxelSize;
+  rebuildPlatformOverlay();
   console.log(
     `collision${cached ? ' (cached)' : ''}: ${surf.occupiedCount.toLocaleString()} voxels, ` +
     `${surf.triangleCount.toLocaleString()} tris @ ${surf.voxelSize.toFixed(3)}u ` +
@@ -571,6 +591,54 @@ function setVoxelOverlay(on: boolean): void {
   if (voxelCheckbox) voxelCheckbox.checked = on;
 }
 
+function setPlatformOverlay(on: boolean): void {
+  showPlatforms = on;
+  if (platformDebug) platformDebug.visible = on;
+  if (platformCheckbox) platformCheckbox.checked = on;
+}
+
+// Spike 1 overlay: decompose the current collision into walkable platforms and
+// draw one flat colored tile per cell, colored by platform (golden-ratio hues so
+// neighbors are distinct). Rebuilt on scan swap or when a platform slider moves.
+const platformTmp = new THREE.Object3D();
+const platformColor = new THREE.Color();
+function rebuildPlatformOverlay(): void {
+  disposePlatformOverlay();
+  if (!collision) return;
+  const field = collision.extractPlatforms(
+    lastVoxelSize, charH, charH * PLATFORM_OPTS.stepFactor, PLATFORM_OPTS.minCells,
+  );
+  const cells = field.positions.length / 3;
+  // size histogram: how concentrated are cells? (a few big surfaces + noise specks?)
+  const sizes = new Int32Array(field.platformCount);
+  for (let i = 0; i < cells; i++) sizes[field.platformId[i]]++;
+  const sorted = [...sizes].sort((a, b) => b - a);
+  const big = sorted.filter((s) => s >= cells * 0.05).length; // platforms holding >=5% of cells
+  const top3 = cells ? Math.round((100 * (sorted[0] + (sorted[1] ?? 0) + (sorted[2] ?? 0))) / cells) : 0;
+  console.log(
+    `platforms: ${field.platformCount} total (${big} big), ${cells} cells @ step ${field.sampleStep.toFixed(3)}u — ` +
+    `top3 hold ${top3}% of cells, largest=${sorted[0] ?? 0}`,
+  );
+  if (cells === 0) return;
+  const tile = field.sampleStep * 0.92;
+  const geom = new THREE.BoxGeometry(tile, tile * 0.35, tile);
+  const mat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.7 });
+  const mesh = new THREE.InstancedMesh(geom, mat, cells);
+  for (let i = 0; i < cells; i++) {
+    platformTmp.position.set(field.positions[i * 3], field.positions[i * 3 + 1], field.positions[i * 3 + 2]);
+    platformTmp.updateMatrix();
+    mesh.setMatrixAt(i, platformTmp.matrix);
+    platformColor.setHSL((field.platformId[i] * 0.61803) % 1, 0.7, 0.55);
+    mesh.setColorAt(i, platformColor);
+  }
+  mesh.instanceMatrix.needsUpdate = true;
+  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  mesh.visible = showPlatforms;
+  mesh.frustumCulled = false;
+  scene.add(mesh);
+  platformDebug = mesh;
+}
+
 // A small debug panel (top-right). Put new debug tunables here (addToggle /
 // addSlider) rather than reaching for URL params.
 let debugPanel: HTMLDivElement | null = null;
@@ -623,6 +691,16 @@ function setupDebugMenu(): void {
   debugPanel = panel;
 
   voxelCheckbox = addToggle('Voxel wireframe (V)', showVoxels, setVoxelOverlay);
+  platformCheckbox = addToggle('Platforms (P)', showPlatforms, setPlatformOverlay,
+    'Spike 1: color the walkable surfaces the collision decomposes into — floor, ' +
+    'couch, counter. Distinct colors = distinct platforms (reached by climbing/jumping).');
+  addSlider('Platform: step limit', PLATFORM_OPTS.stepFactor, 0.1, 1, 0.05, (v) => {
+    PLATFORM_OPTS.stepFactor = v; rebuildPlatformOverlay();
+  }, 'Max height (in char-heights) two neighboring cells can differ and still be ONE ' +
+     'platform. Higher = merges steps/bumps into one surface; lower = splits into more platforms.');
+  addSlider('Platform: min size', PLATFORM_OPTS.minCells, 1, 40, 1, (v) => {
+    PLATFORM_OPTS.minCells = v; rebuildPlatformOverlay();
+  }, 'Drop platforms smaller than this many cells (floater/noise rejection). Higher = only big surfaces survive.');
   addSlider('Floor flatten (voxels)', VOXEL_OPTS.floorFlat, 0, 2, 0.05, (v) => {
     VOXEL_OPTS.floorFlat = v;
     rebuildCollision();
