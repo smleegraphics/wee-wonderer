@@ -83,24 +83,51 @@ export function voxelizeCore(
   const wy = (i: number) => m[1] * positions[i * 3] + m[5] * positions[i * 3 + 1] + m[9] * positions[i * 3 + 2] + m[13];
   const wz = (i: number) => m[2] * positions[i * 3] + m[6] * positions[i * 3 + 1] + m[10] * positions[i * 3 + 2] + m[14];
 
-  // pass 1: world-space bounds, padded by a voxel so morphology has room at the edge
+  // pass 1: world-space bounds over opacity-bearing splats only. Faint floaters
+  // are excluded so a far one can't balloon the grid (they wouldn't cross the
+  // isovalue anyway); fall back to all splats if almost everything is faint.
+  const BOUNDS_MIN_OPACITY = 0.15;
   let minX = Infinity, minY = Infinity, minZ = Infinity, maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+  let kept = 0;
   for (let i = 0; i < count; i++) {
+    if (opacity[i] < BOUNDS_MIN_OPACITY) continue;
     const x = wx(i), y = wy(i), z = wz(i);
     if (x < minX) minX = x; if (y < minY) minY = y; if (z < minZ) minZ = z;
     if (x > maxX) maxX = x; if (y > maxY) maxY = y; if (z > maxZ) maxZ = z;
+    kept++;
   }
-  minX -= voxelSize; minY -= voxelSize; minZ -= voxelSize;
-  const gx = Math.max(1, Math.ceil((maxX - minX) / voxelSize) + 2);
-  const gy = Math.max(1, Math.ceil((maxY - minY) / voxelSize) + 2);
-  const gz = Math.max(1, Math.ceil((maxZ - minZ) / voxelSize) + 2);
+  if (kept < 8) { // too few opaque splats — use every splat instead
+    minX = minY = minZ = Infinity; maxX = maxY = maxZ = -Infinity;
+    for (let i = 0; i < count; i++) {
+      const x = wx(i), y = wy(i), z = wz(i);
+      if (x < minX) minX = x; if (y < minY) minY = y; if (z < minZ) minZ = z;
+      if (x > maxX) maxX = x; if (y > maxY) maxY = y; if (z > maxZ) maxZ = z;
+    }
+  }
+  if (!Number.isFinite(minX)) // empty scan
+    return { positions: new Float32Array(0), index: new Uint32Array(0), voxelSize, occupiedCount: 0, triangleCount: 0 };
 
-  // pass 2: accumulate opacity mass per voxel → a density field
+  // choose the voxel size, coarsening it if the dense grid would be too large to
+  // allocate — a hard cap against a pathological extent OOMing the worker.
+  let vs = voxelSize;
+  const cellsAt = (s: number) =>
+    (Math.ceil((maxX - minX) / s) + 4) * (Math.ceil((maxY - minY) / s) + 4) * (Math.ceil((maxZ - minZ) / s) + 4);
+  const MAX_CELLS = 48_000_000;
+  if (cellsAt(vs) > MAX_CELLS) vs *= Math.cbrt(cellsAt(vs) / MAX_CELLS) * 1.02;
+
+  minX -= vs; minY -= vs; minZ -= vs; // pad by a voxel so morphology has room at the edge
+  const gx = Math.max(1, Math.ceil((maxX - minX) / vs) + 2);
+  const gy = Math.max(1, Math.ceil((maxY - minY) / vs) + 2);
+  const gz = Math.max(1, Math.ceil((maxZ - minZ) / vs) + 2);
+
+  // pass 2: accumulate opacity mass per voxel → a density field. Splats outside
+  // the (floater-excluded) bounds are skipped.
   const dens = new Float32Array(gx * gy * gz);
   for (let i = 0; i < count; i++) {
-    const vx = Math.floor((wx(i) - minX) / voxelSize);
-    const vy = Math.floor((wy(i) - minY) / voxelSize);
-    const vz = Math.floor((wz(i) - minZ) / voxelSize);
+    const vx = Math.floor((wx(i) - minX) / vs);
+    const vy = Math.floor((wy(i) - minY) / vs);
+    const vz = Math.floor((wz(i) - minZ) / vs);
+    if (vx < 0 || vx >= gx || vy < 0 || vy >= gy || vz < 0 || vz >= gz) continue;
     dens[(vx * gy + vy) * gz + vz] += opacity[i];
   }
 
@@ -138,14 +165,14 @@ export function voxelizeCore(
   // pass 3: Surface Nets on the density field — one vertex per surface-straddling
   // cell, placed at the interpolated (sub-voxel) crossing of its edges, then
   // relaxed with Taubin smoothing into a smooth mesh that hugs the real surface.
-  const sn = surfaceNets(field, gx, gy, gz, minX, minY, minZ, voxelSize);
+  const sn = surfaceNets(field, gx, gy, gz, minX, minY, minZ, vs);
   taubinSmooth(sn.positions, sn.index, taubinIters);
 
   // Flatten the floor: the real floor is flat at y=0 (leveling), but the density
   // isosurface reconstructs it slightly wavy. Snap vertices within a thin band of
   // y=0 flat so walking is smooth. The band is small so low clutter above it
   // (toys, box lips) keeps its real height and stays collidable.
-  const floorBand = (opts.floorFlat ?? 0.75) * voxelSize;
+  const floorBand = (opts.floorFlat ?? 0.75) * vs;
   if (floorBand > 0) for (let i = 1; i < sn.positions.length; i += 3) if (sn.positions[i] < floorBand) sn.positions[i] = 0;
 
   // Safety floor plane at y=0. Leveling puts the real floor there, and the
@@ -154,7 +181,7 @@ export function voxelizeCore(
   // gap — the character always has floor — while walls/furniture (above it) still
   // collide from the surface mesh.
   const nv = sn.positions.length / 3;
-  const px0 = minX, px1 = minX + gx * voxelSize, pz0 = minZ, pz1 = minZ + gz * voxelSize;
+  const px0 = minX, px1 = minX + gx * vs, pz0 = minZ, pz1 = minZ + gz * vs;
   const meshPos = new Float32Array(sn.positions.length + 12);
   meshPos.set(sn.positions);
   meshPos.set([px0, 0, pz0, px1, 0, pz0, px1, 0, pz1, px0, 0, pz1], sn.positions.length);
@@ -165,7 +192,7 @@ export function voxelizeCore(
   return {
     positions: meshPos,
     index: meshIdx,
-    voxelSize,
+    voxelSize: vs,
     occupiedCount: occupied,
     triangleCount: meshIdx.length / 3,
   };

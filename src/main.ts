@@ -347,6 +347,7 @@ function rebuildCollision(): void {
 
 // --- controller update ------------------------------------------------------
 const camFwd = new THREE.Vector3(), camRight = new THREE.Vector3(), wishDir = new THREE.Vector3();
+const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const camLook = new THREE.Vector3(), camDir = new THREE.Vector3();
 
 /** Glue the orbit pivot to the figurine so the camera follows while the user
@@ -410,7 +411,7 @@ const hVel = new THREE.Vector3(), disp = new THREE.Vector3(), correction = new T
 
 function updateController(dt: number): void {
   camera.getWorldDirection(camFwd); camFwd.y = 0; camFwd.normalize();
-  camRight.crossVectors(camFwd, new THREE.Vector3(0, 1, 0)).negate();
+  camRight.crossVectors(camFwd, WORLD_UP).negate();
   wishDir.set(0, 0, 0).addScaledVector(camFwd, move.f - move.b).addScaledVector(camRight, move.l - move.r);
   const moving = wishDir.lengthSq() > 0;
   if (moving) wishDir.normalize();

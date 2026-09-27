@@ -8,7 +8,7 @@ import type { VoxelSurface } from './voxelize';
 
 const DB_NAME = 'wee-wonderer';
 const STORE = 'voxel-surface';
-const SCHEMA = 'g6'; // bump when the surface-generation algorithm changes (invalidates old entries)
+const SCHEMA = 'g7'; // bump when the surface-generation algorithm changes (invalidates old entries)
 
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {

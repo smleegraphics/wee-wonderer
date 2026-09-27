@@ -52,6 +52,20 @@ export class MeshCollision implements Collision {
   private spawnCorr = new THREE.Vector3();
   private spawnOrigin = new THREE.Vector3();
   private zeroDisp = new THREE.Vector3();
+  private capRadius = 0; // radius for the current shapecast (read by the hoisted callbacks)
+  // Built once (not per moveCapsule call) to avoid closure allocation on the hot path.
+  private readonly shapecastCbs = {
+    intersectsBounds: (b: THREE.Box3) => b.intersectsBox(this.capsBox),
+    intersectsTriangle: (tri: ExtendedTriangle) => {
+      const dist = tri.closestPointToSegment(this.seg, this.triPoint, this.capsPoint);
+      if (dist < this.capRadius) {
+        const depth = this.capRadius - dist;
+        this.capsPoint.sub(this.triPoint).normalize(); // direction from surface toward the capsule
+        this.seg.start.addScaledVector(this.capsPoint, depth);
+        this.seg.end.addScaledVector(this.capsPoint, depth);
+      }
+    },
+  };
 
   /** `geometry` is a world-space triangle soup (no mesh transform applied).
    *  `groundOffset` lowers reported ground heights so feet seat on the visible
@@ -82,7 +96,8 @@ export class MeshCollision implements Collision {
   moveCapsule(feet: THREE.Vector3, radius: number, segLength: number, displacement: THREE.Vector3, outCorrection: THREE.Vector3): void {
     feet.add(displacement);
     const ax = feet.x, ay = feet.y, az = feet.z; // position after the move, before depenetration
-    const seg = this.seg, box = this.capsBox, tp = this.triPoint, cp = this.capsPoint;
+    const seg = this.seg, box = this.capsBox;
+    this.capRadius = radius;
     // capsule = segment between the two hemisphere centers (world space)
     seg.start.set(feet.x, feet.y + radius, feet.z);
     seg.end.set(feet.x, feet.y + radius + segLength, feet.z);
@@ -91,18 +106,7 @@ export class MeshCollision implements Collision {
     box.expandByPoint(seg.end);
     box.expandByScalar(radius);
     // iterative depenetration: push the capsule out of every triangle it overlaps
-    this.bvh.shapecast({
-      intersectsBounds: (b) => b.intersectsBox(box),
-      intersectsTriangle: (tri: ExtendedTriangle) => {
-        const dist = tri.closestPointToSegment(seg, tp, cp);
-        if (dist < radius) {
-          const depth = radius - dist;
-          cp.sub(tp).normalize(); // direction from surface toward the capsule
-          seg.start.addScaledVector(cp, depth);
-          seg.end.addScaledVector(cp, depth);
-        }
-      },
-    });
+    this.bvh.shapecast(this.shapecastCbs);
     feet.set(seg.start.x, seg.start.y - radius, seg.start.z);
     outCorrection.set(feet.x - ax, feet.y - ay, feet.z - az);
   }
