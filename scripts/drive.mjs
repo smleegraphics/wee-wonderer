@@ -36,6 +36,9 @@ try {
       await page.getByText(arg, { exact: true }).click();
     } else if (op === 'select') {
       await page.locator('select').selectOption(arg); // arg = option value (scan file)
+    } else if (op === 'range') {
+      const [nth, value] = arg.split('='); // "0=1.5" → nth range input, set value (fires change)
+      await page.locator('input[type=range]').nth(Number(nth)).fill(value);
     } else if (op === 'shot') { await page.screenshot({ path: arg }); console.log('[drive] shot', arg); }
   }
 } finally {

@@ -47,6 +47,11 @@ let showVoxels = q.get('voxel') === '1';
 let collisionDebug: THREE.Mesh | null = null;
 let voxelCheckbox: HTMLInputElement | null = null;
 let collision: MeshCollision | null = null; // BVH over the voxel surface, rebuilt per scan
+let currentFile = DEFAULT_SCAN;
+// last-loaded scan data, kept so debug tunables can re-voxelize without reloading the PLY
+let lastCenters: THREE.BufferAttribute | null = null;
+let lastOpacity: Float32Array | null = null;
+const lastMatrix = new THREE.Matrix4();
 const CAPSULE_RADIUS = 0.22; // capsule hemisphere radius, in char-heights
 const PHYSICS_STEPS = 5;     // collide-and-slide substeps per frame
 let loadToken = 0; // guards against a slow async collision build landing after a scan swap
@@ -83,15 +88,7 @@ scene.add(room);
 let currentSplat: GaussianSplat | null = null;
 
 /** Load (or swap to) a scan: dispose the old splat, auto-level the new one, respawn. */
-function loadScan(file: string): void {
-  const token = ++loadToken;
-  if (currentSplat) {
-    room.remove(currentSplat);
-    currentSplat.geometry.dispose();
-    (currentSplat.material as THREE.Material).dispose();
-    (currentSplat as unknown as { dispose?: () => void }).dispose?.();
-    currentSplat = null;
-  }
+function disposeCollision(): void {
   if (collisionDebug) {
     scene.remove(collisionDebug);
     collisionDebug.geometry.dispose();
@@ -99,6 +96,19 @@ function loadScan(file: string): void {
     collisionDebug = null;
   }
   collision = null;
+}
+
+function loadScan(file: string): void {
+  const token = ++loadToken;
+  currentFile = file;
+  if (currentSplat) {
+    room.remove(currentSplat);
+    currentSplat.geometry.dispose();
+    (currentSplat.material as THREE.Material).dispose();
+    (currentSplat as unknown as { dispose?: () => void }).dispose?.();
+    currentSplat = null;
+  }
+  disposeCollision();
   room.quaternion.identity();
   room.position.set(0, 0, 0);
   room.scale.setScalar(1);
@@ -124,6 +134,7 @@ function loadScan(file: string): void {
       room.position.y = k * o.floorOffsetY; // floor at y=0 (in scaled space)
       currentSplat = splat;
       room.updateMatrixWorld(true);
+      lastCenters = centers; lastOpacity = opacity; lastMatrix.copy(splat.matrixWorld);
       console.log(`loaded ${file}: radius ${o.radius.toFixed(2)} → scaled ${k.toFixed(2)}x`);
       await buildCollision(file, token, centers, opacity, splat.matrixWorld);
       if (token === loadToken && charLoaded) resetToSpawn();
@@ -277,10 +288,11 @@ function voxelizeInWorker(centers: THREE.BufferAttribute, opacity: Float32Array,
   return new Promise((resolve) => {
     const id = ++voxelReqId;
     voxelPending.set(id, resolve);
-    const positions = (centers.array as Float32Array).slice(); // copy so we can transfer it
+    const positions = (centers.array as Float32Array).slice(); // copies so we can transfer
+    const op = opacity.slice();                                 // (originals kept for re-voxelize)
     voxelWorker.postMessage(
-      { id, positions, opacity, count: centers.count, matrix: Array.from(matrixWorld.elements), voxelSize: VOXEL_SIZE, opts },
-      [positions.buffer, opacity.buffer],
+      { id, positions, opacity: op, count: centers.count, matrix: Array.from(matrixWorld.elements), voxelSize: VOXEL_SIZE, opts },
+      [positions.buffer, op.buffer],
     );
   });
 }
@@ -313,6 +325,14 @@ async function buildCollision(file: string, token: number, centers: THREE.Buffer
     `${surf.triangleCount.toLocaleString()} tris @ ${surf.voxelSize.toFixed(3)}u ` +
     `in ${(performance.now() - t0).toFixed(0)}ms — press V to toggle overlay`,
   );
+}
+
+/** Re-voxelize the current scan with the current VOXEL_OPTS (for debug tunables),
+ *  without reloading the PLY. */
+function rebuildCollision(): void {
+  if (!lastCenters || !lastOpacity) return;
+  disposeCollision();
+  void buildCollision(currentFile, ++loadToken, lastCenters, lastOpacity, lastMatrix);
 }
 
 // --- controller update ------------------------------------------------------
@@ -504,27 +524,60 @@ function setVoxelOverlay(on: boolean): void {
   if (voxelCheckbox) voxelCheckbox.checked = on;
 }
 
-/** A small debug panel (top-right) with visualization toggles. */
+// A small debug panel (top-right). Put new debug tunables here (addToggle /
+// addSlider) rather than reaching for URL params.
+let debugPanel: HTMLDivElement | null = null;
+
+/** A checkbox row; returns the input so callers can keep it in sync. */
+function addToggle(label: string, initial: boolean, onChange: (v: boolean) => void): HTMLInputElement {
+  const row = document.createElement('label');
+  row.style.cssText = 'display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none';
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.checked = initial;
+  cb.onchange = () => onChange(cb.checked);
+  row.append(cb, label);
+  debugPanel!.appendChild(row);
+  return cb;
+}
+
+/** A labelled slider with a live value readout; fires `onChange` on release. */
+function addSlider(label: string, initial: number, min: number, max: number, step: number, onChange: (v: number) => void): void {
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'display:flex;flex-direction:column;gap:3px';
+  const head = document.createElement('div');
+  head.style.cssText = 'display:flex;justify-content:space-between;gap:10px';
+  const name = document.createElement('span'); name.textContent = label;
+  const val = document.createElement('span'); val.textContent = initial.toFixed(2); val.style.opacity = '0.7';
+  head.append(name, val);
+  const slider = document.createElement('input');
+  slider.type = 'range';
+  slider.min = String(min); slider.max = String(max); slider.step = String(step);
+  slider.value = String(initial);
+  slider.style.cssText = 'width:150px;accent-color:#2e6cff;cursor:pointer';
+  slider.oninput = () => { val.textContent = Number(slider.value).toFixed(2); };
+  slider.onchange = () => onChange(Number(slider.value));
+  wrap.append(head, slider);
+  debugPanel!.appendChild(wrap);
+}
+
 function setupDebugMenu(): void {
   const panel = document.createElement('div');
   panel.style.cssText =
-    'position:fixed;top:12px;right:12px;z-index:10;display:flex;flex-direction:column;gap:8px;' +
+    'position:fixed;top:12px;right:12px;z-index:10;display:flex;flex-direction:column;gap:10px;' +
     'padding:10px 12px;border:1px solid #3a3b44;border-radius:8px;background:rgba(23,24,29,0.85);' +
     'color:#e8e8ea;font:12px ui-monospace,Menlo,monospace;backdrop-filter:blur(4px)';
   const title = document.createElement('div');
   title.textContent = 'Debug';
   title.style.cssText = 'opacity:0.55;font-size:10px;letter-spacing:0.08em;text-transform:uppercase';
   panel.appendChild(title);
+  debugPanel = panel;
 
-  const row = document.createElement('label');
-  row.style.cssText = 'display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none';
-  const cb = document.createElement('input');
-  cb.type = 'checkbox';
-  cb.checked = showVoxels;
-  cb.onchange = () => setVoxelOverlay(cb.checked);
-  voxelCheckbox = cb;
-  row.append(cb, 'Voxel wireframe (V)');
-  panel.appendChild(row);
+  voxelCheckbox = addToggle('Voxel wireframe (V)', showVoxels, setVoxelOverlay);
+  addSlider('Floor flatten (voxels)', VOXEL_OPTS.floorFlat, 0, 2, 0.05, (v) => {
+    VOXEL_OPTS.floorFlat = v;
+    rebuildCollision();
+  });
 
   document.body.appendChild(panel);
 }
