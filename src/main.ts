@@ -38,6 +38,7 @@ const VOXEL_OPTS = {
   fillFloor: num('fillfloor', 1), // fill enclosed holes in the floor layer
   smooth: num('smooth', 0),      // majority occupancy passes (Taubin handles smoothing)
   taubin: num('taubin', 6),      // Taubin mesh-smoothing iterations
+  floorFlat: num('floorflat', 0.75), // snap mesh within this many voxels of y=0 flat
 };
 // Walkable surfaces are de-quantized to the real splat height in the voxelizer,
 // so no ground offset is needed; ?sink stays as a manual override (default 0).
@@ -375,7 +376,7 @@ function climbUpdate(dt: number): void {
 }
 
 // scratch vectors for the collide-and-slide loop (avoid per-frame allocation)
-const hVel = new THREE.Vector3(), disp = new THREE.Vector3(), posBefore = new THREE.Vector3(), slideN = new THREE.Vector3();
+const hVel = new THREE.Vector3(), disp = new THREE.Vector3(), correction = new THREE.Vector3(), slideN = new THREE.Vector3();
 
 function updateController(dt: number): void {
   camera.getWorldDirection(camFwd); camFwd.y = 0; camFwd.normalize();
@@ -403,13 +404,13 @@ function updateController(dt: number): void {
   for (let s = 0; s < PHYSICS_STEPS; s++) {
     velocity.y += TUNE.gravity * charH * subdt;
     disp.set(hVel.x * subdt, velocity.y * subdt, hVel.z * subdt);
-    posBefore.copy(player.position);
-    collision.moveCapsule(player.position, radius, segLen, disp);
-    disp.subVectors(player.position, posBefore); // net move after depenetration
-    if (disp.y > Math.abs(subdt * velocity.y * 0.25)) {   // pushed up ⇒ standing on ground
+    collision.moveCapsule(player.position, radius, segLen, disp, correction);
+    // `correction` is the depenetration push-out only (excludes the move above),
+    // so jumping up (no penetration) is not mistaken for standing on ground.
+    if (correction.y > Math.abs(subdt * velocity.y * 0.25)) {   // pushed up ⇒ on ground
       velocity.set(0, 0, 0); grounded = true;
-    } else if (disp.lengthSq() > 1e-12) {                 // hit a wall ⇒ slide along it
-      slideN.copy(disp).normalize();
+    } else if (correction.lengthSq() > 1e-12) {                 // hit a wall ⇒ slide along it
+      slideN.copy(correction).normalize();
       velocity.addScaledVector(slideN, -slideN.dot(velocity));
     }
   }

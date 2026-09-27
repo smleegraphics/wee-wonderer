@@ -22,9 +22,11 @@ export interface Collision {
    *  table rather than the tabletop. Floor fallback is 0. */
   groundHeightAt(x: number, z: number, fromY?: number): number;
   /** Move a vertical capsule (feet at `feet`, hemisphere `radius`, straight
-   *  `segLength`) by `displacement`, then depenetrate it out of the mesh.
-   *  Mutates `feet` to the resolved position — the collide-and-slide core. */
-  moveCapsule(feet: THREE.Vector3, radius: number, segLength: number, displacement: THREE.Vector3): void;
+   *  `segLength`) by `displacement`, then depenetrate it out of the mesh. Mutates
+   *  `feet` to the resolved position and writes the depenetration-only correction
+   *  (post-move push-out, excluding `displacement`) into `outCorrection` — used to
+   *  detect ground and to slide. The collide-and-slide core. */
+  moveCapsule(feet: THREE.Vector3, radius: number, segLength: number, displacement: THREE.Vector3, outCorrection: THREE.Vector3): void;
   /** Nearest climbable vertical face along `forward`, or null. */
   climbableFaceAt(pos: THREE.Vector3, charH: number, forward: THREE.Vector3): ClimbFace | null;
 }
@@ -64,8 +66,9 @@ export class MeshCollision implements Collision {
     return hit ? hit.point.y - this.groundOffset : 0;
   }
 
-  moveCapsule(feet: THREE.Vector3, radius: number, segLength: number, displacement: THREE.Vector3): void {
+  moveCapsule(feet: THREE.Vector3, radius: number, segLength: number, displacement: THREE.Vector3, outCorrection: THREE.Vector3): void {
     feet.add(displacement);
+    const ax = feet.x, ay = feet.y, az = feet.z; // position after the move, before depenetration
     const seg = this.seg, box = this.capsBox, tp = this.triPoint, cp = this.capsPoint;
     // capsule = segment between the two hemisphere centers (world space)
     seg.start.set(feet.x, feet.y + radius, feet.z);
@@ -88,6 +91,7 @@ export class MeshCollision implements Collision {
       },
     });
     feet.set(seg.start.x, seg.start.y - radius, seg.start.z);
+    outCorrection.set(feet.x - ax, feet.y - ay, feet.z - az);
   }
 
   climbableFaceAt(pos: THREE.Vector3, charH: number, forward: THREE.Vector3): ClimbFace | null {

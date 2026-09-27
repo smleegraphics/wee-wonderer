@@ -23,6 +23,7 @@ export interface VoxelOptions {
   fillFloor?: number;  // fill enclosed holes in the floor layer (default 1; 0 = off)
   smooth?: number;     // majority-filter passes on occupancy (default 0; Taubin handles smoothing)
   taubin?: number;     // Taubin mesh-smoothing iterations (default 6; 0 = off)
+  floorFlat?: number;  // snap mesh vertices within this many voxels of y=0 flat (default 0.75; 0 = off)
 }
 
 export interface VoxelSurface {
@@ -139,6 +140,13 @@ export function voxelizeCore(
   // relaxed with Taubin smoothing into a smooth mesh that hugs the real surface.
   const sn = surfaceNets(field, gx, gy, gz, minX, minY, minZ, voxelSize);
   taubinSmooth(sn.positions, sn.index, taubinIters);
+
+  // Flatten the floor: the real floor is flat at y=0 (leveling), but the density
+  // isosurface reconstructs it slightly wavy. Snap vertices within a thin band of
+  // y=0 flat so walking is smooth. The band is small so low clutter above it
+  // (toys, box lips) keeps its real height and stays collidable.
+  const floorBand = (opts.floorFlat ?? 0.75) * voxelSize;
+  if (floorBand > 0) for (let i = 1; i < sn.positions.length; i += 3) if (sn.positions[i] < floorBand) sn.positions[i] = 0;
 
   // Safety floor plane at y=0. Leveling puts the real floor there, and the
   // reconstructed mesh isn't watertight (holes in walls/cabinet fronts let a
