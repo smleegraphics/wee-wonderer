@@ -29,11 +29,10 @@ export interface Collision {
   moveCapsule(feet: THREE.Vector3, radius: number, segLength: number, displacement: THREE.Vector3, outCorrection: THREE.Vector3): void;
   /** Nearest climbable vertical face along `forward`, or null. */
   climbableFaceAt(pos: THREE.Vector3, charH: number, forward: THREE.Vector3): ClimbFace | null;
-  /** Find a sensible spawn near the content centre: a clear standable surface
-   *  (no wall overlap, headroom) — the floor in a room, or the table top in a
-   *  tabletop scan. `fromY` is the content-centre height to search down from
-   *  (avoids landing on a ceiling). Writes {x, surfaceY, z} into `out`. */
-  findSpawn(radius: number, segLength: number, fromY: number, out: THREE.Vector3): void;
+  /** Find a sensible spawn near the content centre: stand on the lowest real
+   *  up-facing surface with headroom (the floor in a room, the couch/table top in
+   *  a floorless scan), never the phantom backstop plane. Writes {x,y,z} to `out`. */
+  findSpawn(radius: number, segLength: number, out: THREE.Vector3): void;
 }
 
 const DOWN = new THREE.Vector3(0, -1, 0);
@@ -43,6 +42,7 @@ const UP = new THREE.Vector3(0, 1, 0);
 export class MeshCollision implements Collision {
   private bvh: MeshBVH;
   private bounds: THREE.Box3;
+  private planeStartTri: number;    // triangles >= this index are the backstop floor plane (last 2)
   private ray = new THREE.Ray();
   private seg = new THREE.Line3();
   private capsBox = new THREE.Box3();
@@ -74,7 +74,11 @@ export class MeshCollision implements Collision {
     if (!geometry.index) geometry.setIndex([...Array(geometry.getAttribute('position').count).keys()]);
     geometry.computeBoundingBox();
     this.bounds = geometry.boundingBox ?? new THREE.Box3(new THREE.Vector3(-1, 0, -1), new THREE.Vector3(1, 0, 1));
-    this.bvh = new MeshBVH(geometry);
+    // the voxelizer appends the backstop floor plane as the last 2 triangles;
+    // `indirect` keeps the original index order so this stays true and raycast
+    // faceIndices map back to it (a plain BVH reorders the index in place).
+    this.planeStartTri = Math.max(0, (geometry.index?.count ?? 0) / 3 - 2);
+    this.bvh = new MeshBVH(geometry, { indirect: true });
   }
 
   /** Distance to the first surface along `dir` (unit) from `origin`, else `max`.
@@ -133,27 +137,62 @@ export class MeshCollision implements Collision {
     };
   }
 
-  findSpawn(radius: number, segLength: number, fromY: number, out: THREE.Vector3): void {
-    // Search from the ORIGIN — the scan's recentered content centre (splat median),
-    // which sits inside the real room — NOT the mesh bbox centre, which is biased
-    // by the full-grid floor plane and can land in empty space.
+  findSpawn(radius: number, segLength: number, out: THREE.Vector3): void {
+    // Spiral (x,z) outward from the ORIGIN — the scan's recentered content centre
+    // (splat median), which sits inside the real content — and stand on the lowest
+    // real surface there.
     const b = this.bounds;
     const maxR = Math.max(Math.abs(b.min.x), b.max.x, Math.abs(b.min.z), b.max.z);
     const capH = segLength + 2 * radius;
     const step = Math.max(radius * 2, capH * 0.5);
-    // spiral outward from the centre; take the first clear spot (keeps spawns central)
+    // Spiral outward from the centre. Prefer a clear spot on REAL reconstructed
+    // geometry (a floor in a room, a couch/table top in a floorless scan) — never
+    // the phantom backstop plane below the content. Fall back, in order, to: any
+    // real-geometry spot (even if cramped), then a clear plane spot, then origin.
+    let realFallbackY = NaN, realX = 0, realZ = 0;
+    let planeFallbackY = NaN, planeX = 0, planeZ = 0;
     for (let ring = 0; ring * step <= maxR + step; ring++) {
       const r = ring * step;
       const n = ring === 0 ? 1 : Math.max(8, Math.round((2 * Math.PI * r) / step));
       for (let a = 0; a < n; a++) {
         const ang = (a / n) * Math.PI * 2;
         const x = r * Math.cos(ang), z = r * Math.sin(ang);
-        // topmost standable surface below the content height (floor, or table top)
-        const sy = this.groundHeightAt(x, z, fromY);
-        if (this.isClearSpawn(x, sy, z, radius, segLength, capH)) { out.set(x, sy, z); return; }
+        const s = this.standSurface(x, z, capH); // lowest real up-facing surface with headroom
+        if (!s) continue;
+        const sy = s.y, onPlane = !s.real;
+        const clear = this.isClearSpawn(x, sy, z, radius, segLength, capH);
+        if (!onPlane) {
+          if (clear) { out.set(x, sy, z); return; }   // ideal: clear spot on real geometry
+          if (Number.isNaN(realFallbackY)) { realFallbackY = sy; realX = x; realZ = z; }
+        } else if (clear && Number.isNaN(planeFallbackY)) { planeFallbackY = sy; planeX = x; planeZ = z; }
       }
     }
-    out.set(0, this.groundHeightAt(0, 0, fromY), 0); // nothing clear — origin's surface
+    if (!Number.isNaN(realFallbackY)) out.set(realX, realFallbackY, realZ);       // on the content, cramped
+    else if (!Number.isNaN(planeFallbackY)) out.set(planeX, planeFallbackY, planeZ); // only the backstop was clear
+    else out.set(0, 0, 0);                                                        // nothing — origin
+  }
+
+  /** The lowest REAL up-facing surface at (x,z) with `needAbove` headroom (a floor,
+   *  a couch seat, a table top…), or the backstop plane as a last resort, or null.
+   *  Casts a ray down through the whole scene and inspects every crossing. */
+  private standSurface(x: number, z: number, needAbove: number): { y: number; real: boolean } | null {
+    this.ray.origin.set(x, this.bounds.max.y + 1, z);
+    this.ray.direction.copy(DOWN);
+    const hits = this.bvh.raycast(this.ray, THREE.DoubleSide);
+    if (!hits.length) return null;
+    hits.sort((h1, h2) => h1.point.y - h2.point.y); // ascending: lowest first
+    let plane: { y: number; real: boolean } | null = null;
+    for (let i = 0; i < hits.length; i++) {
+      const h = hits[i];
+      if ((h.face?.normal.y ?? 1) <= 0.4) continue; // not walkable (ceiling / underside / steep)
+      let above = Infinity; // nearest crossing above this one → headroom
+      for (let j = 0; j < hits.length; j++) { const yj = hits[j].point.y; if (yj > h.point.y + 0.02 && yj < above) above = yj; }
+      if (above - h.point.y < needAbove) continue; // no room to stand
+      const y = h.point.y - this.groundOffset;
+      if ((h.faceIndex ?? 0) < this.planeStartTri) return { y, real: true }; // lowest real walkable — done
+      if (!plane) plane = { y, real: false }; // backstop plane, kept as a fallback
+    }
+    return plane;
   }
 
   /** True if a capsule standing on (x,y,z) has headroom and isn't inside a

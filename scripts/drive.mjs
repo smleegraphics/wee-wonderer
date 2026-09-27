@@ -39,6 +39,8 @@ try {
     } else if (op === 'range') {
       const [nth, value] = arg.split('='); // "0=1.5" → nth range input, set value (fires change)
       await page.locator('input[type=range]').nth(Number(nth)).fill(value);
+    } else if (op === 'file') {
+      await page.setInputFiles('input[type=file]', arg); // arg = path to upload
     } else if (op === 'shot') { await page.screenshot({ path: arg }); console.log('[drive] shot', arg); }
   }
 } finally {
