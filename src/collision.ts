@@ -26,6 +26,89 @@ export interface PlatformField {
   sampleStep: number;      // grid spacing the columns were sampled at
 }
 
+/** A queryable 2.5-D walkable-height grid derived from the platforms — the
+ *  reliable ground the controller stands on. Each (ix,iz) column holds zero or
+ *  more walkable heights (floor AND counter top), stored as a per-cell linked
+ *  list. Interior holes within a platform are filled so a column that *should*
+ *  have ground does — nothing to fall through. */
+export class NavGrid {
+  constructor(
+    readonly nx: number, readonly nz: number,
+    readonly minX: number, readonly minZ: number, readonly step: number,
+    private readonly head: Int32Array,  // (ix*nz+iz) → first entry index, or -1
+    private readonly nextE: Int32Array, // entry → next entry in the same column, or -1
+    private readonly ey: Float32Array,  // entry height
+    private readonly ep: Int32Array,    // entry platform id
+    readonly platformCount: number,
+  ) {}
+
+  private cellIndex(x: number, z: number): number {
+    const ix = Math.floor((x - this.minX) / this.step);
+    const iz = Math.floor((z - this.minZ) / this.step);
+    if (ix < 0 || ix >= this.nx || iz < 0 || iz >= this.nz) return -1;
+    return ix * this.nz + iz;
+  }
+
+  /** The walkable surface at (x,z) closest to `targetY` within `band` (the max
+   *  step you can walk over), or null if the platform doesn't continue here — i.e.
+   *  an edge. Used to keep feet on the surface and to confine to the platform. */
+  surfaceNear(x: number, z: number, targetY: number, band: number): number | null {
+    const c = this.cellIndex(x, z);
+    if (c < 0) return null;
+    let best: number | null = null, bestD = band;
+    for (let e = this.head[c]; e !== -1; e = this.nextE[e]) {
+      const d = Math.abs(this.ey[e] - targetY);
+      if (d <= bestD) { bestD = d; best = this.ey[e]; }
+    }
+    return best;
+  }
+
+  /** The highest walkable surface at (x,z) at or below `y` — a landing floor for
+   *  a falling/jumping capsule, at the real platform height (not y=0). */
+  surfaceBelow(x: number, z: number, y: number): number | null {
+    const c = this.cellIndex(x, z);
+    if (c < 0) return null;
+    let best: number | null = null;
+    for (let e = this.head[c]; e !== -1; e = this.nextE[e])
+      if (this.ey[e] <= y && (best === null || this.ey[e] > best)) best = this.ey[e];
+    return best;
+  }
+
+  /** Nearest walkable point to (x,z) with height near `targetY`, searched in
+   *  expanding rings — recovery when the player has left every platform. */
+  nearest(x: number, z: number, targetY: number, out: THREE.Vector3): boolean {
+    const ix0 = Math.floor((x - this.minX) / this.step);
+    const iz0 = Math.floor((z - this.minZ) / this.step);
+    for (let r = 0; r < Math.max(this.nx, this.nz); r++) {
+      let bestD = Infinity, bx = 0, by = 0, bz = 0, found = false;
+      for (let dx = -r; dx <= r; dx++)
+        for (let dz = -r; dz <= r; dz++) {
+          if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue; // shell of the ring only
+          const ix = ix0 + dx, iz = iz0 + dz;
+          if (ix < 0 || ix >= this.nx || iz < 0 || iz >= this.nz) continue;
+          for (let e = this.head[ix * this.nz + iz]; e !== -1; e = this.nextE[e]) {
+            const d = Math.abs(this.ey[e] - targetY);
+            if (d < bestD) { bestD = d; by = this.ey[e]; bx = this.minX + (ix + 0.5) * this.step; bz = this.minZ + (iz + 0.5) * this.step; found = true; }
+          }
+        }
+      if (found) { out.set(bx, by, bz); return true; }
+    }
+    return false;
+  }
+
+  /** Flatten to a per-cell list for the debug overlay (includes hole-filled cells). */
+  toField(): PlatformField {
+    const pos: number[] = [], id: number[] = [];
+    for (let ix = 0; ix < this.nx; ix++)
+      for (let iz = 0; iz < this.nz; iz++)
+        for (let e = this.head[ix * this.nz + iz]; e !== -1; e = this.nextE[e]) {
+          pos.push(this.minX + (ix + 0.5) * this.step, this.ey[e], this.minZ + (iz + 0.5) * this.step);
+          id.push(this.ep[e]);
+        }
+    return { positions: new Float32Array(pos), platformId: new Int32Array(id), platformCount: this.platformCount, sampleStep: this.step };
+  }
+}
+
 /** The controller/collision seam. Any backend (hand-authored or generated). */
 export interface Collision {
   /** Highest standable surface under (x,z), searched downward from `fromY`.
@@ -44,6 +127,9 @@ export interface Collision {
    *  up-facing surface with headroom (the floor in a room, the couch/table top in
    *  a floorless scan), never the phantom backstop plane. Writes {x,y,z} to `out`. */
   findSpawn(radius: number, segLength: number, out: THREE.Vector3): void;
+  /** Build the walkable NavGrid — the reliable, hole-filled ground the controller
+   *  stands on and is confined to. */
+  buildNavGrid(sampleStep: number, headroom: number, stepThreshold: number, minCells: number, bridge?: number, fillIters?: number): NavGrid;
 }
 
 const DOWN = new THREE.Vector3(0, -1, 0);
@@ -206,21 +292,24 @@ export class MeshCollision implements Collision {
     return plane;
   }
 
-  /** Decompose the reachable geometry into connected walkable platforms. Sample a
-   *  grid of downward columns; at each, every up-facing surface (not the backstop
-   *  plane, not a ceiling/underside) with `headroom` clearance above is a walkable
-   *  cell — a column can yield several (floor AND counter top). Cells in adjacent
-   *  columns whose heights differ by at most `stepThreshold` are the same platform
-   *  (a gentle slope/step you walk); bigger gaps are separate platforms (a climb).
-   *  Platforms smaller than `minCells` cells are dropped as floater noise. */
-  extractPlatforms(sampleStep: number, headroom: number, stepThreshold: number, minCells: number, bridge = 2): PlatformField {
+  /** Decompose the reachable geometry into connected walkable platforms and index
+   *  them into a queryable, hole-filled NavGrid — the reliable ground.
+   *  Sample a grid of downward columns; at each, every up-facing surface (not the
+   *  backstop plane, not a ceiling/underside) with `headroom` clearance above is a
+   *  walkable cell — a column can yield several (floor AND counter top). Cells in
+   *  neighboring columns whose heights differ by at most `stepThreshold` are one
+   *  platform (a gentle slope/step you walk); bigger gaps are separate platforms (a
+   *  climb). Platforms under `minCells` cells are dropped as floater noise, then
+   *  interior holes within each surviving platform are filled (`fillIters` cells)
+   *  so there is nothing to fall through. */
+  buildNavGrid(sampleStep: number, headroom: number, stepThreshold: number, minCells: number, bridge = 2, fillIters = 3): NavGrid {
     const b = this.bounds;
     const nx = Math.max(1, Math.ceil((b.max.x - b.min.x) / sampleStep));
     const nz = Math.max(1, Math.ceil((b.max.z - b.min.z) / sampleStep));
     const SLOPE_MIN = 0.4; // normal.y below this is a wall/ceiling, not standable
-    // walkable cells, kept in parallel arrays; per column a singly-linked list
+    // walkable cells in parallel arrays; per column a singly-linked list
     // (head in `colHead`, next in `cnext`) threads its cells for neighbor lookup.
-    const cx: number[] = [], cy: number[] = [], cz: number[] = [], cix: number[] = [], ciz: number[] = [], cnext: number[] = [];
+    const cy: number[] = [], cix: number[] = [], ciz: number[] = [], cnext: number[] = [];
     const colHead = new Int32Array(nx * nz).fill(-1);
     for (let ix = 0; ix < nx; ix++)
       for (let iz = 0; iz < nz; iz++) {
@@ -237,20 +326,18 @@ export class MeshCollision implements Collision {
           let above = Infinity;
           for (let j = 0; j < hits.length; j++) { const yj = hits[j].point.y; if (yj > h.point.y + 0.02 && yj < above) above = yj; }
           if (above - h.point.y < headroom) continue;                  // no room to stand
-          const id = cx.length;
-          cx.push(x); cy.push(h.point.y - this.groundOffset); cz.push(z); cix.push(ix); ciz.push(iz);
+          const id = cy.length;
+          cy.push(h.point.y - this.groundOffset); cix.push(ix); ciz.push(iz);
           cnext.push(colHead[ix * nz + iz]); colHead[ix * nz + iz] = id;
         }
       }
-    // union adjacent same-height cells into platforms (8-connected columns)
-    const n = cx.length;
+    // union same-height cells within a `bridge`-cell window into platforms: small
+    // sampling gaps (mesh holes, occluders) would otherwise split one continuous
+    // floor into many, so we bridge across them.
+    const n = cy.length;
     const parent = new Int32Array(n);
     for (let i = 0; i < n; i++) parent[i] = i;
     const find = (a: number): number => { while (parent[a] !== a) { parent[a] = parent[parent[a]]; a = parent[a]; } return a; };
-    // Search a `bridge`-cell window (not just immediate neighbors): small gaps in
-    // the sampling — holes in the mesh, occluders — would otherwise split one
-    // continuous floor into many platforms. Bridging same-height cells across the
-    // gap keeps it one surface (and is the same span the real hole-fill will span).
     for (let i = 0; i < n; i++) {
       const ix = cix[i], iz = ciz[i], y = cy[i];
       for (let dx = -bridge; dx <= bridge; dx++)
@@ -268,13 +355,22 @@ export class MeshCollision implements Collision {
     const remap = new Map<number, number>();
     let platformCount = 0;
     for (const [root, sz] of size) if (sz >= minCells) remap.set(root, platformCount++);
-    const outPos: number[] = [], outId: number[] = [];
+
+    // index surviving cells into the NavGrid (grow-able entry lists)
+    const head = new Int32Array(nx * nz).fill(-1);
+    const nextE: number[] = [], ey: number[] = [], ep: number[] = [];
+    const addEntry = (c: number, y: number, p: number) => { const e = ey.length; ey.push(y); ep.push(p); nextE.push(head[c]); head[c] = e; };
     for (let i = 0; i < n; i++) {
       const pid = remap.get(find(i));
       if (pid === undefined) continue;
-      outPos.push(cx[i], cy[i], cz[i]); outId.push(pid);
+      addEntry(cix[i] * nz + ciz[i], cy[i], pid);
     }
-    return { positions: new Float32Array(outPos), platformId: new Int32Array(outId), platformCount, sampleStep };
+    // fill interior holes per platform: close its footprint mask, and for each newly
+    // enclosed cell add an entry at the height of its nearest platform neighbor.
+    fillPlatformHoles(nx, nz, platformCount, head, nextE, ey, ep, addEntry, fillIters);
+
+    return new NavGrid(nx, nz, b.min.x, b.min.z, sampleStep,
+      head, Int32Array.from(nextE), Float32Array.from(ey), Int32Array.from(ep), platformCount);
   }
 
   /** True if a capsule standing on (x,y,z) has headroom and isn't inside a
@@ -288,4 +384,61 @@ export class MeshCollision implements Collision {
     const horiz = Math.hypot(this.spawnCorr.x, this.spawnCorr.z);
     return horiz < radius * 0.4 && Math.abs(this.spawnFeet.y - y) < radius * 0.8; // not in a wall, stayed put
   }
+}
+
+/** Fill interior holes in each platform's footprint so its NavGrid coverage is
+ *  continuous (nothing to fall through). For a platform, close its 2-D occupancy
+ *  mask (dilate then erode — fills gaps up to `iters` cells without growing the
+ *  outer boundary), and give each newly enclosed cell an entry at the height of
+ *  its nearest real platform cell. */
+function fillPlatformHoles(
+  nx: number, nz: number, platformCount: number,
+  head: Int32Array, nextE: number[], ey: number[], ep: number[],
+  addEntry: (c: number, y: number, p: number) => void, iters: number,
+): void {
+  if (iters <= 0) return;
+  const N = nx * nz;
+  for (let p = 0; p < platformCount; p++) {
+    const mask = new Uint8Array(N);
+    const h = new Float32Array(N); // a representative height per cell of this platform
+    for (let c = 0; c < N; c++)
+      for (let e = head[c]; e !== -1; e = nextE[e])
+        if (ep[e] === p) { mask[c] = 1; h[c] = ey[e]; break; }
+    let cur: Uint8Array = mask;
+    for (let k = 0; k < iters; k++) cur = morph2D(cur, nx, nz, true);  // dilate
+    for (let k = 0; k < iters; k++) cur = morph2D(cur, nx, nz, false); // erode → net: fill holes
+    for (let ix = 0; ix < nx; ix++)
+      for (let iz = 0; iz < nz; iz++) {
+        const c = ix * nz + iz;
+        if (!cur[c] || mask[c]) continue; // only the newly enclosed cells
+        let hy = NaN; // nearest original-mask height, searched in rings
+        for (let r = 1; r <= iters + 1 && Number.isNaN(hy); r++)
+          for (let dx = -r; dx <= r && Number.isNaN(hy); dx++)
+            for (let dz = -r; dz <= r; dz++) {
+              if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
+              const jx = ix + dx, jz = iz + dz;
+              if (jx < 0 || jx >= nx || jz < 0 || jz >= nz) continue;
+              if (mask[jx * nz + jz]) { hy = h[jx * nz + jz]; break; }
+            }
+        if (!Number.isNaN(hy)) addEntry(c, hy, p);
+      }
+  }
+}
+
+/** One pass of binary dilation (any 8-neighbor set) or erosion (all set); the grid
+ *  edge counts as empty. */
+function morph2D(src: Uint8Array, nx: number, nz: number, dilate: boolean): Uint8Array {
+  const out = new Uint8Array(src.length);
+  for (let ix = 0; ix < nx; ix++)
+    for (let iz = 0; iz < nz; iz++) {
+      let any = false, all = true;
+      for (let dx = -1; dx <= 1; dx++)
+        for (let dz = -1; dz <= 1; dz++) {
+          const jx = ix + dx, jz = iz + dz;
+          const v = jx < 0 || jx >= nx || jz < 0 || jz >= nz ? 0 : src[jx * nz + jz];
+          if (v) any = true; else all = false;
+        }
+      out[ix * nz + iz] = (dilate ? any : all) ? 1 : 0;
+    }
+  return out;
 }

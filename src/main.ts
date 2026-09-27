@@ -13,7 +13,7 @@ import { GaussianSplat } from 'three/addons/objects/GaussianSplat.js';
 import { GaussianSplatPLYLoader } from 'three/addons/loaders/GaussianSplatPLYLoader.js';
 import { orientScan } from './orient-scan';
 import { surfaceToGeometry } from './voxelize';
-import { MeshCollision } from './collision';
+import { MeshCollision, type NavGrid } from './collision';
 import { voxelCacheKey, voxelCacheGet, voxelCachePut } from './voxel-cache';
 import type { VoxelSurface, VoxelOptions } from './voxelize';
 import type { CleanOptions } from './clean-scan-core';
@@ -55,6 +55,12 @@ let platformDebug: THREE.InstancedMesh | null = null;
 let platformCheckbox: HTMLInputElement | null = null;
 let lastVoxelSize = TARGET_RADIUS / 72;
 const PLATFORM_OPTS = { stepFactor: 0.35, minCells: 6 };
+// Spike 2: the reliable ground. The controller stands on the NavGrid (no
+// fall-through), is confined to it (no walking off), and recovers to `lastGood`.
+let navGrid: NavGrid | null = null;
+let supportY = 0;                       // height of the platform the player is standing on
+const lastGood = new THREE.Vector3();   // last validated on-platform position (recovery)
+let useNavGround = q.get('nav') !== '0'; // the platform reliability layer (on by default)
 let collision: MeshCollision | null = null; // BVH over the voxel surface, rebuilt per scan
 let currentFile = DEFAULT_SCAN;
 // last-loaded scan data, kept so debug tunables can re-voxelize without reloading the PLY
@@ -224,6 +230,7 @@ function onLoaded(gltf: GLTF): void {
 
   play('idle', 0);
   charLoaded = true;
+  if (collision) rebuildPlatformOverlay(); // rebuild the NavGrid now charH (headroom/step) is real
   resetToSpawn();
   console.log(`character: ${charH.toFixed(3)} tall, ${gltf.animations.length} clips`);
 }
@@ -239,9 +246,16 @@ function resetToSpawn(): void {
   } else {
     player.position.set(0, 0, 0);
   }
+  // align the spawn with the NavGrid so the reliability layer picks it up cleanly
+  if (navGrid) {
+    const s = navGrid.surfaceNear(player.position.x, player.position.z, player.position.y, charH);
+    if (s !== null) player.position.y = s;
+  }
   player.rotation.set(0, 0, 0);
   velocity.set(0, 0, 0);
   wasGrounded = false;
+  supportY = player.position.y;         // stand on the spawn surface
+  lastGood.copy(player.position);
   smoothFeetY = player.position.y;
   if (charModel) charModel.position.y = charFeetOffset;
   state = 'ground';
@@ -434,15 +448,18 @@ function climbUpdate(dt: number): void {
     player.position.y = climbTopY;
     player.position.addScaledVector(climbNormal, -charH * 0.35);
     state = 'ground'; play('idle', TUNE.fade);
+    supportY = player.position.y; lastGood.copy(player.position); // now on the upper platform
   } else if (player.position.y <= floorY) { // slid back to the floor
     player.position.y = floorY;
     player.position.addScaledVector(climbNormal, charH * 0.05);
     state = 'ground'; play('idle', TUNE.fade);
+    supportY = player.position.y; lastGood.copy(player.position);
   }
 }
 
 // scratch vectors for the collide-and-slide loop (avoid per-frame allocation)
 const hVel = new THREE.Vector3(), disp = new THREE.Vector3(), correction = new THREE.Vector3(), slideN = new THREE.Vector3();
+const navRecover = new THREE.Vector3();
 
 function updateController(dt: number): void {
   camera.getWorldDirection(camFwd); camFwd.y = 0; camFwd.normalize();
@@ -454,41 +471,20 @@ function updateController(dt: number): void {
   if (state === 'climb') { climbUpdate(dt); return; }
   if (state === 'jump_start') return;        // anticipation freeze; onActionFinished launches
   if (!collision) return;
-  if (player.position.y < -charH * 3) { resetToSpawn(); return; } // fell out of the world → respawn
+  if (player.position.y < -charH * 3) { console.log(`FELL-THROUGH y=${player.position.y.toFixed(2)}`); resetToSpawn(); return; } // fell out of the world → respawn
+  if (q.get('tel') === '1' && frames % 30 === 0) console.log(`x=${player.position.x.toFixed(2)} z=${player.position.z.toFixed(2)} Y=${player.position.y.toFixed(2)} sup=${supportY.toFixed(2)} ${state}`);
 
   if (moving) player.rotation.y = lerpAngle(player.rotation.y, Math.atan2(wishDir.x, wishDir.z), TUNE.turnLerp * dt);
   const speed = (move.run ? TUNE.runSpeed : TUNE.walkSpeed) * charH;
   hVel.copy(wishDir).multiplyScalar(moving ? speed : 0);
 
-  // Capsule collide-and-slide: apply gravity + horizontal input, depenetrate the
-  // capsule out of the mesh, and slide along contacts. One unified pass handles
-  // walls, floor, steps and slopes — no separate wall-push vs ground-snap conflict.
+  // Locomotion. With the reliability layer on, movement is NAV-DRIVEN: free
+  // horizontal motion confined to the walkable platform — so the figurine can't be
+  // trapped by the bumpy mesh, fall through a hole, or walk off an edge — standing
+  // on the hole-filled NavGrid. With it off, fall back to raw capsule-vs-mesh
+  // collide-and-slide (kept for A/B comparison via the debug toggle).
   const radius = CAPSULE_RADIUS * charH;
-  const segLen = Math.max(0.02, charH - 2 * radius);
-  const subdt = dt / PHYSICS_STEPS;
-  let grounded = false;
-  for (let s = 0; s < PHYSICS_STEPS; s++) {
-    velocity.y += TUNE.gravity * charH * subdt;
-    disp.set(hVel.x * subdt, velocity.y * subdt, hVel.z * subdt);
-    collision.moveCapsule(player.position, radius, segLen, disp, correction);
-    // `correction` is the depenetration push-out only (excludes the move above),
-    // so jumping up (no penetration) is not mistaken for standing on ground.
-    if (correction.y > Math.abs(subdt * velocity.y * 0.25)) {   // pushed up ⇒ on ground
-      velocity.set(0, 0, 0); grounded = true;
-    } else if (correction.lengthSq() > 1e-12) {                 // hit a wall ⇒ slide along it
-      slideN.copy(correction).normalize();
-      velocity.addScaledVector(slideN, -slideN.dot(velocity));
-    }
-  }
-
-  // Ground snapping: if we just walked off a small down-step, stick to it rather
-  // than briefly launching (kills stair-edge jitter). Only heading downward.
-  if (!grounded && wasGrounded && velocity.y <= 0) {
-    const gy = collision.groundHeightAt(player.position.x, player.position.z, player.position.y + radius);
-    if (gy <= player.position.y && player.position.y - gy < charH * 0.35) {
-      player.position.y = gy; velocity.set(0, 0, 0); grounded = true;
-    }
-  }
+  const grounded = navGrid && useNavGround ? navMove(dt, radius) : meshMove(dt, radius);
   wasGrounded = grounded;
 
   // Visual-only vertical smoothing: physics feet (player.position.y) can bob as the
@@ -499,6 +495,63 @@ function updateController(dt: number): void {
   if (charModel) charModel.position.y = charFeetOffset + (smoothFeetY - player.position.y);
 
   updateLocomotion(grounded, moving);
+}
+
+/** Nav-driven movement: horizontal motion confined to the walkable platform (with
+ *  axis-separated edge-sliding so you slide along a wall instead of freezing),
+ *  standing on the hole-filled NavGrid. Ballistic while airborne (jump/fall),
+ *  landing on the platform at its real height. Returns whether we're grounded. */
+function navMove(dt: number, radius: number): boolean {
+  const nav = navGrid!, p = player.position;
+  const band = charH * PLATFORM_OPTS.stepFactor; // max step you can walk up/down
+  if (state === 'air') {
+    velocity.y += TUNE.gravity * charH * dt;
+    p.x += hVel.x * dt; p.z += hVel.z * dt; p.y += velocity.y * dt;
+    if (velocity.y <= 0) {
+      const floor = nav.surfaceBelow(p.x, p.z, p.y + radius * 0.5);
+      if (floor !== null && p.y <= floor) { p.y = floor; velocity.set(0, 0, 0); supportY = floor; lastGood.copy(p); return true; }
+    }
+    return false;
+  }
+  navMoveHoriz(hVel.x * dt, hVel.z * dt, band);
+  const here = nav.surfaceNear(p.x, p.z, supportY, band);
+  if (here !== null) { p.y = here; supportY = here; velocity.set(0, 0, 0); lastGood.copy(p); return true; }
+  if (nav.nearest(lastGood.x, lastGood.z, supportY, navRecover)) { p.copy(navRecover); supportY = navRecover.y; velocity.set(0, 0, 0); lastGood.copy(p); } // recovered
+  return true;
+}
+
+/** Move (dx,dz) but stay on the platform: take the full step if it lands on a
+ *  walkable surface (within `band` of the current support height, so small steps
+ *  up/down are fine), else slide along whichever axis keeps ground underfoot. */
+function navMoveHoriz(dx: number, dz: number, band: number): void {
+  const nav = navGrid!, p = player.position, x0 = p.x, z0 = p.z;
+  if (nav.surfaceNear(x0 + dx, z0 + dz, supportY, band) !== null) { p.x = x0 + dx; p.z = z0 + dz; return; }
+  if (dx !== 0 && nav.surfaceNear(x0 + dx, z0, supportY, band) !== null) p.x = x0 + dx;
+  if (dz !== 0 && nav.surfaceNear(p.x, z0 + dz, supportY, band) !== null) p.z = z0 + dz;
+}
+
+/** Raw capsule-vs-mesh collide-and-slide (the pre-nav movement, kept for A/B). One
+ *  unified pass handles walls, floor, steps and slopes. Returns whether grounded. */
+function meshMove(dt: number, radius: number): boolean {
+  if (!collision) return false;
+  const segLen = Math.max(0.02, charH - 2 * radius);
+  const subdt = dt / PHYSICS_STEPS;
+  let grounded = false;
+  for (let s = 0; s < PHYSICS_STEPS; s++) {
+    velocity.y += TUNE.gravity * charH * subdt;
+    disp.set(hVel.x * subdt, velocity.y * subdt, hVel.z * subdt);
+    collision.moveCapsule(player.position, radius, segLen, disp, correction);
+    // `correction` is the depenetration push-out only (excludes the move above),
+    // so jumping up (no penetration) is not mistaken for standing on ground.
+    if (correction.y > Math.abs(subdt * velocity.y * 0.25)) { velocity.set(0, 0, 0); grounded = true; }
+    else if (correction.lengthSq() > 1e-12) { slideN.copy(correction).normalize(); velocity.addScaledVector(slideN, -slideN.dot(velocity)); }
+  }
+  // stick to a small down-step rather than briefly launching (kills stair-edge jitter)
+  if (!grounded && wasGrounded && velocity.y <= 0) {
+    const gy = collision.groundHeightAt(player.position.x, player.position.z, player.position.y + radius);
+    if (gy <= player.position.y && player.position.y - gy < charH * 0.35) { player.position.y = gy; velocity.set(0, 0, 0); grounded = true; }
+  }
+  return grounded;
 }
 
 /** Drive the animation state machine from grounded + movement. */
@@ -604,10 +657,10 @@ const platformTmp = new THREE.Object3D();
 const platformColor = new THREE.Color();
 function rebuildPlatformOverlay(): void {
   disposePlatformOverlay();
+  navGrid = null;
   if (!collision) return;
-  const field = collision.extractPlatforms(
-    lastVoxelSize, charH, charH * PLATFORM_OPTS.stepFactor, PLATFORM_OPTS.minCells,
-  );
+  navGrid = collision.buildNavGrid(lastVoxelSize, charH, charH * PLATFORM_OPTS.stepFactor, PLATFORM_OPTS.minCells);
+  const field = navGrid.toField();
   const cells = field.positions.length / 3;
   // size histogram: how concentrated are cells? (a few big surfaces + noise specks?)
   const sizes = new Int32Array(field.platformCount);
@@ -694,6 +747,9 @@ function setupDebugMenu(): void {
   platformCheckbox = addToggle('Platforms (P)', showPlatforms, setPlatformOverlay,
     'Spike 1: color the walkable surfaces the collision decomposes into — floor, ' +
     'couch, counter. Distinct colors = distinct platforms (reached by climbing/jumping).');
+  addToggle('Reliable ground (nav)', useNavGround, (on) => { useNavGround = on; },
+    'Spike 2: stand on / confine to the hole-filled NavGrid so the figurine can\'t ' +
+    'fall through gaps or walk off platform edges. Off = raw mesh collision only.');
   addSlider('Platform: step limit', PLATFORM_OPTS.stepFactor, 0.1, 1, 0.05, (v) => {
     PLATFORM_OPTS.stepFactor = v; rebuildPlatformOverlay();
   }, 'Max height (in char-heights) two neighboring cells can differ and still be ONE ' +
