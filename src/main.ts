@@ -526,10 +526,14 @@ function climbUpdate(dt: number): void {
     player.position.y = climbTopY;
     player.position.addScaledVector(climbNormal, -charH * 0.35); // step forward onto the ledge
     state = 'ground'; autoClimb = false; play('idle', TUNE.fade);
-    // land on the actual platform surface up there (nav is authoritative)
-    const s = navGrid ? navGrid.surfaceNear(player.position.x, player.position.z, climbTopY, charH * 0.5) : null;
-    player.position.y = s ?? climbTopY;
-    supportY = player.position.y; lastGood.copy(player.position);
+    // Land on a real nav surface up there — directly under us, else the nearest one —
+    // so we never mantle into unsupported space and fall through.
+    const s = navGrid ? navGrid.surfaceNear(player.position.x, player.position.z, climbTopY, charH * 0.6) : null;
+    if (s !== null) { player.position.y = s; supportY = s; }
+    else if (navGrid && navGrid.nearest(player.position.x, player.position.z, climbTopY, navRecover)) {
+      player.position.copy(navRecover); supportY = navRecover.y;
+    } else { player.position.y = climbTopY; supportY = climbTopY; }
+    lastGood.copy(player.position);
   } else if (!autoClimb && player.position.y <= floorY) { // manual: slid back to the floor
     player.position.y = floorY;
     player.position.addScaledVector(climbNormal, charH * 0.05);
@@ -553,7 +557,11 @@ function updateController(dt: number): void {
   if (state === 'climb') { climbUpdate(dt); return; }
   if (state === 'jump_start') return;        // anticipation freeze; onActionFinished launches
   if (!collision) return;
-  if (player.position.y < -charH * 3) { console.log(`FELL-THROUGH y=${player.position.y.toFixed(2)}`); resetToSpawn(); return; } // fell out of the world → respawn
+  if (player.position.y < -charH * 3) { // lost the surface (rare edge case)
+    if (navGrid && useNavGround) { player.position.copy(lastGood); supportY = lastGood.y; velocity.set(0, 0, 0); state = 'ground'; } // snap back to the last valid spot (gentle)
+    else resetToSpawn();
+    return;
+  }
   if (q.get('tel') === '1' && frames % 30 === 0) console.log(`x=${player.position.x.toFixed(2)} z=${player.position.z.toFixed(2)} Y=${player.position.y.toFixed(2)} sup=${supportY.toFixed(2)} ${state}`);
 
   if (moving) player.rotation.y = lerpAngle(player.rotation.y, Math.atan2(wishDir.x, wishDir.z), TUNE.turnLerp * dt);
@@ -595,17 +603,25 @@ function navMove(dt: number, radius: number): boolean {
     }
     return false;
   }
-  // grounded: move, resolving what's at the platform edge — step / climb / wall
-  const outcome = hVel.x !== 0 || hVel.z !== 0 ? navHorizontal(hVel.x * dt, hVel.z * dt, band) : 'step';
-  if (outcome === 'climb') return false;                              // now mantling (climb state)
+  // grounded: walk on the nav (step / slide / step-down), then push out of walls
+  const moving = hVel.x !== 0 || hVel.z !== 0;
+  const startX = p.x, startZ = p.z;
+  if (moving) navHorizontal(hVel.x * dt, hVel.z * dt, band);
   // Wall collision: push the capsule out of solid mesh (walls/furniture) horizontally.
-  // The NavGrid owns the vertical, so we discard the vertical correction — this blocks
-  // walls without the vertical-bump wedging that made the raw mesh sim trap.
-  if (collision && (hVel.x !== 0 || hVel.z !== 0)) {
+  // Feet lifted above floor bumps so only walls push; NavGrid owns the vertical (no
+  // bump-wedging, no fall-through).
+  if (collision && moving) {
     const segLen = Math.max(0.02, charH - 2 * radius);
-    wallFeet.set(p.x, supportY + charH * 0.25, p.z); // lift feet above floor bumps so only walls push
+    wallFeet.set(p.x, supportY + charH * 0.25, p.z);
     collision.moveCapsule(wallFeet, radius, segLen, zeroDisp, wallCorr);
     p.x = wallFeet.x; p.z = wallFeet.z;
+  }
+  // Blocked by a wall/ledge (wanted to move but barely did)? Try to climb it — driven
+  // by the block itself, since the wall push-out stops us before we ever step "into" it.
+  if (moving) {
+    const intended = Math.hypot(hVel.x, hVel.z) * dt;
+    const actual = Math.hypot(p.x - startX, p.z - startZ);
+    if (actual < intended * 0.5 && tryClimb(hVel.x, hVel.z, band)) return false;
   }
   const here = nav.surfaceNear(p.x, p.z, supportY, band);
   if (here !== null) { p.y = here; supportY = here; velocity.set(0, 0, 0); lastGood.copy(p); return true; }
@@ -613,32 +629,33 @@ function navMove(dt: number, radius: number): boolean {
   return true;
 }
 
-/** Resolve a grounded horizontal move at the platform boundary:
- *   'step'  — moved onto a continuing surface: a small step up/down, a slide along a
- *             wall/edge, or a controlled step-DOWN onto a lower platform; position
- *             (and, for a step-down, `supportY`) updated.
- *   'climb' — a ledge within climb reach is ahead → auto-mantle started.
- *   'block' — a too-tall wall or the world edge (nothing below) dead ahead → stay put. */
-function navHorizontal(dx: number, dz: number, band: number): 'step' | 'climb' | 'block' {
+/** Walking into a wall/ledge and stuck → climb it: probe a few cells ahead for a
+ *  higher walkable surface within reach (mantle onto it), else grab a near-vertical
+ *  mesh face and scale it. Returns true if a climb started. */
+function tryClimb(dx: number, dz: number, band: number): boolean {
+  const nav = navGrid!, p = player.position;
+  const climbLimit = supportY + charH * PLATFORM_OPTS.climbMax;
+  const inv = 1 / Math.hypot(dx, dz), ux = dx * inv, uz = dz * inv;
+  for (let s = 1; s <= 5; s++) {
+    const up = nav.surfaceAbove(p.x + ux * nav.step * s, p.z + uz * nav.step * s, supportY + band);
+    if (up !== null && up <= climbLimit) { beginAutoClimb(up); return true; }
+  }
+  return tryAutoWallClimb(dx, dz); // mesh fallback for a wall with no walkable nav top
+}
+
+/** Move on the nav: onto a continuing surface (small step up/down), sliding along a
+ *  wall/edge, or a controlled step-DOWN onto a lower platform. Leaves the position
+ *  unchanged if blocked (a wall/edge) — navMove's block detection then tries a climb. */
+function navHorizontal(dx: number, dz: number, band: number): void {
   const nav = navGrid!, p = player.position, x0 = p.x, z0 = p.z, tx = x0 + dx, tz = z0 + dz;
-  if (nav.surfaceNear(tx, tz, supportY, band) !== null) { p.x = tx; p.z = tz; return 'step'; } // continues
+  if (nav.surfaceNear(tx, tz, supportY, band) !== null) { p.x = tx; p.z = tz; return; } // continues
   // grazing an edge/wall: if either axis alone stays on the platform, slide along it
   const xOK = dx !== 0 && nav.surfaceNear(x0 + dx, z0, supportY, band) !== null;
   const zOK = dz !== 0 && nav.surfaceNear(x0, z0 + dz, supportY, band) !== null;
-  if (xOK || zOK) { if (xOK) p.x = x0 + dx; if (zOK) p.z = z0 + dz; return 'step'; }
-  // heading off the platform in both axes → climb it, step down off it, or it's a wall.
-  // Probe a few cells ahead (past a thin wall's thickness) for a higher walkable
-  // surface within climb reach → auto-climb up onto it.
-  const climbLimit = supportY + charH * PLATFORM_OPTS.climbMax;
-  const inv = 1 / Math.hypot(dx, dz), ux = dx * inv, uz = dz * inv;
-  for (let s = 1; s <= 4; s++) {
-    const up = nav.surfaceAbove(x0 + ux * nav.step * s, z0 + uz * nav.step * s, supportY + band);
-    if (up !== null && up <= climbLimit) { beginAutoClimb(up); return 'climb'; }
-  }
-  const down = nav.surfaceBelow(tx, tz, supportY - band);        // a lower platform ahead
-  if (down !== null && down >= supportY - charH * DROP_MAX) { p.x = tx; p.z = tz; supportY = down; return 'step'; } // controlled step-down (render eases it)
-  if (tryAutoWallClimb(dx, dz)) return 'climb';                  // mesh fallback: scale a near-vertical wall face
-  return 'block';                                                // world edge / far floater with nothing to climb → stop
+  if (xOK || zOK) { if (xOK) p.x = x0 + dx; if (zOK) p.z = z0 + dz; return; }
+  // step DOWN onto a lower platform within reach (render eases the drop)
+  const down = nav.surfaceBelow(tx, tz, supportY - band);
+  if (down !== null && down >= supportY - charH * DROP_MAX) { p.x = tx; p.z = tz; supportY = down; }
 }
 
 /** Raw capsule-vs-mesh collide-and-slide (the pre-nav movement, kept for A/B). One
