@@ -332,8 +332,10 @@ function keyEvent(e: KeyboardEvent, v: 0 | 1): void {
     case 'KeyA': move.l = v; break;
     case 'KeyD': move.r = v; break;
     case 'ShiftLeft': case 'ShiftRight': move.run = !!v; break;
-    case 'Space': if (v && state === 'ground') startJump(); e.preventDefault(); break;
-    case 'KeyC': if (v) toggleClimb(); break;
+    case 'Space':
+      if (v && state === 'ground') startJump();
+      else if (v && state === 'climb') climbJumpOff();
+      e.preventDefault(); break;
     case 'KeyV': if (v) setVoxelOverlay(!showVoxels); break;
     case 'KeyP': if (v) setPlatformOverlay(!showPlatforms); break;
   }
@@ -459,68 +461,60 @@ function lerpAngle(a: number, b: number, t: number): number {
   return a + d * Math.min(t, 1);
 }
 
-// --- climb (grab a wall / mantle onto furniture) ----------------------------
-const climbNormal = new THREE.Vector3(0, 0, 1);
-const forward = new THREE.Vector3();
-let climbTopY = 0;
-let autoClimb = false; // true when climb was auto-triggered by walking into a ledge
-const climbAnchor = new THREE.Vector3(); // where the last auto-climb started
-let climbStartY = 0;                     // supportY at that start (to measure progress)
-let climbBlocked = false;                // suppress re-climbing a spot that gave no gain
+// --- climb (scale a near-vertical wall, then cling; Space to jump off) --------
+// Automatic: walking into a wall enters climb. The figurine ascends the face,
+// following it up; when the wall ends it tops out — onto a surface if there's one
+// to stand on, otherwise it clings at the top until you jump (Space) off.
+const climbDir = new THREE.Vector3();   // horizontal direction into the wall
+const climbProbe = new THREE.Vector3(); // scratch for the forward wall raycast
+let climbCling = false;                 // topped out with nowhere to stand → hanging
 
-/** Start an automatic mantle onto a ledge at `topY` ahead, in the current move
- *  direction — no button. Reuses the climb state; auto-ascends to completion. */
-function beginAutoClimb(topY: number): void {
-  climbNormal.set(-wishDir.x, 0, -wishDir.z).normalize(); // points back off the ledge
-  climbTopY = topY;
-  autoClimb = true;
+/** True if a near-vertical wall is right in front (in the `dx,dz` move direction);
+ *  if so, enter the climb. Called when horizontal movement got blocked. */
+function tryStartClimb(dx: number, dz: number): boolean {
+  if (!collision || !actions['climb']) return false;
+  climbProbe.set(dx, 0, dz);
+  if (climbProbe.lengthSq() < 1e-9) return false;
+  climbProbe.normalize();
+  const radius = CAPSULE_RADIUS * charH;
+  climbDir.copy(climbProbe);
+  climbProbe.set(player.position.x, supportY + charH * 0.5, player.position.z); // chest height
+  const wall = collision.wallAhead(climbProbe, climbDir, radius + charH * 0.2);
+  if (!wall || Math.abs(wall.up) > 0.5) return false; // nothing there, or not steep enough to be a wall
+  climbCling = false;
   state = 'climb';
   velocity.set(0, 0, 0);
-  player.rotation.y = Math.atan2(wishDir.x, wishDir.z); // face the ledge
-  if (actions['climb']) play('climb', TUNE.fade);
-  if (q.get('tel') === '1') console.log(`AUTOCLIMB from=${supportY.toFixed(2)} to=${topY.toFixed(2)}`);
+  player.rotation.y = Math.atan2(climbDir.x, climbDir.z); // face the wall
+  play('climb', TUNE.fade);
+  return true;
 }
 
-function toggleClimb(): void {
-  if (state === 'climb') { exitClimb(); return; }
-  if (state !== 'ground' || !actions['climb'] || !collision) return;
-  forward.set(Math.sin(player.rotation.y), 0, Math.cos(player.rotation.y));
-  const face = collision.climbableFaceAt(player.position, charH, forward);
-  if (!face) return;
-  climbNormal.copy(face.normal);
-  climbTopY = face.topY;
-  state = 'climb'; velocity.set(0, 0, 0);
-  player.position.x = face.snap.x;
-  player.position.z = face.snap.z;
-  player.rotation.y = Math.atan2(-climbNormal.x, -climbNormal.z); // face the wall
-  play('climb', TUNE.fade);
+/** Jump off the wall: launch up and away from the face. */
+function climbJumpOff(): void {
+  velocity.set(-climbDir.x * TUNE.walkSpeed * charH, TUNE.jumpVel * charH, -climbDir.z * TUNE.walkSpeed * charH);
+  state = 'air'; climbCling = false;
+  play(actions['jump_loop'] ? 'jump_loop' : 'idle', 0.08);
 }
-function exitClimb(): void { state = 'air'; velocity.set(0, 0, 0); play(actions['jump_loop'] ? 'jump_loop' : 'idle', 0.12); }
 
 function climbUpdate(dt: number): void {
-  // auto-climb ascends on its own; manual climb follows W/S
-  const up = autoClimb ? 1 : move.f - move.b;
-  player.position.y += up * TUNE.climbSpeed * charH * dt;
-  const floorY = collision ? collision.groundHeightAt(player.position.x, player.position.z, climbTopY + charH) : 0;
-  if (player.position.y >= climbTopY) { // mantle over the top
-    player.position.y = climbTopY;
-    player.position.addScaledVector(climbNormal, -charH * 0.35); // step forward onto the ledge
-    state = 'ground'; autoClimb = false; play('idle', TUNE.fade);
-    // Land on a real nav surface up there — directly under us, else the nearest one —
-    // so we never mantle into unsupported space and fall through.
-    const s = navGrid ? navGrid.surfaceNear(player.position.x, player.position.z, climbTopY, charH * 0.6) : null;
-    if (s !== null) { player.position.y = s; supportY = s; }
-    else if (navGrid && navGrid.nearest(player.position.x, player.position.z, climbTopY, navRecover)) {
-      player.position.copy(navRecover); supportY = navRecover.y;
-    } else { player.position.y = climbTopY; supportY = climbTopY; }
-    lastGood.copy(player.position);
-    // if the mantle didn't actually gain a real step up, suppress re-climbing here
-    climbBlocked = supportY < climbStartY + charH * PLATFORM_OPTS.stepFactor * 0.5;
-  } else if (!autoClimb && player.position.y <= floorY) { // manual: slid back to the floor
-    player.position.y = floorY;
-    player.position.addScaledVector(climbNormal, charH * 0.05);
-    state = 'ground'; play('idle', TUNE.fade);
-    supportY = player.position.y; lastGood.copy(player.position);
+  if (climbCling) return; // hanging at the top — Space jumps off
+  const p = player.position, radius = CAPSULE_RADIUS * charH;
+  p.y += TUNE.climbSpeed * charH * dt; // ascend the face
+  climbProbe.set(p.x, p.y + charH * 0.5, p.z);
+  const wall = collision ? collision.wallAhead(climbProbe, climbDir, radius + charH * 0.4) : null;
+  if (wall) { // still against the wall → hold a fixed gap to the face and keep climbing
+    p.addScaledVector(climbDir, wall.distance - radius * 1.1);
+    return;
+  }
+  // wall ended → topped out. Is there a surface to stand on just over the lip?
+  const overX = p.x + climbDir.x * radius * 2, overZ = p.z + climbDir.z * radius * 2;
+  const g = navGrid ? navGrid.surfaceNear(overX, overZ, p.y, charH * 0.8) : null;
+  if (g !== null && g <= p.y + charH * 0.3) { // mantle onto it
+    p.set(overX, g, overZ);
+    supportY = g; lastGood.copy(p);
+    state = 'ground'; velocity.set(0, 0, 0); play('idle', TUNE.fade);
+  } else {
+    climbCling = true; // nothing up there → cling at the top of the wall
   }
 }
 
@@ -578,7 +572,8 @@ function navMove(dt: number, radius: number): boolean {
   const band = charH * PLATFORM_OPTS.stepFactor; // max step you can walk up/down
   if (state === 'air') {
     velocity.y += TUNE.gravity * charH * dt;
-    p.x += hVel.x * dt; p.z += hVel.z * dt; p.y += velocity.y * dt;
+    // horizontal = input (air control) + any launch velocity (e.g. jumping off a wall)
+    p.x += (hVel.x + velocity.x) * dt; p.z += (hVel.z + velocity.z) * dt; p.y += velocity.y * dt;
     if (velocity.y <= 0) {
       const floor = nav.surfaceBelow(p.x, p.z, p.y + radius * 0.5);
       if (floor !== null && p.y <= floor) { p.y = floor; velocity.set(0, 0, 0); supportY = floor; lastGood.copy(p); return true; }
@@ -598,37 +593,16 @@ function navMove(dt: number, radius: number): boolean {
     collision.moveCapsule(wallFeet, radius, segLen, zeroDisp, wallCorr);
     p.x = wallFeet.x; p.z = wallFeet.z;
   }
-  // Blocked by a wall/ledge (wanted to move but barely did)? Try to climb it — driven
-  // by the block itself, since the wall push-out stops us before we ever step "into" it.
+  // Blocked by a wall (pushed but barely moved)? If it's near-vertical, start climbing it.
   if (moving) {
     const intended = Math.hypot(hVel.x, hVel.z) * dt;
     const actual = Math.hypot(p.x - startX, p.z - startZ);
-    if (actual < intended * 0.5 && tryClimb(hVel.x, hVel.z, band)) return false;
+    if (actual < intended * 0.5 && tryStartClimb(hVel.x, hVel.z)) return false;
   }
   const here = nav.surfaceNear(p.x, p.z, supportY, band);
   if (here !== null) { p.y = here; supportY = here; velocity.set(0, 0, 0); lastGood.copy(p); return true; }
   if (nav.nearest(lastGood.x, lastGood.z, supportY, navRecover)) { p.copy(navRecover); supportY = navRecover.y; velocity.set(0, 0, 0); lastGood.copy(p); } // recovered
   return true;
-}
-
-/** Walking into a wall/ledge and stuck → climb it, but only if there's a real
- *  walkable surface within reach to end up on: probe a few cells ahead for a higher
- *  platform (mantle onto it). A bare wall with no reachable top just blocks — no
- *  janky climb-and-snap-back. A recent no-progress attempt at the same spot is
- *  suppressed so the climb animation can't loop. Returns true if a climb started. */
-function tryClimb(dx: number, dz: number, band: number): boolean {
-  if (climbBlocked) {
-    if (player.position.distanceToSquared(climbAnchor) < (charH * 0.5) ** 2) return false; // still stuck here
-    climbBlocked = false; // moved away → allow again
-  }
-  const nav = navGrid!, p = player.position;
-  const climbLimit = supportY + charH * PLATFORM_OPTS.climbMax;
-  const inv = 1 / Math.hypot(dx, dz), ux = dx * inv, uz = dz * inv;
-  for (let s = 1; s <= 5; s++) {
-    const up = nav.surfaceAbove(p.x + ux * nav.step * s, p.z + uz * nav.step * s, supportY + band);
-    if (up !== null && up <= climbLimit) { climbAnchor.copy(p); climbStartY = supportY; beginAutoClimb(up); return true; }
-  }
-  return false; // bare wall → block cleanly (push-out stops us)
 }
 
 /** Move on the nav: onto a continuing surface (small step up/down), sliding along a

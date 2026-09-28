@@ -134,6 +134,8 @@ export interface Collision {
   moveCapsule(feet: THREE.Vector3, radius: number, segLength: number, displacement: THREE.Vector3, outCorrection: THREE.Vector3): void;
   /** Nearest climbable vertical face along `forward`, or null. */
   climbableFaceAt(pos: THREE.Vector3, charH: number, forward: THREE.Vector3): ClimbFace | null;
+  /** Nearest surface ahead along `dir` within `max` — {distance, up-normal}, or null. */
+  wallAhead(origin: THREE.Vector3, dir: THREE.Vector3, max: number): { distance: number; up: number } | null;
   /** Find a sensible spawn near the content centre: stand on the lowest real
    *  up-facing surface with headroom (the floor in a room, the couch/table top in
    *  a floorless scan), never the phantom backstop plane. Writes {x,y,z} to `out`. */
@@ -196,6 +198,17 @@ export class MeshCollision implements Collision {
     this.ray.direction.copy(dir);
     const hit = this.bvh.raycastFirst(this.ray, THREE.DoubleSide);
     return hit && hit.distance < max ? hit.distance : max;
+  }
+
+  /** Nearest surface straight ahead along `dir` within `max`: its distance and the
+   *  up-component of its normal (|up| near 0 ⇒ a near-vertical wall face). null if
+   *  nothing's there. Used by the climb to find and follow a wall. */
+  wallAhead(origin: THREE.Vector3, dir: THREE.Vector3, max: number): { distance: number; up: number } | null {
+    this.ray.origin.copy(origin);
+    this.ray.direction.copy(dir);
+    const hit = this.bvh.raycastFirst(this.ray, THREE.DoubleSide);
+    if (!hit || hit.distance > max) return null;
+    return { distance: hit.distance, up: hit.face?.normal.y ?? 1 };
   }
 
   groundHeightAt(x: number, z: number, fromY = 1e4): number {
