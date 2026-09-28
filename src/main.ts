@@ -478,6 +478,29 @@ function beginAutoClimb(topY: number): void {
   if (q.get('tel') === '1') console.log(`AUTOCLIMB from=${supportY.toFixed(2)} to=${topY.toFixed(2)}`);
 }
 
+/** When blocked by a wall, grab its (near-vertical) face via the mesh and auto-climb
+ *  up it — handles tall walls that have no walkable nav platform on top (unlike
+ *  beginAutoClimb, which mantles onto a ledge). `dx,dz` is the direction walked in. */
+function tryAutoWallClimb(dx: number, dz: number): boolean {
+  if (!collision || !actions['climb']) return false;
+  forward.set(dx, 0, dz);
+  if (forward.lengthSq() < 1e-9) return false;
+  forward.normalize();
+  const face = collision.climbableFaceAt(player.position, charH, forward);
+  if (!face) return false;
+  climbNormal.copy(face.normal);
+  climbTopY = face.topY;
+  autoClimb = true;
+  state = 'climb';
+  velocity.set(0, 0, 0);
+  player.position.x = face.snap.x;
+  player.position.z = face.snap.z;
+  player.rotation.y = Math.atan2(-climbNormal.x, -climbNormal.z); // face the wall
+  play('climb', TUNE.fade);
+  if (q.get('tel') === '1') console.log(`WALLCLIMB from=${supportY.toFixed(2)} to=${climbTopY.toFixed(2)}`);
+  return true;
+}
+
 function toggleClimb(): void {
   if (state === 'climb') { exitClimb(); return; }
   if (state !== 'ground' || !actions['climb'] || !collision) return;
@@ -603,12 +626,19 @@ function navHorizontal(dx: number, dz: number, band: number): 'step' | 'climb' |
   const xOK = dx !== 0 && nav.surfaceNear(x0 + dx, z0, supportY, band) !== null;
   const zOK = dz !== 0 && nav.surfaceNear(x0, z0 + dz, supportY, band) !== null;
   if (xOK || zOK) { if (xOK) p.x = x0 + dx; if (zOK) p.z = z0 + dz; return 'step'; }
-  // heading off the platform in both axes → climb it, step down off it, or it's a wall
-  const up = nav.surfaceAbove(tx, tz, supportY + band);          // a ledge/wall ahead
-  if (up !== null && up <= supportY + charH * PLATFORM_OPTS.climbMax) { beginAutoClimb(up); return 'climb'; }
+  // heading off the platform in both axes → climb it, step down off it, or it's a wall.
+  // Probe a few cells ahead (past a thin wall's thickness) for a higher walkable
+  // surface within climb reach → auto-climb up onto it.
+  const climbLimit = supportY + charH * PLATFORM_OPTS.climbMax;
+  const inv = 1 / Math.hypot(dx, dz), ux = dx * inv, uz = dz * inv;
+  for (let s = 1; s <= 4; s++) {
+    const up = nav.surfaceAbove(x0 + ux * nav.step * s, z0 + uz * nav.step * s, supportY + band);
+    if (up !== null && up <= climbLimit) { beginAutoClimb(up); return 'climb'; }
+  }
   const down = nav.surfaceBelow(tx, tz, supportY - band);        // a lower platform ahead
   if (down !== null && down >= supportY - charH * DROP_MAX) { p.x = tx; p.z = tz; supportY = down; return 'step'; } // controlled step-down (render eases it)
-  return 'block';                                                // too-tall wall, a far-below floater, or the world edge → stop
+  if (tryAutoWallClimb(dx, dz)) return 'climb';                  // mesh fallback: scale a near-vertical wall face
+  return 'block';                                                // world edge / far floater with nothing to climb → stop
 }
 
 /** Raw capsule-vs-mesh collide-and-slide (the pre-nav movement, kept for A/B). One
