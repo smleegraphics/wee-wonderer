@@ -518,6 +518,7 @@ function climbUpdate(dt: number): void {
 // scratch vectors for the collide-and-slide loop (avoid per-frame allocation)
 const hVel = new THREE.Vector3(), disp = new THREE.Vector3(), correction = new THREE.Vector3(), slideN = new THREE.Vector3();
 const navRecover = new THREE.Vector3();
+const wallFeet = new THREE.Vector3(), zeroDisp = new THREE.Vector3(), wallCorr = new THREE.Vector3();
 
 function updateController(dt: number): void {
   camera.getWorldDirection(camFwd); camFwd.y = 0; camFwd.normalize();
@@ -574,6 +575,15 @@ function navMove(dt: number, radius: number): boolean {
   // grounded: move, resolving what's at the platform edge — step / climb / wall
   const outcome = hVel.x !== 0 || hVel.z !== 0 ? navHorizontal(hVel.x * dt, hVel.z * dt, band) : 'step';
   if (outcome === 'climb') return false;                              // now mantling (climb state)
+  // Wall collision: push the capsule out of solid mesh (walls/furniture) horizontally.
+  // The NavGrid owns the vertical, so we discard the vertical correction — this blocks
+  // walls without the vertical-bump wedging that made the raw mesh sim trap.
+  if (collision && (hVel.x !== 0 || hVel.z !== 0)) {
+    const segLen = Math.max(0.02, charH - 2 * radius);
+    wallFeet.set(p.x, supportY + charH * 0.25, p.z); // lift feet above floor bumps so only walls push
+    collision.moveCapsule(wallFeet, radius, segLen, zeroDisp, wallCorr);
+    p.x = wallFeet.x; p.z = wallFeet.z;
+  }
   const here = nav.surfaceNear(p.x, p.z, supportY, band);
   if (here !== null) { p.y = here; supportY = here; velocity.set(0, 0, 0); lastGood.copy(p); return true; }
   if (nav.nearest(lastGood.x, lastGood.z, supportY, navRecover)) { p.copy(navRecover); supportY = navRecover.y; velocity.set(0, 0, 0); lastGood.copy(p); } // recovered

@@ -303,6 +303,16 @@ export class MeshCollision implements Collision {
     return plane;
   }
 
+  /** True if a capsule at (x,z) standing at world height `y` has `need` clear space
+   *  above it — used to tell a real floor-gap (empty above, fill it) from a wall
+   *  footprint (solid above, don't fill it) when closing platform holes. */
+  private hasHeadroom(x: number, z: number, y: number, need: number): boolean {
+    this.ray.origin.set(x, y + this.groundOffset + 0.02, z);
+    this.ray.direction.copy(UP);
+    const hit = this.bvh.raycastFirst(this.ray, THREE.DoubleSide);
+    return !hit || hit.distance >= need;
+  }
+
   /** Decompose the reachable geometry into connected walkable platforms and index
    *  them into a queryable, hole-filled NavGrid — the reliable ground.
    *  Sample a grid of downward columns; at each, every up-facing surface (not the
@@ -379,8 +389,11 @@ export class MeshCollision implements Collision {
       addEntry(cix[i] * nz + ciz[i], cy[i], pid);
     }
     // fill interior holes per platform: close its footprint mask, and for each newly
-    // enclosed cell add an entry at the height of its nearest platform neighbor.
-    fillPlatformHoles(nx, nz, platformCount, head, nextE, ey, ep, addEntry, fillIters);
+    // enclosed cell add an entry at the height of its nearest platform neighbor —
+    // but only where a capsule actually fits (skips wall footprints, so walls stay solid).
+    const clear = (ix: number, iz: number, y: number) =>
+      this.hasHeadroom(b.min.x + (ix + 0.5) * sampleStep, b.min.z + (iz + 0.5) * sampleStep, y, headroom);
+    fillPlatformHoles(nx, nz, platformCount, head, nextE, ey, ep, addEntry, fillIters, clear);
 
     return new NavGrid(nx, nz, b.min.x, b.min.z, sampleStep,
       head, Int32Array.from(nextE), Float32Array.from(ey), Int32Array.from(ep), platformCount);
@@ -408,6 +421,7 @@ function fillPlatformHoles(
   nx: number, nz: number, platformCount: number,
   head: Int32Array, nextE: number[], ey: number[], ep: number[],
   addEntry: (c: number, y: number, p: number) => void, iters: number,
+  clear: (ix: number, iz: number, y: number) => boolean,
 ): void {
   if (iters <= 0) return;
   const N = nx * nz;
@@ -433,7 +447,7 @@ function fillPlatformHoles(
               if (jx < 0 || jx >= nx || jz < 0 || jz >= nz) continue;
               if (mask[jx * nz + jz]) { hy = h[jx * nz + jz]; break; }
             }
-        if (!Number.isNaN(hy)) addEntry(c, hy, p);
+        if (!Number.isNaN(hy) && clear(ix, iz, hy)) addEntry(c, hy, p); // skip cells blocked by a wall
       }
   }
 }
