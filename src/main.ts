@@ -464,6 +464,9 @@ const climbNormal = new THREE.Vector3(0, 0, 1);
 const forward = new THREE.Vector3();
 let climbTopY = 0;
 let autoClimb = false; // true when climb was auto-triggered by walking into a ledge
+const climbAnchor = new THREE.Vector3(); // where the last auto-climb started
+let climbStartY = 0;                     // supportY at that start (to measure progress)
+let climbBlocked = false;                // suppress re-climbing a spot that gave no gain
 
 /** Start an automatic mantle onto a ledge at `topY` ahead, in the current move
  *  direction — no button. Reuses the climb state; auto-ascends to completion. */
@@ -476,29 +479,6 @@ function beginAutoClimb(topY: number): void {
   player.rotation.y = Math.atan2(wishDir.x, wishDir.z); // face the ledge
   if (actions['climb']) play('climb', TUNE.fade);
   if (q.get('tel') === '1') console.log(`AUTOCLIMB from=${supportY.toFixed(2)} to=${topY.toFixed(2)}`);
-}
-
-/** When blocked by a wall, grab its (near-vertical) face via the mesh and auto-climb
- *  up it — handles tall walls that have no walkable nav platform on top (unlike
- *  beginAutoClimb, which mantles onto a ledge). `dx,dz` is the direction walked in. */
-function tryAutoWallClimb(dx: number, dz: number): boolean {
-  if (!collision || !actions['climb']) return false;
-  forward.set(dx, 0, dz);
-  if (forward.lengthSq() < 1e-9) return false;
-  forward.normalize();
-  const face = collision.climbableFaceAt(player.position, charH, forward);
-  if (!face) return false;
-  climbNormal.copy(face.normal);
-  climbTopY = face.topY;
-  autoClimb = true;
-  state = 'climb';
-  velocity.set(0, 0, 0);
-  player.position.x = face.snap.x;
-  player.position.z = face.snap.z;
-  player.rotation.y = Math.atan2(-climbNormal.x, -climbNormal.z); // face the wall
-  play('climb', TUNE.fade);
-  if (q.get('tel') === '1') console.log(`WALLCLIMB from=${supportY.toFixed(2)} to=${climbTopY.toFixed(2)}`);
-  return true;
 }
 
 function toggleClimb(): void {
@@ -534,6 +514,8 @@ function climbUpdate(dt: number): void {
       player.position.copy(navRecover); supportY = navRecover.y;
     } else { player.position.y = climbTopY; supportY = climbTopY; }
     lastGood.copy(player.position);
+    // if the mantle didn't actually gain a real step up, suppress re-climbing here
+    climbBlocked = supportY < climbStartY + charH * PLATFORM_OPTS.stepFactor * 0.5;
   } else if (!autoClimb && player.position.y <= floorY) { // manual: slid back to the floor
     player.position.y = floorY;
     player.position.addScaledVector(climbNormal, charH * 0.05);
@@ -629,18 +611,24 @@ function navMove(dt: number, radius: number): boolean {
   return true;
 }
 
-/** Walking into a wall/ledge and stuck → climb it: probe a few cells ahead for a
- *  higher walkable surface within reach (mantle onto it), else grab a near-vertical
- *  mesh face and scale it. Returns true if a climb started. */
+/** Walking into a wall/ledge and stuck → climb it, but only if there's a real
+ *  walkable surface within reach to end up on: probe a few cells ahead for a higher
+ *  platform (mantle onto it). A bare wall with no reachable top just blocks — no
+ *  janky climb-and-snap-back. A recent no-progress attempt at the same spot is
+ *  suppressed so the climb animation can't loop. Returns true if a climb started. */
 function tryClimb(dx: number, dz: number, band: number): boolean {
+  if (climbBlocked) {
+    if (player.position.distanceToSquared(climbAnchor) < (charH * 0.5) ** 2) return false; // still stuck here
+    climbBlocked = false; // moved away → allow again
+  }
   const nav = navGrid!, p = player.position;
   const climbLimit = supportY + charH * PLATFORM_OPTS.climbMax;
   const inv = 1 / Math.hypot(dx, dz), ux = dx * inv, uz = dz * inv;
   for (let s = 1; s <= 5; s++) {
     const up = nav.surfaceAbove(p.x + ux * nav.step * s, p.z + uz * nav.step * s, supportY + band);
-    if (up !== null && up <= climbLimit) { beginAutoClimb(up); return true; }
+    if (up !== null && up <= climbLimit) { climbAnchor.copy(p); climbStartY = supportY; beginAutoClimb(up); return true; }
   }
-  return tryAutoWallClimb(dx, dz); // mesh fallback for a wall with no walkable nav top
+  return false; // bare wall → block cleanly (push-out stops us)
 }
 
 /** Move on the nav: onto a continuing surface (small step up/down), sliding along a
