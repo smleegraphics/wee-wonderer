@@ -66,7 +66,10 @@ let showPlatforms = q.get('platforms') === '1';
 let platformDebug: THREE.InstancedMesh | null = null;
 let platformCheckbox: HTMLInputElement | null = null;
 let lastVoxelSize = TARGET_RADIUS / 72;
-const PLATFORM_OPTS = { stepFactor: 0.35, minCells: 6 };
+const PLATFORM_OPTS = { stepFactor: 0.35, minCells: 6, climbMax: 1.6, climbDeg: 70 }; // climbMax in char-heights; climbDeg = surfaces steeper than this (from horizontal) climb, not walk — 70° ≈ "vertical or almost vertical"
+if (q.has('climbdeg')) PLATFORM_OPTS.climbDeg = Number(q.get('climbdeg'));
+if (q.has('stepf')) PLATFORM_OPTS.stepFactor = Number(q.get('stepf'));
+const DROP_MAX = 3.5; // furthest you can step down off a ledge (char-heights); beyond = a floater/void → confine
 // Spike 2: the reliable ground. The controller stands on the NavGrid (no
 // fall-through), is confined to it (no walking off), and recovers to `lastGood`.
 let navGrid: NavGrid | null = null;
@@ -460,6 +463,20 @@ function lerpAngle(a: number, b: number, t: number): number {
 const climbNormal = new THREE.Vector3(0, 0, 1);
 const forward = new THREE.Vector3();
 let climbTopY = 0;
+let autoClimb = false; // true when climb was auto-triggered by walking into a ledge
+
+/** Start an automatic mantle onto a ledge at `topY` ahead, in the current move
+ *  direction — no button. Reuses the climb state; auto-ascends to completion. */
+function beginAutoClimb(topY: number): void {
+  climbNormal.set(-wishDir.x, 0, -wishDir.z).normalize(); // points back off the ledge
+  climbTopY = topY;
+  autoClimb = true;
+  state = 'climb';
+  velocity.set(0, 0, 0);
+  player.rotation.y = Math.atan2(wishDir.x, wishDir.z); // face the ledge
+  if (actions['climb']) play('climb', TUNE.fade);
+  if (q.get('tel') === '1') console.log(`AUTOCLIMB from=${supportY.toFixed(2)} to=${topY.toFixed(2)}`);
+}
 
 function toggleClimb(): void {
   if (state === 'climb') { exitClimb(); return; }
@@ -478,14 +495,19 @@ function toggleClimb(): void {
 function exitClimb(): void { state = 'air'; velocity.set(0, 0, 0); play(actions['jump_loop'] ? 'jump_loop' : 'idle', 0.12); }
 
 function climbUpdate(dt: number): void {
-  player.position.y += (move.f - move.b) * TUNE.climbSpeed * charH * dt;
+  // auto-climb ascends on its own; manual climb follows W/S
+  const up = autoClimb ? 1 : move.f - move.b;
+  player.position.y += up * TUNE.climbSpeed * charH * dt;
   const floorY = collision ? collision.groundHeightAt(player.position.x, player.position.z, climbTopY + charH) : 0;
   if (player.position.y >= climbTopY) { // mantle over the top
     player.position.y = climbTopY;
-    player.position.addScaledVector(climbNormal, -charH * 0.35);
-    state = 'ground'; play('idle', TUNE.fade);
-    supportY = player.position.y; lastGood.copy(player.position); // now on the upper platform
-  } else if (player.position.y <= floorY) { // slid back to the floor
+    player.position.addScaledVector(climbNormal, -charH * 0.35); // step forward onto the ledge
+    state = 'ground'; autoClimb = false; play('idle', TUNE.fade);
+    // land on the actual platform surface up there (nav is authoritative)
+    const s = navGrid ? navGrid.surfaceNear(player.position.x, player.position.z, climbTopY, charH * 0.5) : null;
+    player.position.y = s ?? climbTopY;
+    supportY = player.position.y; lastGood.copy(player.position);
+  } else if (!autoClimb && player.position.y <= floorY) { // manual: slid back to the floor
     player.position.y = floorY;
     player.position.addScaledVector(climbNormal, charH * 0.05);
     state = 'ground'; play('idle', TUNE.fade);
@@ -549,21 +571,34 @@ function navMove(dt: number, radius: number): boolean {
     }
     return false;
   }
-  navMoveHoriz(hVel.x * dt, hVel.z * dt, band);
+  // grounded: move, resolving what's at the platform edge — step / climb / wall
+  const outcome = hVel.x !== 0 || hVel.z !== 0 ? navHorizontal(hVel.x * dt, hVel.z * dt, band) : 'step';
+  if (outcome === 'climb') return false;                              // now mantling (climb state)
   const here = nav.surfaceNear(p.x, p.z, supportY, band);
   if (here !== null) { p.y = here; supportY = here; velocity.set(0, 0, 0); lastGood.copy(p); return true; }
   if (nav.nearest(lastGood.x, lastGood.z, supportY, navRecover)) { p.copy(navRecover); supportY = navRecover.y; velocity.set(0, 0, 0); lastGood.copy(p); } // recovered
   return true;
 }
 
-/** Move (dx,dz) but stay on the platform: take the full step if it lands on a
- *  walkable surface (within `band` of the current support height, so small steps
- *  up/down are fine), else slide along whichever axis keeps ground underfoot. */
-function navMoveHoriz(dx: number, dz: number, band: number): void {
-  const nav = navGrid!, p = player.position, x0 = p.x, z0 = p.z;
-  if (nav.surfaceNear(x0 + dx, z0 + dz, supportY, band) !== null) { p.x = x0 + dx; p.z = z0 + dz; return; }
-  if (dx !== 0 && nav.surfaceNear(x0 + dx, z0, supportY, band) !== null) p.x = x0 + dx;
-  if (dz !== 0 && nav.surfaceNear(p.x, z0 + dz, supportY, band) !== null) p.z = z0 + dz;
+/** Resolve a grounded horizontal move at the platform boundary:
+ *   'step'  — moved onto a continuing surface: a small step up/down, a slide along a
+ *             wall/edge, or a controlled step-DOWN onto a lower platform; position
+ *             (and, for a step-down, `supportY`) updated.
+ *   'climb' — a ledge within climb reach is ahead → auto-mantle started.
+ *   'block' — a too-tall wall or the world edge (nothing below) dead ahead → stay put. */
+function navHorizontal(dx: number, dz: number, band: number): 'step' | 'climb' | 'block' {
+  const nav = navGrid!, p = player.position, x0 = p.x, z0 = p.z, tx = x0 + dx, tz = z0 + dz;
+  if (nav.surfaceNear(tx, tz, supportY, band) !== null) { p.x = tx; p.z = tz; return 'step'; } // continues
+  // grazing an edge/wall: if either axis alone stays on the platform, slide along it
+  const xOK = dx !== 0 && nav.surfaceNear(x0 + dx, z0, supportY, band) !== null;
+  const zOK = dz !== 0 && nav.surfaceNear(x0, z0 + dz, supportY, band) !== null;
+  if (xOK || zOK) { if (xOK) p.x = x0 + dx; if (zOK) p.z = z0 + dz; return 'step'; }
+  // heading off the platform in both axes → climb it, step down off it, or it's a wall
+  const up = nav.surfaceAbove(tx, tz, supportY + band);          // a ledge/wall ahead
+  if (up !== null && up <= supportY + charH * PLATFORM_OPTS.climbMax) { beginAutoClimb(up); return 'climb'; }
+  const down = nav.surfaceBelow(tx, tz, supportY - band);        // a lower platform ahead
+  if (down !== null && down >= supportY - charH * DROP_MAX) { p.x = tx; p.z = tz; supportY = down; return 'step'; } // controlled step-down (render eases it)
+  return 'block';                                                // too-tall wall, a far-below floater, or the world edge → stop
 }
 
 /** Raw capsule-vs-mesh collide-and-slide (the pre-nav movement, kept for A/B). One
@@ -695,7 +730,9 @@ function rebuildPlatformOverlay(): void {
   disposePlatformOverlay();
   navGrid = null;
   if (!collision) return;
-  navGrid = collision.buildNavGrid(lastVoxelSize, charH, charH * PLATFORM_OPTS.stepFactor, PLATFORM_OPTS.minCells);
+  const slopeMin = Math.cos((PLATFORM_OPTS.climbDeg * Math.PI) / 180); // steeper than climbDeg → not walkable (a climbable wall)
+  // leveling puts the real floor at y=0; reject anything a char-height below it as sub-floor floater noise
+  navGrid = collision.buildNavGrid(lastVoxelSize, charH, charH * PLATFORM_OPTS.stepFactor, PLATFORM_OPTS.minCells, slopeMin, -charH);
   const field = navGrid.toField();
   const cells = field.positions.length / 3;
   // size histogram: how concentrated are cells? (a few big surfaces + noise specks?)
@@ -813,6 +850,12 @@ function setupDebugMenu(): void {
      'splatting captured too faintly) up to this area, in normalized scan units² ' +
      '(~room-relative — not metres). Bigger fills larger blank panels but can start ' +
      'closing real openings (doorways/windows); 0 = off. Default 2.5.');
+  addSlider('Climb threshold (deg)', PLATFORM_OPTS.climbDeg, 30, 89, 1, (v) => { PLATFORM_OPTS.climbDeg = v; rebuildPlatformOverlay(); },
+    'Surfaces steeper than this angle (from the ground) are CLIMBED; gentler ones you walk up. ' +
+    'Lower = more things count as climbable walls; higher = only near-vertical faces climb.');
+  addSlider('Auto-climb height', PLATFORM_OPTS.climbMax, 0.5, 3, 0.1, (v) => { PLATFORM_OPTS.climbMax = v; },
+    'Spike 3: walking into a ledge up to this tall (in char-heights) auto-climbs onto it; ' +
+    'taller = a wall you stop at. No effect on step-down (you can always step off a ledge).');
   addSlider('Floor flatten (voxels)', VOXEL_OPTS.floorFlat, 0, 2, 0.05, (v) => {
     VOXEL_OPTS.floorFlat = v;
     rebuildCollision();

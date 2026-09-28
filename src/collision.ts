@@ -74,6 +74,17 @@ export class NavGrid {
     return best;
   }
 
+  /** The lowest walkable surface at (x,z) strictly above `y` — a ledge ahead to
+   *  auto-climb onto (or a wall, if it's out of climb reach). */
+  surfaceAbove(x: number, z: number, y: number): number | null {
+    const c = this.cellIndex(x, z);
+    if (c < 0) return null;
+    let best: number | null = null;
+    for (let e = this.head[c]; e !== -1; e = this.nextE[e])
+      if (this.ey[e] > y && (best === null || this.ey[e] < best)) best = this.ey[e];
+    return best;
+  }
+
   /** Nearest walkable point to (x,z) with height near `targetY`, searched in
    *  expanding rings — recovery when the player has left every platform. */
   nearest(x: number, z: number, targetY: number, out: THREE.Vector3): boolean {
@@ -129,7 +140,7 @@ export interface Collision {
   findSpawn(radius: number, segLength: number, out: THREE.Vector3): void;
   /** Build the walkable NavGrid — the reliable, hole-filled ground the controller
    *  stands on and is confined to. */
-  buildNavGrid(sampleStep: number, headroom: number, stepThreshold: number, minCells: number, bridge?: number, fillIters?: number): NavGrid;
+  buildNavGrid(sampleStep: number, headroom: number, stepThreshold: number, minCells: number, slopeMin?: number, minY?: number, bridge?: number, fillIters?: number): NavGrid;
 }
 
 const DOWN = new THREE.Vector3(0, -1, 0);
@@ -302,11 +313,11 @@ export class MeshCollision implements Collision {
    *  climb). Platforms under `minCells` cells are dropped as floater noise, then
    *  interior holes within each surviving platform are filled (`fillIters` cells)
    *  so there is nothing to fall through. */
-  buildNavGrid(sampleStep: number, headroom: number, stepThreshold: number, minCells: number, bridge = 2, fillIters = 3): NavGrid {
+  buildNavGrid(sampleStep: number, headroom: number, stepThreshold: number, minCells: number, slopeMin = 0.4, minY = -Infinity, bridge = 2, fillIters = 3): NavGrid {
     const b = this.bounds;
     const nx = Math.max(1, Math.ceil((b.max.x - b.min.x) / sampleStep));
     const nz = Math.max(1, Math.ceil((b.max.z - b.min.z) / sampleStep));
-    const SLOPE_MIN = 0.4; // normal.y below this is a wall/ceiling, not standable
+    const SLOPE_MIN = slopeMin; // up-face normal.y at/below this is too steep to stand → a climbable wall
     // walkable cells in parallel arrays; per column a singly-linked list
     // (head in `colHead`, next in `cnext`) threads its cells for neighbor lookup.
     const cy: number[] = [], cix: number[] = [], ciz: number[] = [], cnext: number[] = [];
@@ -326,8 +337,10 @@ export class MeshCollision implements Collision {
           let above = Infinity;
           for (let j = 0; j < hits.length; j++) { const yj = hits[j].point.y; if (yj > h.point.y + 0.02 && yj < above) above = yj; }
           if (above - h.point.y < headroom) continue;                  // no room to stand
+          const y = h.point.y - this.groundOffset;
+          if (y < minY) continue;                                      // below the leveled floor → sub-floor floater, not walkable
           const id = cy.length;
-          cy.push(h.point.y - this.groundOffset); cix.push(ix); ciz.push(iz);
+          cy.push(y); cix.push(ix); ciz.push(iz);
           cnext.push(colHead[ix * nz + iz]); colHead[ix * nz + iz] = id;
         }
       }
