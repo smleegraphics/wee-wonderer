@@ -468,24 +468,34 @@ function lerpAngle(a: number, b: number, t: number): number {
 const climbDir = new THREE.Vector3();   // horizontal direction into the wall
 const climbProbe = new THREE.Vector3(); // scratch for the forward wall raycast
 let climbCling = false;                 // topped out with nowhere to stand → hanging
+let climbFrameCount = 0;                // frames spent ascending in the current climb
 
 /** True if a near-vertical wall is right in front (in the `dx,dz` move direction);
  *  if so, enter the climb. Called when horizontal movement got blocked. */
 function tryStartClimb(dx: number, dz: number): boolean {
   if (!collision || !actions['climb']) return false;
-  climbProbe.set(dx, 0, dz);
-  if (climbProbe.lengthSq() < 1e-9) return false;
-  climbProbe.normalize();
-  const radius = CAPSULE_RADIUS * charH;
-  climbDir.copy(climbProbe);
-  climbProbe.set(player.position.x, supportY + charH * 0.5, player.position.z); // chest height
-  const wall = collision.wallAhead(climbProbe, climbDir, radius + charH * 0.2);
-  if (!wall || Math.abs(wall.up) > 0.5) return false; // nothing there, or not steep enough to be a wall
+  climbDir.set(dx, 0, dz);
+  if (climbDir.lengthSq() < 1e-9) return false;
+  climbDir.normalize();
+  const radius = CAPSULE_RADIUS * charH, reach = radius + charH * 0.35;
+  // probe at chest and head height — the obstacle must reach ~chest to be worth
+  // climbing (filters out low bumps, which you step over rather than scale)
+  let wall: { up: number; distance: number } | null = null;
+  for (const h of [0.5, 0.85]) {
+    const w = collision.wallAhead(climbProbe.set(player.position.x, supportY + charH * h, player.position.z), climbDir, reach);
+    if (w && Math.abs(w.up) <= 0.5 && (!wall || w.distance < wall.distance)) wall = w;
+  }
+  if (!wall) { // nothing steep enough in front to climb
+    if (q.get('tel') === '1') console.log(`CLIMB-NO no-wall (reach=${reach.toFixed(2)})`);
+    return false;
+  }
   climbCling = false;
   state = 'climb';
   velocity.set(0, 0, 0);
   player.rotation.y = Math.atan2(climbDir.x, climbDir.z); // face the wall
   play('climb', TUNE.fade);
+  climbFrameCount = 0;
+  if (q.get('tel') === '1') console.log(`CLIMB-START y=${player.position.y.toFixed(2)} dist=${wall.distance.toFixed(2)} up=${wall.up.toFixed(2)}`);
   return true;
 }
 
@@ -499,6 +509,7 @@ function climbJumpOff(): void {
 function climbUpdate(dt: number): void {
   if (climbCling) return; // hanging at the top — Space jumps off
   const p = player.position, radius = CAPSULE_RADIUS * charH;
+  climbFrameCount++;
   p.y += TUNE.climbSpeed * charH * dt; // ascend the face
   climbProbe.set(p.x, p.y + charH * 0.5, p.z);
   const wall = collision ? collision.wallAhead(climbProbe, climbDir, radius + charH * 0.4) : null;
@@ -513,8 +524,10 @@ function climbUpdate(dt: number): void {
     p.set(overX, g, overZ);
     supportY = g; lastGood.copy(p);
     state = 'ground'; velocity.set(0, 0, 0); play('idle', TUNE.fade);
+    if (q.get('tel') === '1') console.log(`CLIMB-MANTLE frames=${climbFrameCount} to=${g.toFixed(2)}`);
   } else {
     climbCling = true; // nothing up there → cling at the top of the wall
+    if (q.get('tel') === '1') console.log(`CLIMB-CLING frames=${climbFrameCount} y=${p.y.toFixed(2)}`);
   }
 }
 
@@ -552,6 +565,7 @@ function updateController(dt: number): void {
   const radius = CAPSULE_RADIUS * charH;
   const grounded = navGrid && useNavGround ? navMove(dt, radius) : meshMove(dt, radius);
   wasGrounded = grounded;
+  (window as unknown as { __ww?: unknown }).__ww = { state, cling: climbCling, x: player.position.x, y: player.position.y, z: player.position.z, sup: supportY };
 
   // Visual-only vertical smoothing: physics feet (player.position.y) can bob as the
   // capsule rides small bumps; damp the RENDERED height when grounded so it reads
@@ -646,6 +660,7 @@ function meshMove(dt: number, radius: number): boolean {
 
 /** Drive the animation state machine from grounded + movement. */
 function updateLocomotion(grounded: boolean, moving: boolean): void {
+  if (state === 'climb') return; // climbing owns its own state + animation
   if (!grounded) {
     if (state !== 'air') { state = 'air'; play(actions['jump_loop'] ? 'jump_loop' : 'idle', 0.15); }
     return;
