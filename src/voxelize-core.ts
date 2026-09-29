@@ -181,10 +181,14 @@ export function voxelizeCore(
   // gap — the character always has floor — while walls/furniture (above it) still
   // collide from the surface mesh.
   const nv = sn.positions.length / 3;
+  // Sit the plane just below y=0 so a real reconstructed floor (snapped to 0) is
+  // hit first by downward rays — lets the spawn search tell "real floor" from
+  // "fell through to the backstop plane".
+  const planeY = -vs * 0.5;
   const px0 = minX, px1 = minX + gx * vs, pz0 = minZ, pz1 = minZ + gz * vs;
   const meshPos = new Float32Array(sn.positions.length + 12);
   meshPos.set(sn.positions);
-  meshPos.set([px0, 0, pz0, px1, 0, pz0, px1, 0, pz1, px0, 0, pz1], sn.positions.length);
+  meshPos.set([px0, planeY, pz0, px1, planeY, pz0, px1, planeY, pz1, px0, planeY, pz1], sn.positions.length);
   const meshIdx = new Uint32Array(sn.index.length + 6);
   meshIdx.set(sn.index);
   meshIdx.set([nv, nv + 2, nv + 1, nv, nv + 3, nv + 2], sn.index.length); // +Y-facing

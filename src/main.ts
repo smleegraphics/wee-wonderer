@@ -16,6 +16,7 @@ import { surfaceToGeometry } from './voxelize';
 import { MeshCollision } from './collision';
 import { voxelCacheKey, voxelCacheGet, voxelCachePut } from './voxel-cache';
 import type { VoxelSurface, VoxelOptions } from './voxelize';
+import type { CleanOptions } from './clean-scan-core';
 
 const q = new URLSearchParams(location.search);
 // demo scans for the switcher UI — config, not logic (each auto-levels at load).
@@ -52,10 +53,15 @@ let currentFile = DEFAULT_SCAN;
 let lastCenters: THREE.BufferAttribute | null = null;
 let lastOpacity: Float32Array | null = null;
 const lastMatrix = new THREE.Matrix4();
-let spawnContentY = 0; // world height of the scan's content centre (splat median), for spawn search
 const CAPSULE_RADIUS = 0.22; // capsule hemisphere radius, in char-heights
 const PHYSICS_STEPS = 5;     // collide-and-slide substeps per frame
 let loadToken = 0; // guards against a slow async collision build landing after a scan swap
+// scan import (upload + in-browser cleanup), session-only
+const CLEAN_OPTS: CleanOptions = { alphaMin: 0.35, minMass: 4, scaleCapMul: 4, crop: true };
+const uploads = new Map<string, string>(); // upload id → blob object URL
+let scanSelect: HTMLSelectElement | null = null;
+let lastUploadBuffer: ArrayBuffer | null = null; // raw bytes of the active upload (for live re-clean)
+let lastUploadName = '';
 const app = document.getElementById('app')!;
 
 const renderer = new WebGPURenderer({ antialias: true });
@@ -99,9 +105,16 @@ function disposeCollision(): void {
   collision = null;
 }
 
+/** Load a bundled demo scan from public/. */
 function loadScan(file: string): void {
+  loadFromURL(`${import.meta.env.BASE_URL}${file}`, file);
+}
+
+/** Load a scan from any URL (a bundled file or an uploaded blob). `id` is the
+ *  stable identity used for the collision cache and status. */
+function loadFromURL(url: string, id: string): void {
   const token = ++loadToken;
-  currentFile = file;
+  currentFile = id;
   if (currentSplat) {
     room.remove(currentSplat);
     currentSplat.geometry.dispose();
@@ -114,7 +127,7 @@ function loadScan(file: string): void {
   room.position.set(0, 0, 0);
   room.scale.setScalar(1);
   new GaussianSplatPLYLoader().load(
-    `${import.meta.env.BASE_URL}${file}`,
+    url,
     async (geometry) => {
       // capture the real splat centers + per-splat opacity now — GaussianSplat
       // swaps geometry for a billboard quad, so these must be read before
@@ -133,16 +146,15 @@ function loadScan(file: string): void {
       room.quaternion.copy(o.quaternion); // auto-leveled: floor normal → +Y
       room.scale.setScalar(k);
       room.position.y = k * o.floorOffsetY; // floor at y=0 (in scaled space)
-      spawnContentY = room.position.y; // the splat median maps to this world height
       currentSplat = splat;
       room.updateMatrixWorld(true);
       lastCenters = centers; lastOpacity = opacity; lastMatrix.copy(splat.matrixWorld);
-      console.log(`loaded ${file}: radius ${o.radius.toFixed(2)} → scaled ${k.toFixed(2)}x`);
-      await buildCollision(file, token, centers, opacity, splat.matrixWorld);
+      console.log(`loaded ${id}: radius ${o.radius.toFixed(2)} → scaled ${k.toFixed(2)}x`);
+      await buildCollision(id, token, centers, opacity, splat.matrixWorld);
       if (token === loadToken && charLoaded) resetToSpawn();
     },
     undefined,
-    (err) => showBanner(`${file} load failed: ${String(err)}`),
+    (err) => showBanner(`${id} load failed: ${String(err)}`),
   );
 }
 
@@ -206,7 +218,7 @@ function resetToSpawn(): void {
     player.position.set(Number(q.get('fx') ?? 0), 0, Number(q.get('fz') ?? 0));
   } else if (collision && charH > 0) {
     const radius = CAPSULE_RADIUS * charH, segLen = Math.max(0.02, charH - 2 * radius);
-    collision.findSpawn(radius, segLen, spawnContentY + charH, player.position);
+    collision.findSpawn(radius, segLen, player.position);
   } else {
     player.position.set(0, 0, 0);
   }
@@ -312,14 +324,17 @@ function voxelizeInWorker(centers: THREE.BufferAttribute, opacity: Float32Array,
 // build from landing after the user has already swapped to another scan.
 async function buildCollision(file: string, token: number, centers: THREE.BufferAttribute, opacity: Float32Array, matrixWorld: THREE.Matrix4): Promise<void> {
   const t0 = performance.now();
+  // uploads aren't cached: re-cleaning changes the splat under a stable id, so the
+  // key wouldn't reflect it — always re-voxelize an upload.
+  const useCache = !file.startsWith('upload:');
   const key = voxelCacheKey(file, VOXEL_SIZE, VOXEL_OPTS, TARGET_RADIUS);
-  let surf: VoxelSurface | null = await voxelCacheGet(key);
+  let surf: VoxelSurface | null = useCache ? await voxelCacheGet(key) : null;
   const cached = surf !== null;
   if (token !== loadToken) return; // superseded while awaiting the cache
   if (!surf) {
     surf = await voxelizeInWorker(centers, opacity, matrixWorld, VOXEL_OPTS);
     if (token !== loadToken) return; // superseded while voxelizing
-    void voxelCachePut(key, surf);
+    if (useCache) void voxelCachePut(key, surf);
   }
   const geom = surfaceToGeometry(surf);
   collision = new MeshCollision(geom, GROUND_OFFSET); // note: MeshBVH indexes geom in place
@@ -508,12 +523,15 @@ addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-/** A dropdown (top-left) to switch demo scans at runtime. */
+/** A dropdown (top-left) to switch scans at runtime, plus an Import button. */
 function setupScanSwitcher(): void {
+  const bar = document.createElement('div');
+  bar.style.cssText = 'position:fixed;top:12px;left:12px;z-index:10;display:flex;gap:6px;align-items:center';
+
   const sel = document.createElement('select');
+  scanSelect = sel;
   sel.style.cssText =
-    'position:fixed;top:12px;left:12px;z-index:10;padding:7px 12px;' +
-    'border:1px solid #3a3b44;border-radius:8px;color:#e8e8ea;' +
+    'padding:7px 12px;border:1px solid #3a3b44;border-radius:8px;color:#e8e8ea;' +
     'background:rgba(23,24,29,0.85);cursor:pointer;backdrop-filter:blur(4px);' +
     'font:13px ui-monospace,Menlo,monospace';
   for (const s of SCANS) {
@@ -524,8 +542,26 @@ function setupScanSwitcher(): void {
     if (s.file === DEFAULT_SCAN) opt.selected = true;
     sel.appendChild(opt);
   }
-  sel.onchange = () => loadScan(sel.value);
-  document.body.appendChild(sel);
+  // demo scans load by filename; uploaded ids resolve to a blob URL in `uploads`
+  sel.onchange = () => { const v = sel.value; const url = uploads.get(v); if (url) loadFromURL(url, v); else loadScan(v); };
+  bar.appendChild(sel);
+
+  const btn = document.createElement('button');
+  btn.textContent = '+ Import';
+  btn.title = 'Import your own scan (uncompressed 3DGS .ply)';
+  btn.style.cssText =
+    'padding:7px 11px;border:1px solid #3a3b44;border-radius:8px;color:#e8e8ea;' +
+    'background:rgba(23,24,29,0.85);cursor:pointer;backdrop-filter:blur(4px);font:13px ui-monospace,Menlo,monospace';
+  const picker = document.createElement('input');
+  picker.type = 'file';
+  picker.accept = '.ply';
+  picker.style.display = 'none';
+  picker.onchange = () => { if (picker.files?.[0]) importScan(picker.files[0]); picker.value = ''; };
+  btn.onclick = () => picker.click();
+  bar.append(btn, picker);
+
+  document.body.appendChild(bar);
+  setupDropZone();
 }
 
 /** Show/hide the voxel collision overlay, keeping key + checkbox in sync. */
@@ -594,7 +630,109 @@ function setupDebugMenu(): void {
      'Higher = flatter floor but low clutter (toys) gets absorbed; ' +
      'lower = keeps low clutter but more floor waviness returns. 0 = off.');
 
+  // cleanup tunables for imported scans (re-clean + reload the active upload)
+  addSlider('Import: opacity floor', CLEAN_OPTS.alphaMin ?? 0.35, 0, 0.9, 0.05, (v) => { CLEAN_OPTS.alphaMin = v; void recleanUpload(); },
+    'For imported scans: drop splats fainter than this. Higher burns off more floater haze (but can eat real surfaces).');
+  addSlider('Import: density', CLEAN_OPTS.minMass ?? 4, 0, 12, 0.5, (v) => { CLEAN_OPTS.minMass = v; void recleanUpload(); },
+    'For imported scans: min opacity mass a voxel needs to be kept. Higher removes more isolated floaters.');
+  addToggle('Import: crop to room', CLEAN_OPTS.crop ?? true, (on) => { CLEAN_OPTS.crop = on; void recleanUpload(); },
+    'For imported scans: auto-level and crop to the room box (removes far background spray).');
+
   document.body.appendChild(panel);
+}
+
+// --- scan import (upload + in-browser cleanup) ------------------------------
+const cleanWorker = new Worker(new URL('./clean-scan.worker.ts', import.meta.url), { type: 'module' });
+type CleanResp = { id: number; buffer?: ArrayBuffer; kept?: number; total?: number; error?: string };
+const cleanCbs = new Map<number, { resolve: (r: { buffer: ArrayBuffer; kept: number; total: number }) => void; reject: (e: string) => void }>();
+let cleanReqId = 0;
+cleanWorker.onmessage = (e: MessageEvent<CleanResp>) => {
+  const cb = cleanCbs.get(e.data.id); if (!cb) return; cleanCbs.delete(e.data.id);
+  if (e.data.error) cb.reject(e.data.error);
+  else cb.resolve({ buffer: e.data.buffer!, kept: e.data.kept!, total: e.data.total! });
+};
+cleanWorker.onerror = (e) => showStatus(`cleanup worker error: ${e.message}`, true);
+
+function cleanInWorker(buffer: ArrayBuffer, opts: CleanOptions): Promise<{ buffer: ArrayBuffer; kept: number; total: number }> {
+  return new Promise((resolve, reject) => {
+    const id = ++cleanReqId;
+    cleanCbs.set(id, { resolve, reject });
+    cleanWorker.postMessage({ id, buffer, opts }, [buffer]); // buffer is transferred (detached here)
+  });
+}
+
+/** Import an uploaded .ply: keep a copy for live re-clean, then clean + load it. */
+async function importScan(file: File): Promise<void> {
+  if (!/\.ply$/i.test(file.name)) { showStatus(`${file.name}: not a .ply file`, true); return; }
+  try {
+    showStatus(`Reading ${file.name}…`);
+    const raw = await file.arrayBuffer();
+    lastUploadBuffer = raw.slice(0); // retain a copy; the worker transfers (detaches) the other
+    lastUploadName = file.name;
+    await cleanAndLoad(raw, file.name);
+  } catch (err) {
+    showStatus(`${file.name}: ${err instanceof Error ? err.message : String(err)}`, true);
+  }
+}
+
+/** Re-clean the active upload with the current CLEAN_OPTS (for the debug sliders). */
+async function recleanUpload(): Promise<void> {
+  if (!lastUploadBuffer) return;
+  try { await cleanAndLoad(lastUploadBuffer.slice(0), lastUploadName); } // pass a copy; keep the original
+  catch (err) { showStatus(`${lastUploadName}: ${err instanceof Error ? err.message : String(err)}`, true); }
+}
+
+async function cleanAndLoad(rawToTransfer: ArrayBuffer, name: string): Promise<void> {
+  showStatus(`Cleaning ${name}…`);
+  const id = `upload:${name}`;
+  const res = await cleanInWorker(rawToTransfer, CLEAN_OPTS);
+  const url = URL.createObjectURL(new Blob([res.buffer], { type: 'application/octet-stream' }));
+  const prev = uploads.get(id); if (prev) URL.revokeObjectURL(prev);
+  uploads.set(id, url);
+  addUploadOption(id, name);
+  if (scanSelect) scanSelect.value = id;
+  loadFromURL(url, id);
+  showStatus(`${name}: kept ${res.kept.toLocaleString()} / ${res.total.toLocaleString()} splats`);
+}
+
+function addUploadOption(id: string, name: string): void {
+  if (!scanSelect) return;
+  let opt = Array.from(scanSelect.options).find((o) => o.value === id);
+  if (!opt) { opt = document.createElement('option'); opt.value = id; opt.style.color = '#111'; scanSelect.appendChild(opt); }
+  opt.textContent = `${name} (yours)`;
+}
+
+let statusEl: HTMLDivElement | null = null;
+function showStatus(msg: string, isError = false): void {
+  if (!statusEl) {
+    statusEl = document.createElement('div');
+    statusEl.style.cssText =
+      'position:fixed;bottom:12px;left:12px;z-index:11;padding:7px 12px;border-radius:8px;' +
+      'background:rgba(23,24,29,0.9);color:#e8e8ea;font:12px ui-monospace,Menlo,monospace;backdrop-filter:blur(4px);max-width:60vw';
+    document.body.appendChild(statusEl);
+  }
+  statusEl.textContent = msg;
+  statusEl.style.border = isError ? '1px solid #c0483a' : '1px solid #3a3b44';
+  statusEl.style.display = 'block';
+}
+
+/** Full-window drag-and-drop to import a .ply. */
+function setupDropZone(): void {
+  const overlay = document.createElement('div');
+  overlay.style.cssText =
+    'position:fixed;inset:0;z-index:20;display:none;align-items:center;justify-content:center;' +
+    'background:rgba(20,40,90,0.55);color:#fff;font:600 20px ui-monospace,Menlo,monospace;' +
+    'pointer-events:none;border:3px dashed rgba(255,255,255,0.6);box-sizing:border-box';
+  overlay.textContent = 'Drop a .ply to import';
+  document.body.appendChild(overlay);
+  let depth = 0;
+  addEventListener('dragenter', (e) => { e.preventDefault(); depth++; overlay.style.display = 'flex'; });
+  addEventListener('dragover', (e) => e.preventDefault());
+  addEventListener('dragleave', (e) => { e.preventDefault(); if (--depth <= 0) overlay.style.display = 'none'; });
+  addEventListener('drop', (e) => {
+    e.preventDefault(); depth = 0; overlay.style.display = 'none';
+    const f = e.dataTransfer?.files?.[0]; if (f) void importScan(f);
+  });
 }
 
 function showBanner(msg: string): void {
