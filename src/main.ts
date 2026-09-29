@@ -507,7 +507,10 @@ function climbJumpOff(): void {
 }
 
 function climbUpdate(dt: number): void {
-  if (climbCling) return; // hanging at the top — Space jumps off
+  // ascend only while actively holding forward; otherwise hold in place on the wall
+  const ascending = move.f > 0 && !climbCling;
+  if (actions['climb']) actions['climb'].paused = !ascending; // freeze the anim when not climbing up
+  if (!ascending) return; // resting / clinging — Space jumps off
   const p = player.position, radius = CAPSULE_RADIUS * charH;
   climbFrameCount++;
   p.y += TUNE.climbSpeed * charH * dt; // ascend the face
