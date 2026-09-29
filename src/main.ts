@@ -69,7 +69,7 @@ let lastVoxelSize = TARGET_RADIUS / 72;
 const PLATFORM_OPTS = { stepFactor: 0.35, minCells: 6, climbMax: 1.6, climbDeg: 70 }; // climbMax in char-heights; climbDeg = surfaces steeper than this (from horizontal) climb, not walk — 70° ≈ "vertical or almost vertical"
 if (q.has('climbdeg')) PLATFORM_OPTS.climbDeg = Number(q.get('climbdeg'));
 if (q.has('stepf')) PLATFORM_OPTS.stepFactor = Number(q.get('stepf'));
-const DROP_MAX = 3.5; // furthest you can step down off a ledge (char-heights); beyond = a floater/void → confine
+const STEP_DOWN_MAX = 0.6; // hop straight down a drop up to this (char-heights); taller → climb down the face
 // Spike 2: the reliable ground. The controller stands on the NavGrid (no
 // fall-through), is confined to it (no walking off), and recovers to `lastGood`.
 let navGrid: NavGrid | null = null;
@@ -321,7 +321,7 @@ function play(name: string, fade = TUNE.fade): void {
 
 function onActionFinished(e: { action: THREE.AnimationAction }): void {
   const name = e.action.getClip().name;
-  if (name === 'jump_start') { velocity.y = TUNE.jumpVel * charH; state = 'air'; play('jump_loop', 0.08); }
+  if (name === 'jump_start') { velocity.y = TUNE.jumpVel * charH; state = 'air'; play('jump_loop', 0.08);}
   else if (name === 'jump_land') { state = 'ground'; play('idle', 0.25); }
 }
 
@@ -501,6 +501,36 @@ function tryStartClimb(dx: number, dz: number): boolean {
   return true;
 }
 
+/** True if we're walking off a ledge whose face is a near-vertical drop; if so, grab
+ *  the lip and enter the climb (hanging just below it) so you can descend the face. */
+function tryStartClimbDown(dx: number, dz: number): boolean {
+  if (!collision || !navGrid || !actions['climb']) return false;
+  climbDir.set(dx, 0, dz);
+  if (climbDir.lengthSq() < 1e-9) return false;
+  climbDir.normalize();
+  const p = player.position, radius = CAPSULE_RADIUS * charH;
+  const tx = p.x + climbDir.x * navGrid.step, tz = p.z + climbDir.z * navGrid.step;
+  // must be a real edge: nothing walkable to continue onto at this level...
+  if (navGrid.surfaceNear(tx, tz, supportY, charH * STEP_DOWN_MAX) !== null) return false;
+  // ...with a meaningful drop below...
+  const below = navGrid.surfaceBelow(tx, tz, supportY - charH * 0.3);
+  if (below === null || supportY - below < charH * STEP_DOWN_MAX) return false;
+  // ...and a near-vertical face descending from the lip
+  const w = collision.wallAhead(climbProbe.set(p.x, supportY - charH * 0.3, p.z), climbDir, radius + charH * 0.6);
+  if (!w || Math.abs(w.up) > 0.5) return false;
+  // grip the lip: nudge to the edge and drop the feet just below it, onto the face
+  p.addScaledVector(climbDir, radius);
+  p.y = supportY - charH * 0.2;
+  climbCling = false;
+  state = 'climb';
+  velocity.set(0, 0, 0);
+  player.rotation.y = Math.atan2(climbDir.x, climbDir.z); // face the wall
+  play('climb', TUNE.fade);
+  climbFrameCount = 0;
+  if (q.get('tel') === '1') console.log(`CLIMBDOWN-START y=${p.y.toFixed(2)} below=${below.toFixed(2)}`);
+  return true;
+}
+
 /** Jump off the wall: launch up and away from the face. */
 function climbJumpOff(): void {
   velocity.set(-climbDir.x * TUNE.walkSpeed * charH, TUNE.jumpVel * charH, -climbDir.z * TUNE.walkSpeed * charH);
@@ -529,9 +559,9 @@ function climbUpdate(dt: number): void {
     }
   }
 
-  // follow the wall just above the feet, so we keep climbing until the FEET reach the
-  // top (not the chest) — otherwise we'd top out ~half a body short and cling mid-wall
-  climbProbe.set(p.x, p.y + charH * 0.25, p.z);
+  // follow the face just above the feet, so it works both ways: climbing UP tops out
+  // only when the feet reach the top; climbing DOWN keeps tracking the face downward.
+  climbProbe.set(p.x, p.y + charH * 0.15, p.z);
   const wall = collision ? collision.wallAhead(climbProbe, climbDir, radius + charH * 0.4) : null;
   if (wall) { p.addScaledVector(climbDir, wall.distance - radius * 1.1); return; } // hold a gap to the face
 
@@ -606,10 +636,14 @@ function navMove(dt: number, radius: number): boolean {
   const band = charH * PLATFORM_OPTS.stepFactor; // max step you can walk up/down
   if (state === 'air') {
     velocity.y += TUNE.gravity * charH * dt;
+    const prevY = p.y;
     // horizontal = input (air control) + any launch velocity (e.g. jumping off a wall)
     p.x += (hVel.x + velocity.x) * dt; p.z += (hVel.z + velocity.z) * dt; p.y += velocity.y * dt;
     if (velocity.y <= 0) {
-      const floor = nav.surfaceBelow(p.x, p.z, p.y + radius * 0.5);
+      // SWEPT landing: query from where the feet WERE this frame, so a fast fall
+      // (jumping off a wall) catches any surface crossed during the step instead of
+      // stepping straight over the narrow band at the new position.
+      const floor = nav.surfaceBelow(p.x, p.z, prevY + radius * 0.5);
       if (floor !== null && p.y <= floor) { p.y = floor; velocity.set(0, 0, 0); supportY = floor; lastGood.copy(p); return true; }
     }
     return false;
@@ -629,6 +663,8 @@ function navMove(dt: number, radius: number): boolean {
   // Moving into a near-vertical wall right ahead? Start climbing it. (Triggering off the
   // wall itself — not a near-head-on "block" — makes it fire consistently at any angle.)
   if (moving && tryStartClimb(hVel.x, hVel.z)) return false;
+  // Walking off a ledge whose face is a near-vertical drop? Grab it and climb down.
+  if (moving && tryStartClimbDown(hVel.x, hVel.z)) return false;
   const here = nav.surfaceNear(p.x, p.z, supportY, band);
   if (here !== null) { p.y = here; supportY = here; velocity.set(0, 0, 0); lastGood.copy(p); return true; }
   if (nav.nearest(lastGood.x, lastGood.z, supportY, navRecover)) { p.copy(navRecover); supportY = navRecover.y; velocity.set(0, 0, 0); lastGood.copy(p); } // recovered
@@ -645,9 +681,10 @@ function navHorizontal(dx: number, dz: number, band: number): void {
   const xOK = dx !== 0 && nav.surfaceNear(x0 + dx, z0, supportY, band) !== null;
   const zOK = dz !== 0 && nav.surfaceNear(x0, z0 + dz, supportY, band) !== null;
   if (xOK || zOK) { if (xOK) p.x = x0 + dx; if (zOK) p.z = z0 + dz; return; }
-  // step DOWN onto a lower platform within reach (render eases the drop)
+  // hop straight down onto a lower platform only for a SMALL drop; taller drops are
+  // left un-stepped so navMove can offer a climb-down of the face instead.
   const down = nav.surfaceBelow(tx, tz, supportY - band);
-  if (down !== null && down >= supportY - charH * DROP_MAX) { p.x = tx; p.z = tz; supportY = down; }
+  if (down !== null && supportY - down <= charH * STEP_DOWN_MAX) { p.x = tx; p.z = tz; supportY = down; }
 }
 
 /** Raw capsule-vs-mesh collide-and-slide (the pre-nav movement, kept for A/B). One
@@ -707,7 +744,7 @@ async function main(): Promise<void> {
     mixer?.update(dt);
     const ca = actions['climb'];
     (window as unknown as { __dbg?: unknown }).__dbg = {
-      state, cling: climbCling, py: +player.position.y.toFixed(2), smoothFeetY: +smoothFeetY.toFixed(2),
+      state, cling: climbCling, py: +player.position.y.toFixed(3), vy: +velocity.y.toFixed(2), smoothFeetY: +smoothFeetY.toFixed(2),
       targetY: +orbit.target.y.toFixed(2), camDist: +camera.position.distanceTo(orbit.target).toFixed(2),
       anim: activeAction ? activeAction.getClip().name : 'none',
       climbPaused: ca ? ca.paused : null, climbW: ca ? +ca.getEffectiveWeight().toFixed(2) : null,
