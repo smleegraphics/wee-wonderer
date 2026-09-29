@@ -477,15 +477,17 @@ function tryStartClimb(dx: number, dz: number): boolean {
   climbDir.set(dx, 0, dz);
   if (climbDir.lengthSq() < 1e-9) return false;
   climbDir.normalize();
-  const radius = CAPSULE_RADIUS * charH, reach = radius + charH * 0.35;
-  // probe at chest and head height — the obstacle must reach ~chest to be worth
-  // climbing (filters out low bumps, which you step over rather than scale)
+  const radius = CAPSULE_RADIUS * charH, reach = radius + charH * 0.5;
+  // Require a near-vertical face spanning chest AND head — proves it's tall enough to
+  // scale (not a low bump), and chest is the same height climbUpdate follows the wall
+  // at, so the climb doesn't top out the instant it starts.
   let wall: { up: number; distance: number } | null = null;
-  for (const h of [0.5, 0.85]) {
+  for (const h of [0.5, 0.9]) {
     const w = collision.wallAhead(climbProbe.set(player.position.x, supportY + charH * h, player.position.z), climbDir, reach);
-    if (w && Math.abs(w.up) <= 0.5 && (!wall || w.distance < wall.distance)) wall = w;
+    if (!w || Math.abs(w.up) > 0.5) { wall = null; break; }  // must be a wall at BOTH heights
+    if (!wall || w.distance < wall.distance) wall = w;
   }
-  if (!wall) { // nothing steep enough in front to climb
+  if (!wall) { // no tall near-vertical face in front to climb
     if (q.get('tel') === '1') console.log(`CLIMB-NO no-wall (reach=${reach.toFixed(2)})`);
     return false;
   }
@@ -507,31 +509,45 @@ function climbJumpOff(): void {
 }
 
 function climbUpdate(dt: number): void {
-  // ascend only while actively holding forward; otherwise hold in place on the wall
-  const ascending = move.f > 0 && !climbCling;
-  if (actions['climb']) actions['climb'].paused = !ascending; // freeze the anim when not climbing up
-  if (!ascending) return; // resting / clinging — Space jumps off
   const p = player.position, radius = CAPSULE_RADIUS * charH;
+  const dir = move.f - move.b;                 // W = up, S = down, neither = hold
+  const ascending = dir > 0 && !climbCling;    // can't go higher once topped out
+  const descending = dir < 0;
+  if (actions['climb']) actions['climb'].paused = !(ascending || descending); // anim only while moving on the wall
+  if (!ascending && !descending) return;       // resting / clinging — Space jumps off
+  if (descending) climbCling = false;          // heading down releases a topped-out cling
   climbFrameCount++;
-  p.y += TUNE.climbSpeed * charH * dt; // ascend the face
+  p.y += dir * TUNE.climbSpeed * charH * dt;    // ascend or descend the face
+
+  // descending onto the ground → step off it, back to walking
+  if (descending) {
+    const g = navGrid ? navGrid.surfaceNear(p.x, p.z, p.y, charH * 0.5) : null;
+    if (g !== null && p.y <= g + charH * 0.1) {
+      p.y = g; supportY = g; lastGood.copy(p);
+      state = 'ground'; velocity.set(0, 0, 0); play('idle', TUNE.fade);
+      return;
+    }
+  }
+
   climbProbe.set(p.x, p.y + charH * 0.5, p.z);
   const wall = collision ? collision.wallAhead(climbProbe, climbDir, radius + charH * 0.4) : null;
-  if (wall) { // still against the wall → hold a fixed gap to the face and keep climbing
-    p.addScaledVector(climbDir, wall.distance - radius * 1.1);
-    return;
+  if (wall) { p.addScaledVector(climbDir, wall.distance - radius * 1.1); return; } // hold a gap to the face
+
+  // no wall at this height. Going up → topped out: mantle onto a surface, else cling.
+  if (ascending) {
+    const overX = p.x + climbDir.x * radius * 2, overZ = p.z + climbDir.z * radius * 2;
+    const g = navGrid ? navGrid.surfaceNear(overX, overZ, p.y, charH * 0.4) : null; // only a surface near the top
+    if (g !== null && g <= p.y + charH * 0.3) { // mantle onto it
+      p.set(overX, g, overZ);
+      supportY = g; lastGood.copy(p);
+      state = 'ground'; velocity.set(0, 0, 0); play('idle', TUNE.fade);
+      if (q.get('tel') === '1') console.log(`CLIMB-MANTLE frames=${climbFrameCount} to=${g.toFixed(2)}`);
+    } else {
+      climbCling = true; // nothing up there → cling at the top
+      if (q.get('tel') === '1') console.log(`CLIMB-CLING frames=${climbFrameCount} y=${p.y.toFixed(2)}`);
+    }
   }
-  // wall ended → topped out. Is there a surface to stand on just over the lip?
-  const overX = p.x + climbDir.x * radius * 2, overZ = p.z + climbDir.z * radius * 2;
-  const g = navGrid ? navGrid.surfaceNear(overX, overZ, p.y, charH * 0.8) : null;
-  if (g !== null && g <= p.y + charH * 0.3) { // mantle onto it
-    p.set(overX, g, overZ);
-    supportY = g; lastGood.copy(p);
-    state = 'ground'; velocity.set(0, 0, 0); play('idle', TUNE.fade);
-    if (q.get('tel') === '1') console.log(`CLIMB-MANTLE frames=${climbFrameCount} to=${g.toFixed(2)}`);
-  } else {
-    climbCling = true; // nothing up there → cling at the top of the wall
-    if (q.get('tel') === '1') console.log(`CLIMB-CLING frames=${climbFrameCount} y=${p.y.toFixed(2)}`);
-  }
+  // descending with no wall/ground yet → keep descending until the ground check lands us
 }
 
 // scratch vectors for the collide-and-slide loop (avoid per-frame allocation)
@@ -599,7 +615,6 @@ function navMove(dt: number, radius: number): boolean {
   }
   // grounded: walk on the nav (step / slide / step-down), then push out of walls
   const moving = hVel.x !== 0 || hVel.z !== 0;
-  const startX = p.x, startZ = p.z;
   if (moving) navHorizontal(hVel.x * dt, hVel.z * dt, band);
   // Wall collision: push the capsule out of solid mesh (walls/furniture) horizontally.
   // Feet lifted above floor bumps so only walls push; NavGrid owns the vertical (no
@@ -610,12 +625,9 @@ function navMove(dt: number, radius: number): boolean {
     collision.moveCapsule(wallFeet, radius, segLen, zeroDisp, wallCorr);
     p.x = wallFeet.x; p.z = wallFeet.z;
   }
-  // Blocked by a wall (pushed but barely moved)? If it's near-vertical, start climbing it.
-  if (moving) {
-    const intended = Math.hypot(hVel.x, hVel.z) * dt;
-    const actual = Math.hypot(p.x - startX, p.z - startZ);
-    if (actual < intended * 0.5 && tryStartClimb(hVel.x, hVel.z)) return false;
-  }
+  // Moving into a near-vertical wall right ahead? Start climbing it. (Triggering off the
+  // wall itself — not a near-head-on "block" — makes it fire consistently at any angle.)
+  if (moving && tryStartClimb(hVel.x, hVel.z)) return false;
   const here = nav.surfaceNear(p.x, p.z, supportY, band);
   if (here !== null) { p.y = here; supportY = here; velocity.set(0, 0, 0); lastGood.copy(p); return true; }
   if (nav.nearest(lastGood.x, lastGood.z, supportY, navRecover)) { p.copy(navRecover); supportY = navRecover.y; velocity.set(0, 0, 0); lastGood.copy(p); } // recovered
