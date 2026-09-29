@@ -529,7 +529,9 @@ function climbUpdate(dt: number): void {
     }
   }
 
-  climbProbe.set(p.x, p.y + charH * 0.5, p.z);
+  // follow the wall just above the feet, so we keep climbing until the FEET reach the
+  // top (not the chest) — otherwise we'd top out ~half a body short and cling mid-wall
+  climbProbe.set(p.x, p.y + charH * 0.25, p.z);
   const wall = collision ? collision.wallAhead(climbProbe, climbDir, radius + charH * 0.4) : null;
   if (wall) { p.addScaledVector(climbDir, wall.distance - radius * 1.1); return; } // hold a gap to the face
 
@@ -562,38 +564,37 @@ function updateController(dt: number): void {
   const moving = wishDir.lengthSq() > 0;
   if (moving) wishDir.normalize();
 
-  if (state === 'climb') { climbUpdate(dt); return; }
   if (state === 'jump_start') return;        // anticipation freeze; onActionFinished launches
   if (!collision) return;
-  if (player.position.y < -charH * 3) { // lost the surface (rare edge case)
-    if (navGrid && useNavGround) { player.position.copy(lastGood); supportY = lastGood.y; velocity.set(0, 0, 0); state = 'ground'; } // snap back to the last valid spot (gentle)
-    else resetToSpawn();
-    return;
+
+  // Movement for this frame → `grounded`. Climb runs its own update (on the wall);
+  // everything else walks/jumps. Both then fall through to the shared render + camera
+  // follow below, so the camera tracks the figurine in every state.
+  let grounded: boolean;
+  if (state === 'climb') {
+    climbUpdate(dt);
+    grounded = false; // on the wall; render follows player.position exactly
+  } else {
+    if (player.position.y < -charH * 3) { // lost the surface (rare edge case)
+      if (navGrid && useNavGround) { player.position.copy(lastGood); supportY = lastGood.y; velocity.set(0, 0, 0); state = 'ground'; } // snap back to the last valid spot (gentle)
+      else resetToSpawn();
+      return;
+    }
+    if (moving) player.rotation.y = lerpAngle(player.rotation.y, Math.atan2(wishDir.x, wishDir.z), TUNE.turnLerp * dt);
+    const speed = (move.run ? TUNE.runSpeed : TUNE.walkSpeed) * charH;
+    hVel.copy(wishDir).multiplyScalar(moving ? speed : 0);
+    const radius = CAPSULE_RADIUS * charH;
+    grounded = navGrid && useNavGround ? navMove(dt, radius) : meshMove(dt, radius);
   }
-  if (q.get('tel') === '1' && frames % 30 === 0) console.log(`x=${player.position.x.toFixed(2)} z=${player.position.z.toFixed(2)} Y=${player.position.y.toFixed(2)} sup=${supportY.toFixed(2)} ${state}`);
-
-  if (moving) player.rotation.y = lerpAngle(player.rotation.y, Math.atan2(wishDir.x, wishDir.z), TUNE.turnLerp * dt);
-  const speed = (move.run ? TUNE.runSpeed : TUNE.walkSpeed) * charH;
-  hVel.copy(wishDir).multiplyScalar(moving ? speed : 0);
-
-  // Locomotion. With the reliability layer on, movement is NAV-DRIVEN: free
-  // horizontal motion confined to the walkable platform — so the figurine can't be
-  // trapped by the bumpy mesh, fall through a hole, or walk off an edge — standing
-  // on the hole-filled NavGrid. With it off, fall back to raw capsule-vs-mesh
-  // collide-and-slide (kept for A/B comparison via the debug toggle).
-  const radius = CAPSULE_RADIUS * charH;
-  const grounded = navGrid && useNavGround ? navMove(dt, radius) : meshMove(dt, radius);
   wasGrounded = grounded;
-  (window as unknown as { __ww?: unknown }).__ww = { state, cling: climbCling, x: player.position.x, y: player.position.y, z: player.position.z, sup: supportY };
 
-  // Visual-only vertical smoothing: physics feet (player.position.y) can bob as the
-  // capsule rides small bumps; damp the RENDERED height when grounded so it reads
-  // smooth. Airborne (jump/fall) follows physics exactly so the arc stays crisp.
+  // Visual-only vertical smoothing, run for EVERY state so the camera follows: when
+  // grounded, damp the bump bob; otherwise (airborne / climbing) track physics exactly.
   if (grounded) smoothFeetY += (player.position.y - smoothFeetY) * Math.min(1, 10 * dt);
   else smoothFeetY = player.position.y;
   if (charModel) charModel.position.y = charFeetOffset + (smoothFeetY - player.position.y);
 
-  updateLocomotion(grounded, moving);
+  updateLocomotion(grounded, moving); // early-returns while climbing
 }
 
 /** Nav-driven movement: horizontal motion confined to the walkable platform (with
@@ -704,6 +705,13 @@ async function main(): Promise<void> {
     const dt = Math.min(clock.getDelta(), 0.05);
     if (charLoaded) { updateController(dt); if (FREECAM) updateFreeCam(); else updateCamera(); }
     mixer?.update(dt);
+    const ca = actions['climb'];
+    (window as unknown as { __dbg?: unknown }).__dbg = {
+      state, cling: climbCling, py: +player.position.y.toFixed(2), smoothFeetY: +smoothFeetY.toFixed(2),
+      targetY: +orbit.target.y.toFixed(2), camDist: +camera.position.distanceTo(orbit.target).toFixed(2),
+      anim: activeAction ? activeAction.getClip().name : 'none',
+      climbPaused: ca ? ca.paused : null, climbW: ca ? +ca.getEffectiveWeight().toFixed(2) : null,
+    };
     void renderer.renderAsync(scene, camera).then(() => {
       if (charLoaded && ++frames === 3) (window as unknown as { __wwReady?: boolean }).__wwReady = true;
     });
