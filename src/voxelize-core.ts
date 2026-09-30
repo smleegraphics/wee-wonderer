@@ -70,6 +70,7 @@ export function voxelizeCore(
   m: ArrayLike<number>,
   voxelSize: number,
   opts: VoxelOptions = {},
+  radii?: ArrayLike<number> | null, // per-splat world radius; splats cover their footprint, not just a point
 ): VoxelSurface {
   const isoFactor = opts.iso ?? 0.5;
   const despeckleMin = opts.despeckle ?? 12;
@@ -120,15 +121,41 @@ export function voxelizeCore(
   const gy = Math.max(1, Math.ceil((maxY - minY) / vs) + 2);
   const gz = Math.max(1, Math.ceil((maxZ - minZ) / vs) + 2);
 
-  // pass 2: accumulate opacity mass per voxel → a density field. Splats outside
-  // the (floater-excluded) bounds are skipped.
+  // pass 2: accumulate opacity mass per voxel → a density field. A splat is a
+  // Gaussian with real extent, so it contributes to every voxel inside its footprint
+  // (radius from its covariance), with a linear falloff — not just its center voxel.
+  // This fills large flat surfaces (a cabinet door is a few big splats covering area
+  // with few centers) while small floaters stay a single faint voxel and get rejected.
   const dens = new Float32Array(gx * gy * gz);
+  const MAX_SPLAT_VOXELS = 4; // cap the footprint so a huge splat can't blow up the grid or blob
   for (let i = 0; i < count; i++) {
-    const vx = Math.floor((wx(i) - minX) / vs);
-    const vy = Math.floor((wy(i) - minY) / vs);
-    const vz = Math.floor((wz(i) - minZ) / vs);
-    if (vx < 0 || vx >= gx || vy < 0 || vy >= gy || vz < 0 || vz >= gz) continue;
-    dens[(vx * gy + vy) * gz + vz] += opacity[i];
+    const cx = (wx(i) - minX) / vs, cy = (wy(i) - minY) / vs, cz = (wz(i) - minZ) / vs; // center in voxel coords
+    const op = opacity[i];
+    const vr = radii ? Math.min(radii[i] / vs, MAX_SPLAT_VOXELS) : 0; // footprint radius in voxels
+    if (vr < 0.75) { // small splat → its single center voxel (the original behaviour)
+      const vx = Math.floor(cx), vy = Math.floor(cy), vz = Math.floor(cz);
+      if (vx >= 0 && vx < gx && vy >= 0 && vy < gy && vz >= 0 && vz < gz) dens[(vx * gy + vy) * gz + vz] += op;
+      continue;
+    }
+    // conserve mass: spread this splat's opacity over its footprint with a linear
+    // falloff whose weights integrate to ~1 (norm ≈ 3/(π r³)), so total density isn't
+    // inflated — overlapping splats on a surface still accumulate and cross the isovalue.
+    const norm = 3 / (Math.PI * vr * vr * vr);
+    const r = Math.ceil(vr), vxc = Math.floor(cx), vyc = Math.floor(cy), vzc = Math.floor(cz);
+    for (let dx = -r; dx <= r; dx++) {
+      const vx = vxc + dx; if (vx < 0 || vx >= gx) continue;
+      const px = vx + 0.5 - cx;
+      for (let dy = -r; dy <= r; dy++) {
+        const vy = vyc + dy; if (vy < 0 || vy >= gy) continue;
+        const py = vy + 0.5 - cy;
+        for (let dz = -r; dz <= r; dz++) {
+          const vz = vzc + dz; if (vz < 0 || vz >= gz) continue;
+          const pz = vz + 0.5 - cz, d = Math.sqrt(px * px + py * py + pz * pz);
+          if (d > vr) continue;
+          dens[(vx * gy + vy) * gz + vz] += op * (1 - d / vr) * norm;
+        }
+      }
+    }
   }
 
   // isovalue: a fraction of the median density among voxels that hold real
