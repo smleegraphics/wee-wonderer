@@ -35,7 +35,7 @@ const num = (key: string, def: number) => (q.has(key) ? Number(q.get(key)) : def
 const VOXEL_OPTS = {
   iso: num('iso', 0.5),          // isovalue as a fraction of median surface density
   despeckle: num('despeckle', 12), // drop solid islands smaller than this (stray cubes)
-  close: num('close', 1),        // dilate→erode iterations (fills floor/wall holes)
+  close: num('close', 3),        // dilate→erode iterations (bridges holes in floors/walls/surfaces)
   fillFloor: num('fillfloor', 1), // fill enclosed holes in the floor layer
   smooth: num('smooth', 0),      // majority occupancy passes (Taubin handles smoothing)
   taubin: num('taubin', 6),      // Taubin mesh-smoothing iterations
@@ -757,6 +757,12 @@ function setupDebugMenu(): void {
   addSlider('Platform: min size', PLATFORM_OPTS.minCells, 1, 40, 1, (v) => {
     PLATFORM_OPTS.minCells = v; rebuildPlatformOverlay();
   }, 'Drop platforms smaller than this many cells (floater/noise rejection). Higher = only big surfaces survive.');
+  addSlider('Surface hole-fill', VOXEL_OPTS.close, 0, 5, 1, (v) => {
+    VOXEL_OPTS.close = v;
+    rebuildCollision();
+  }, 'Bridges holes in the collision mesh (walls / climbable faces / floor) by ' +
+     'closing gaps up to ~2× this many voxels. Higher fills bigger holes on sparse ' +
+     'scans; too high can close small real openings. Default 3 suits casual scans.');
   addSlider('Floor flatten (voxels)', VOXEL_OPTS.floorFlat, 0, 2, 0.05, (v) => {
     VOXEL_OPTS.floorFlat = v;
     rebuildCollision();
