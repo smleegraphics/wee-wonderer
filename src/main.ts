@@ -66,7 +66,7 @@ let currentFile = DEFAULT_SCAN;
 // last-loaded scan data, kept so debug tunables can re-voxelize without reloading the PLY
 let lastCenters: THREE.BufferAttribute | null = null;
 let lastOpacity: Float32Array | null = null;
-let lastRadii: Float32Array | null = null; // per-splat world radius (from covariance) for size-aware voxelization
+let lastCov: Float32Array | null = null; // per-splat covariance (6/splat) for anisotropic voxelization
 const lastMatrix = new THREE.Matrix4();
 const CAPSULE_RADIUS = 0.22; // capsule hemisphere radius, in char-heights
 const PHYSICS_STEPS = 5;     // collide-and-slide substeps per frame
@@ -164,17 +164,10 @@ function loadFromURL(url: string, id: string): void {
       // scans have arbitrary unit scales — normalize each to a consistent world
       // size so the fixed-size figurine stays a sensible fraction of every room.
       const k = TARGET_RADIUS / o.radius;
-      // per-splat world radius from the Gaussian covariance (diag [Cxx,-,-,Cyy,-,Czz]):
-      // ~2 std devs of the largest axis, scaled to world. Feeds size-aware voxelization.
-      const cov = geometry.getAttribute('covariance') as THREE.BufferAttribute | undefined;
-      let radii: Float32Array | null = null;
-      if (cov && cov.itemSize === 6) {
-        const ca = cov.array as ArrayLike<number>;
-        radii = new Float32Array(centers.count);
-        for (let i = 0; i < radii.length; i++) {
-          radii[i] = 2 * Math.sqrt(Math.max(ca[i * 6], ca[i * 6 + 3], ca[i * 6 + 5])) * k;
-        }
-      }
+      // per-splat 3-D Gaussian covariance drives anisotropic voxelization (splats fill
+      // their real ellipsoid footprint). The worldspace transform is applied in the core.
+      const covAttr = geometry.getAttribute('covariance') as THREE.BufferAttribute | undefined;
+      const cov = covAttr && covAttr.itemSize === 6 ? (covAttr.array as Float32Array) : null;
       const splat = new GaussianSplat(geometry);
       splat.position.copy(o.center).multiplyScalar(-1); // recenter to origin
       room.add(splat);
@@ -183,9 +176,9 @@ function loadFromURL(url: string, id: string): void {
       room.position.y = k * o.floorOffsetY; // floor at y=0 (in scaled space)
       currentSplat = splat;
       room.updateMatrixWorld(true);
-      lastCenters = centers; lastOpacity = opacity; lastRadii = radii; lastMatrix.copy(splat.matrixWorld);
+      lastCenters = centers; lastOpacity = opacity; lastCov = cov; lastMatrix.copy(splat.matrixWorld);
       console.log(`loaded ${id}: radius ${o.radius.toFixed(2)} → scaled ${k.toFixed(2)}x`);
-      await buildCollision(id, token, centers, opacity, radii, splat.matrixWorld);
+      await buildCollision(id, token, centers, opacity, cov, splat.matrixWorld);
       if (token === loadToken && charLoaded) resetToSpawn();
     },
     undefined,
@@ -350,16 +343,16 @@ voxelWorker.onmessage = (e: MessageEvent<{ id: number; surface?: VoxelSurface; e
 };
 voxelWorker.onerror = (e) => console.error('voxel worker error:', e.message, e.filename, e.lineno);
 
-function voxelizeInWorker(centers: THREE.BufferAttribute, opacity: Float32Array, radii: Float32Array | null, matrixWorld: THREE.Matrix4, opts: VoxelOptions): Promise<VoxelSurface> {
+function voxelizeInWorker(centers: THREE.BufferAttribute, opacity: Float32Array, cov: Float32Array | null, matrixWorld: THREE.Matrix4, opts: VoxelOptions): Promise<VoxelSurface> {
   return new Promise((resolve) => {
     const id = ++voxelReqId;
     voxelPending.set(id, resolve);
     const positions = (centers.array as Float32Array).slice(); // copies so we can transfer
     const op = opacity.slice();                                 // (originals kept for re-voxelize)
-    const rad = radii ? radii.slice() : null;
+    const cv = cov ? cov.slice() : null;
     voxelWorker.postMessage(
-      { id, positions, opacity: op, radii: rad, count: centers.count, matrix: Array.from(matrixWorld.elements), voxelSize: VOXEL_SIZE, opts },
-      rad ? [positions.buffer, op.buffer, rad.buffer] : [positions.buffer, op.buffer],
+      { id, positions, opacity: op, cov: cv, count: centers.count, matrix: Array.from(matrixWorld.elements), voxelSize: VOXEL_SIZE, opts },
+      cv ? [positions.buffer, op.buffer, cv.buffer] : [positions.buffer, op.buffer],
     );
   });
 }
@@ -367,7 +360,7 @@ function voxelizeInWorker(centers: THREE.BufferAttribute, opacity: Float32Array,
 // Build the surface (cached after the first load), a three-mesh-bvh over it for
 // the controller, and a toggleable debug overlay. `token` guards a slow async
 // build from landing after the user has already swapped to another scan.
-async function buildCollision(file: string, token: number, centers: THREE.BufferAttribute, opacity: Float32Array, radii: Float32Array | null, matrixWorld: THREE.Matrix4): Promise<void> {
+async function buildCollision(file: string, token: number, centers: THREE.BufferAttribute, opacity: Float32Array, cov: Float32Array | null, matrixWorld: THREE.Matrix4): Promise<void> {
   const t0 = performance.now();
   // uploads aren't cached: re-cleaning changes the splat under a stable id, so the
   // key wouldn't reflect it — always re-voxelize an upload.
@@ -377,7 +370,7 @@ async function buildCollision(file: string, token: number, centers: THREE.Buffer
   const cached = surf !== null;
   if (token !== loadToken) return; // superseded while awaiting the cache
   if (!surf) {
-    surf = await voxelizeInWorker(centers, opacity, radii, matrixWorld, VOXEL_OPTS);
+    surf = await voxelizeInWorker(centers, opacity, cov, matrixWorld, VOXEL_OPTS);
     if (token !== loadToken) return; // superseded while voxelizing
     if (useCache) void voxelCachePut(key, surf);
   }
@@ -404,7 +397,7 @@ async function buildCollision(file: string, token: number, centers: THREE.Buffer
 function rebuildCollision(): void {
   if (!lastCenters || !lastOpacity) return;
   disposeCollision();
-  void buildCollision(currentFile, ++loadToken, lastCenters, lastOpacity, lastRadii, lastMatrix);
+  void buildCollision(currentFile, ++loadToken, lastCenters, lastOpacity, lastCov, lastMatrix);
 }
 
 // --- controller update ------------------------------------------------------

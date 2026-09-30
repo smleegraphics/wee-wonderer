@@ -70,7 +70,7 @@ export function voxelizeCore(
   m: ArrayLike<number>,
   voxelSize: number,
   opts: VoxelOptions = {},
-  radii?: ArrayLike<number> | null, // per-splat world radius; splats cover their footprint, not just a point
+  cov?: ArrayLike<number> | null, // per-splat 3-D covariance (6 floats: Cxx,Cxy,Cxz,Cyy,Cyz,Czz) for anisotropic splatting
 ): VoxelSurface {
   const isoFactor = opts.iso ?? 0.5;
   const despeckleMin = opts.despeckle ?? 12;
@@ -121,38 +121,69 @@ export function voxelizeCore(
   const gy = Math.max(1, Math.ceil((maxY - minY) / vs) + 2);
   const gz = Math.max(1, Math.ceil((maxZ - minZ) / vs) + 2);
 
-  // pass 2: accumulate opacity mass per voxel → a density field. A splat is a
-  // Gaussian with real extent, so it contributes to every voxel inside its footprint
-  // (radius from its covariance), with a linear falloff — not just its center voxel.
-  // This fills large flat surfaces (a cabinet door is a few big splats covering area
-  // with few centers) while small floaters stay a single faint voxel and get rejected.
+  // pass 2: accumulate opacity mass per voxel → a density field. Each splat is an
+  // anisotropic 3-D Gaussian: its covariance is an ellipsoid — a thin DISK for a flat
+  // wall/floor splat. We add its opacity to the voxels inside that ellipsoid, weighted
+  // by the Gaussian and normalised so each splat's total stays its opacity. Spreading
+  // ALONG a flat surface fills sparse panels (a plain cabinet door has few splat
+  // centres), while NOT spreading perpendicular keeps the surface hugging the real
+  // splats (no puffing / hovering). Tiny floaters stay ~1 faint voxel and get rejected.
   const dens = new Float32Array(gx * gy * gz);
-  const MAX_SPLAT_VOXELS = 4; // cap the footprint so a huge splat can't blow up the grid or blob
+  const centerBin = (cx: number, cy: number, cz: number, op: number) => {
+    const vx = Math.floor(cx), vy = Math.floor(cy), vz = Math.floor(cz);
+    if (vx >= 0 && vx < gx && vy >= 0 && vy < gy && vz >= 0 && vz < gz) dens[(vx * gy + vy) * gz + vz] += op;
+  };
+  // linear (rotation × uniform-scale) part of the world matrix, row-major 3×3
+  const L0 = m[0], L1 = m[4], L2 = m[8], L3 = m[1], L4 = m[5], L5 = m[9], L6 = m[2], L7 = m[6], L8 = m[10];
+  const inv2 = 1 / (vs * vs); // world → voxel² scale for the covariance
+  const MIN_VAR = 0.25;       // floor each axis variance to (½ voxel)² → invertible + ≥~1 voxel thick
+  const MAX_R = 3, SIGMA = 2.5;
+  const wbuf = new Float32Array((2 * MAX_R + 1) ** 3); // per-splat weights, reused pass A → pass B
   for (let i = 0; i < count; i++) {
-    const cx = (wx(i) - minX) / vs, cy = (wy(i) - minY) / vs, cz = (wz(i) - minZ) / vs; // center in voxel coords
+    const cx = (wx(i) - minX) / vs, cy = (wy(i) - minY) / vs, cz = (wz(i) - minZ) / vs;
     const op = opacity[i];
-    const vr = radii ? Math.min(radii[i] / vs, MAX_SPLAT_VOXELS) : 0; // footprint radius in voxels
-    if (vr < 0.75) { // small splat → its single center voxel (the original behaviour)
-      const vx = Math.floor(cx), vy = Math.floor(cy), vz = Math.floor(cz);
-      if (vx >= 0 && vx < gx && vy >= 0 && vy < gy && vz >= 0 && vz < gz) dens[(vx * gy + vy) * gz + vz] += op;
-      continue;
+    if (!cov) { centerBin(cx, cy, cz, op); continue; }
+    const a = cov[i * 6], b = cov[i * 6 + 1], c = cov[i * 6 + 2], d = cov[i * 6 + 3], e = cov[i * 6 + 4], f = cov[i * 6 + 5];
+    // world covariance in voxel units = (L·Σ·Lᵀ)/vs², inlined (hot loop). Each Wab is
+    // rowA(L)ᵀ · Σ · rowB(L) for the symmetric local Σ [a,b,c; b,d,e; c,e,f].
+    const W00 = (a * L0 * L0 + d * L1 * L1 + f * L2 * L2 + 2 * (b * L0 * L1 + c * L0 * L2 + e * L1 * L2)) * inv2 + MIN_VAR;
+    const W11 = (a * L3 * L3 + d * L4 * L4 + f * L5 * L5 + 2 * (b * L3 * L4 + c * L3 * L5 + e * L4 * L5)) * inv2 + MIN_VAR;
+    const W22 = (a * L6 * L6 + d * L7 * L7 + f * L8 * L8 + 2 * (b * L6 * L7 + c * L6 * L8 + e * L7 * L8)) * inv2 + MIN_VAR;
+    const W01 = (a * L0 * L3 + d * L1 * L4 + f * L2 * L5 + b * (L0 * L4 + L1 * L3) + c * (L0 * L5 + L2 * L3) + e * (L1 * L5 + L2 * L4)) * inv2;
+    const W02 = (a * L0 * L6 + d * L1 * L7 + f * L2 * L8 + b * (L0 * L7 + L1 * L6) + c * (L0 * L8 + L2 * L6) + e * (L1 * L8 + L2 * L7)) * inv2;
+    const W12 = (a * L3 * L6 + d * L4 * L7 + f * L5 * L8 + b * (L3 * L7 + L4 * L6) + c * (L3 * L8 + L5 * L6) + e * (L4 * L8 + L5 * L7)) * inv2;
+    const det = W00 * (W11 * W22 - W12 * W12) - W01 * (W01 * W22 - W12 * W02) + W02 * (W01 * W12 - W11 * W02);
+    if (!(det > 1e-9)) { centerBin(cx, cy, cz, op); continue; }
+    const idet = 1 / det; // inverse covariance (symmetric) → the anisotropic distance metric
+    const I00 = (W11 * W22 - W12 * W12) * idet, I11 = (W00 * W22 - W02 * W02) * idet, I22 = (W00 * W11 - W01 * W01) * idet;
+    const I01 = (W02 * W12 - W01 * W22) * idet, I02 = (W01 * W12 - W02 * W11) * idet, I12 = (W01 * W02 - W00 * W12) * idet;
+    const rx = Math.min(MAX_R, Math.ceil(SIGMA * Math.sqrt(W00))), ry = Math.min(MAX_R, Math.ceil(SIGMA * Math.sqrt(W11))), rz = Math.min(MAX_R, Math.ceil(SIGMA * Math.sqrt(W22)));
+    const vxc = Math.floor(cx), vyc = Math.floor(cy), vzc = Math.floor(cz);
+    // pass A: Gaussian weight at each footprint voxel → wbuf; sum for mass normalisation
+    let sw = 0, n = 0;
+    for (let dx = -rx; dx <= rx; dx++) {
+      const vx = vxc + dx, ddx = vx + 0.5 - cx, inx = vx >= 0 && vx < gx;
+      for (let dy = -ry; dy <= ry; dy++) {
+        const vy = vyc + dy, ddy = vy + 0.5 - cy, iny = inx && vy >= 0 && vy < gy;
+        for (let dz = -rz; dz <= rz; dz++) {
+          const vz = vzc + dz, ddz = vz + 0.5 - cz;
+          if (!iny || vz < 0 || vz >= gz) { wbuf[n++] = 0; continue; } // outside grid → no mass
+          const s = I00 * ddx * ddx + I11 * ddy * ddy + I22 * ddz * ddz + 2 * (I01 * ddx * ddy + I02 * ddx * ddz + I12 * ddy * ddz);
+          const w = s > 12 ? 0 : Math.exp(-0.5 * s);
+          wbuf[n++] = w; sw += w;
+        }
+      }
     }
-    // conserve mass: spread this splat's opacity over its footprint with a linear
-    // falloff whose weights integrate to ~1 (norm ≈ 3/(π r³)), so total density isn't
-    // inflated — overlapping splats on a surface still accumulate and cross the isovalue.
-    const norm = 3 / (Math.PI * vr * vr * vr);
-    const r = Math.ceil(vr), vxc = Math.floor(cx), vyc = Math.floor(cy), vzc = Math.floor(cz);
-    for (let dx = -r; dx <= r; dx++) {
-      const vx = vxc + dx; if (vx < 0 || vx >= gx) continue;
-      const px = vx + 0.5 - cx;
-      for (let dy = -r; dy <= r; dy++) {
-        const vy = vyc + dy; if (vy < 0 || vy >= gy) continue;
-        const py = vy + 0.5 - cy;
-        for (let dz = -r; dz <= r; dz++) {
-          const vz = vzc + dz; if (vz < 0 || vz >= gz) continue;
-          const pz = vz + 0.5 - cz, d = Math.sqrt(px * px + py * py + pz * pz);
-          if (d > vr) continue;
-          dens[(vx * gy + vy) * gz + vz] += op * (1 - d / vr) * norm;
+    if (sw <= 0) { centerBin(cx, cy, cz, op); continue; }
+    // pass B: distribute opacity by the normalised weights (voxels with w>0 are in-grid)
+    const scale = op / sw; n = 0;
+    for (let dx = -rx; dx <= rx; dx++) {
+      const vx = vxc + dx;
+      for (let dy = -ry; dy <= ry; dy++) {
+        const vy = vyc + dy;
+        for (let dz = -rz; dz <= rz; dz++) {
+          const w = wbuf[n++];
+          if (w > 0) dens[(vx * gy + vy) * gz + (vzc + dz)] += w * scale;
         }
       }
     }

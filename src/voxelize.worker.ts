@@ -9,7 +9,7 @@ interface Req {
   id: number;
   positions: Float32Array;
   opacity: Float32Array;
-  radii: Float32Array | null;
+  cov: Float32Array | null;
   count: number;
   matrix: number[];
   voxelSize: number;
@@ -17,9 +17,9 @@ interface Req {
 }
 
 self.onmessage = (e: MessageEvent<Req>) => {
-  const { id, positions, opacity, radii, count, matrix, voxelSize, opts } = e.data;
+  const { id, positions, opacity, cov, count, matrix, voxelSize, opts } = e.data;
   try {
-    const surface = voxelizeCore(positions, count, opacity, matrix, voxelSize, opts, radii);
+    const surface = voxelizeCore(positions, count, opacity, matrix, voxelSize, opts, cov);
     (self as unknown as Worker).postMessage({ id, surface }, [surface.positions.buffer, surface.index.buffer]);
   } catch (err) {
     (self as unknown as Worker).postMessage({ id, error: String(err instanceof Error ? err.stack : err) });
