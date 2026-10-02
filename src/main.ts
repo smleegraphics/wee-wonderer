@@ -33,10 +33,11 @@ const TARGET_RADIUS = 7; // normalize every scan to this world size (figurine ~0
 const VOXEL_SIZE = Number(q.get('vox')) || TARGET_RADIUS / 72; // ~0.097 world units
 const num = (key: string, def: number) => (q.has(key) ? Number(q.get(key)) : def);
 const VOXEL_OPTS = {
-  iso: num('iso', 0.5),          // isovalue as a fraction of median surface density
-  despeckle: num('despeckle', 12), // drop solid islands smaller than this (stray cubes)
+  iso: num('iso', 0.35),         // isovalue as a fraction of median surface density (low → fills faint flat panels)
+  despeckle: num('despeckle', 20), // drop solid islands smaller than this (stray cubes / floaters the low iso admits)
   close: num('close', 3),        // dilate→erode iterations (bridges holes in floors/walls/surfaces)
   fillFloor: num('fillfloor', 1), // fill enclosed holes in the floor layer
+  panelFill: num('panelfill', 2.5), // fill enclosed holes in vertical panels up to this m² (blank cabinet doors/walls); 0 = off
   smooth: num('smooth', 0),      // majority occupancy passes (Taubin handles smoothing)
   taubin: num('taubin', 6),      // Taubin mesh-smoothing iterations
   floorFlat: num('floorflat', 0.75), // snap mesh within this many voxels of y=0 flat
@@ -44,6 +45,17 @@ const VOXEL_OPTS = {
 // Walkable surfaces are de-quantized to the real splat height in the voxelizer,
 // so no ground offset is needed; ?sink stays as a manual override (default 0).
 const GROUND_OFFSET = num('sink', 0);
+// Debug free-camera: when any of ?az/el/dist/cx/cy/cz is present, detach the
+// figurine-follow and park the camera at a fixed orbit around a look-at point, so
+// any part of the collision mesh can be framed for inspection (used with ?voxel=1).
+// az/el = azimuth/elevation in radians; dist = distance in scene-radii (TARGET_RADIUS);
+// cx/cy/cz = look-at point in world units (floor is y=0). Non-interactive by design.
+// Debug mesh-only view (?meshonly=1): hide the splat and draw the collision surface
+// as a solid lit mesh, so holes / fills are unmistakable (the wireframe-over-splat
+// overlay is too cluttered to judge). Pairs with the free-cam for inspection.
+const MESHONLY = q.get('meshonly') === '1';
+const FREECAM = ['az', 'el', 'dist', 'cx', 'cy', 'cz'].some((k) => q.has(k));
+const FREECAM_OPTS = { az: num('az', 0.9), el: num('el', 0.5), dist: num('dist', 2.2), cx: num('cx', 0), cy: num('cy', 1), cz: num('cz', 0) };
 let showVoxels = q.get('voxel') === '1';
 let collisionDebug: THREE.Mesh | null = null;
 let voxelCheckbox: HTMLInputElement | null = null;
@@ -170,6 +182,7 @@ function loadFromURL(url: string, id: string): void {
       const cov = covAttr && covAttr.itemSize === 6 ? (covAttr.array as Float32Array) : null;
       const splat = new GaussianSplat(geometry);
       splat.position.copy(o.center).multiplyScalar(-1); // recenter to origin
+      splat.visible = !MESHONLY; // mesh-only debug view hides the splat
       room.add(splat);
       room.quaternion.copy(o.quaternion); // auto-leveled: floor normal → +Y
       room.scale.setScalar(k);
@@ -378,9 +391,11 @@ async function buildCollision(file: string, token: number, centers: THREE.Buffer
   collision = new MeshCollision(geom, GROUND_OFFSET); // note: MeshBVH indexes geom in place
   const mesh = new THREE.Mesh(
     geom,
-    new THREE.MeshBasicMaterial({ color: 0x35e08b, wireframe: true, transparent: true, opacity: 0.55 }),
+    MESHONLY
+      ? new THREE.MeshStandardMaterial({ color: 0x9fb4c8, roughness: 0.95, metalness: 0, side: THREE.DoubleSide })
+      : new THREE.MeshBasicMaterial({ color: 0x35e08b, wireframe: true, transparent: true, opacity: 0.55 }),
   );
-  mesh.visible = showVoxels;
+  mesh.visible = showVoxels || MESHONLY;
   scene.add(mesh);
   collisionDebug = mesh;
   lastVoxelSize = surf.voxelSize;
@@ -418,6 +433,21 @@ function updateCamera(): void {
   camDir.divideScalar(want);
   const allowed = collision.rayDistance(orbit.target, camDir, want);
   if (allowed < want) camera.position.copy(orbit.target).addScaledVector(camDir, Math.max(allowed - charH * 0.15, charH * 0.4));
+}
+/** Debug free-camera: park at a fixed spherical orbit around the look-at point
+ *  (see FREECAM_OPTS). Deterministic — lets a headless screenshot frame any region. */
+const freeCenter = new THREE.Vector3();
+function updateFreeCam(): void {
+  const { az, el, dist, cx, cy, cz } = FREECAM_OPTS;
+  freeCenter.set(cx, cy, cz);
+  const r = TARGET_RADIUS * dist;
+  camera.position.set(
+    cx + r * Math.cos(el) * Math.sin(az),
+    cy + r * Math.sin(el),
+    cz + r * Math.cos(el) * Math.cos(az),
+  );
+  camera.lookAt(freeCenter);
+  orbit.target.copy(freeCenter);
 }
 function lerpAngle(a: number, b: number, t: number): number {
   let d = (b - a) % (Math.PI * 2);
@@ -588,7 +618,7 @@ async function main(): Promise<void> {
 
   renderer.setAnimationLoop(() => {
     const dt = Math.min(clock.getDelta(), 0.05);
-    if (charLoaded) { updateController(dt); updateCamera(); }
+    if (charLoaded) { updateController(dt); if (FREECAM) updateFreeCam(); else updateCamera(); }
     mixer?.update(dt);
     void renderer.renderAsync(scene, camera).then(() => {
       if (charLoaded && ++frames === 3) (window as unknown as { __wwReady?: boolean }).__wwReady = true;
@@ -763,12 +793,24 @@ function setupDebugMenu(): void {
   addSlider('Platform: min size', PLATFORM_OPTS.minCells, 1, 40, 1, (v) => {
     PLATFORM_OPTS.minCells = v; rebuildPlatformOverlay();
   }, 'Drop platforms smaller than this many cells (floater/noise rejection). Higher = only big surfaces survive.');
+  addSlider('Isovalue (fill)', VOXEL_OPTS.iso, 0.15, 0.7, 0.05, (v) => {
+    VOXEL_OPTS.iso = v;
+    rebuildCollision();
+  }, 'Surface threshold as a fraction of median density. LOWER fills faint flat ' +
+     'panels (cabinet doors, distant walls) but eventually admits floater haze; ' +
+     'higher hugs only well-scanned surfaces. Default 0.35 suits casual scans.');
   addSlider('Surface hole-fill', VOXEL_OPTS.close, 0, 5, 1, (v) => {
     VOXEL_OPTS.close = v;
     rebuildCollision();
   }, 'Bridges holes in the collision mesh (walls / climbable faces / floor) by ' +
      'closing gaps up to ~2× this many voxels. Higher fills bigger holes on sparse ' +
      'scans; too high can close small real openings. Default 3 suits casual scans.');
+  addSlider('Panel fill (m²)', VOXEL_OPTS.panelFill, 0, 4, 0.25, (v) => {
+    VOXEL_OPTS.panelFill = v;
+    rebuildCollision();
+  }, 'Fills enclosed holes in flat vertical panels (blank cabinet doors / walls that ' +
+     'splatting captured too faintly) up to this area. Bigger fills larger blank panels ' +
+     'but can start closing real openings (doorways/windows); 0 = off. Default 2.5 m².');
   addSlider('Floor flatten (voxels)', VOXEL_OPTS.floorFlat, 0, 2, 0.05, (v) => {
     VOXEL_OPTS.floorFlat = v;
     rebuildCollision();
