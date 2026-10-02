@@ -13,7 +13,7 @@ import { GaussianSplat } from 'three/addons/objects/GaussianSplat.js';
 import { GaussianSplatPLYLoader } from 'three/addons/loaders/GaussianSplatPLYLoader.js';
 import { orientScan } from './orient-scan';
 import { surfaceToGeometry } from './voxelize';
-import { MeshCollision } from './collision';
+import { MeshCollision, type NavGrid } from './collision';
 import { voxelCacheKey, voxelCacheGet, voxelCachePut } from './voxel-cache';
 import type { VoxelSurface, VoxelOptions } from './voxelize';
 import type { CleanOptions } from './clean-scan-core';
@@ -33,10 +33,11 @@ const TARGET_RADIUS = 7; // normalize every scan to this world size (figurine ~0
 const VOXEL_SIZE = Number(q.get('vox')) || TARGET_RADIUS / 72; // ~0.097 world units
 const num = (key: string, def: number) => (q.has(key) ? Number(q.get(key)) : def);
 const VOXEL_OPTS = {
-  iso: num('iso', 0.5),          // isovalue as a fraction of median surface density
-  despeckle: num('despeckle', 12), // drop solid islands smaller than this (stray cubes)
-  close: num('close', 1),        // dilate→erode iterations (fills floor/wall holes)
+  iso: num('iso', 0.35),         // isovalue as a fraction of median surface density (low → fills faint flat panels)
+  despeckle: num('despeckle', 20), // drop solid islands smaller than this (stray cubes / floaters the low iso admits)
+  close: num('close', 3),        // dilate→erode iterations (bridges holes in floors/walls/surfaces)
   fillFloor: num('fillfloor', 1), // fill enclosed holes in the floor layer
+  panelFill: num('panelfill', 2.5), // fill enclosed holes in vertical panels up to this area, in NORMALIZED scan units² (~room-relative, not metres — every scan is scaled to TARGET_RADIUS); blank cabinet doors/walls; 0 = off
   smooth: num('smooth', 0),      // majority occupancy passes (Taubin handles smoothing)
   taubin: num('taubin', 6),      // Taubin mesh-smoothing iterations
   floorFlat: num('floorflat', 0.75), // snap mesh within this many voxels of y=0 flat
@@ -44,14 +45,40 @@ const VOXEL_OPTS = {
 // Walkable surfaces are de-quantized to the real splat height in the voxelizer,
 // so no ground offset is needed; ?sink stays as a manual override (default 0).
 const GROUND_OFFSET = num('sink', 0);
+// Debug free-camera: when any of ?az/el/dist/cx/cy/cz is present, detach the
+// figurine-follow and park the camera at a fixed orbit around a look-at point, so
+// any part of the collision mesh can be framed for inspection (used with ?voxel=1).
+// az/el = azimuth/elevation in radians; dist = distance in scene-radii (TARGET_RADIUS);
+// cx/cy/cz = look-at point in world units (floor is y=0). Non-interactive by design.
+// Debug mesh-only view (?meshonly=1): hide the splat and draw the collision surface
+// as a solid lit mesh, so holes / fills are unmistakable (the wireframe-over-splat
+// overlay is too cluttered to judge). Pairs with the free-cam for inspection.
+const MESHONLY = q.get('meshonly') === '1';
+const FREECAM = ['az', 'el', 'dist', 'cx', 'cy', 'cz'].some((k) => q.has(k));
+const FREECAM_OPTS = { az: num('az', 0.9), el: num('el', 0.5), dist: num('dist', 2.2), cx: num('cx', 0), cy: num('cy', 1), cz: num('cz', 0) };
 let showVoxels = q.get('voxel') === '1';
 let collisionDebug: THREE.Mesh | null = null;
 let voxelCheckbox: HTMLInputElement | null = null;
+// Spike 1: platform-decomposition overlay (colored walkable surfaces). stepFactor
+// = max step (in char-heights) two cells can differ and still be one platform;
+// minCells drops floater specks. Tuned live to see how scans decompose.
+let showPlatforms = q.get('platforms') === '1';
+let platformDebug: THREE.InstancedMesh | null = null;
+let platformCheckbox: HTMLInputElement | null = null;
+let lastVoxelSize = TARGET_RADIUS / 72;
+const PLATFORM_OPTS = { stepFactor: 0.35, minCells: 6 };
+// Spike 2: the reliable ground. The controller stands on the NavGrid (no
+// fall-through), is confined to it (no walking off), and recovers to `lastGood`.
+let navGrid: NavGrid | null = null;
+let supportY = 0;                       // height of the platform the player is standing on
+const lastGood = new THREE.Vector3();   // last validated on-platform position (recovery)
+let useNavGround = q.get('nav') !== '0'; // the platform reliability layer (on by default)
 let collision: MeshCollision | null = null; // BVH over the voxel surface, rebuilt per scan
 let currentFile = DEFAULT_SCAN;
 // last-loaded scan data, kept so debug tunables can re-voxelize without reloading the PLY
 let lastCenters: THREE.BufferAttribute | null = null;
 let lastOpacity: Float32Array | null = null;
+let lastCov: Float32Array | null = null; // per-splat covariance (6/splat) for anisotropic voxelization
 const lastMatrix = new THREE.Matrix4();
 const CAPSULE_RADIUS = 0.22; // capsule hemisphere radius, in char-heights
 const PHYSICS_STEPS = 5;     // collide-and-slide substeps per frame
@@ -102,7 +129,16 @@ function disposeCollision(): void {
     (collisionDebug.material as THREE.Material).dispose();
     collisionDebug = null;
   }
+  disposePlatformOverlay();
   collision = null;
+}
+
+function disposePlatformOverlay(): void {
+  if (!platformDebug) return;
+  scene.remove(platformDebug);
+  platformDebug.geometry.dispose();
+  (platformDebug.material as THREE.Material).dispose();
+  platformDebug = null;
 }
 
 /** Load a bundled demo scan from public/. */
@@ -140,17 +176,22 @@ function loadFromURL(url: string, id: string): void {
       // scans have arbitrary unit scales — normalize each to a consistent world
       // size so the fixed-size figurine stays a sensible fraction of every room.
       const k = TARGET_RADIUS / o.radius;
+      // per-splat 3-D Gaussian covariance drives anisotropic voxelization (splats fill
+      // their real ellipsoid footprint). The worldspace transform is applied in the core.
+      const covAttr = geometry.getAttribute('covariance') as THREE.BufferAttribute | undefined;
+      const cov = covAttr && covAttr.itemSize === 6 ? (covAttr.array as Float32Array) : null;
       const splat = new GaussianSplat(geometry);
       splat.position.copy(o.center).multiplyScalar(-1); // recenter to origin
+      splat.visible = !MESHONLY; // mesh-only debug view hides the splat
       room.add(splat);
       room.quaternion.copy(o.quaternion); // auto-leveled: floor normal → +Y
       room.scale.setScalar(k);
       room.position.y = k * o.floorOffsetY; // floor at y=0 (in scaled space)
       currentSplat = splat;
       room.updateMatrixWorld(true);
-      lastCenters = centers; lastOpacity = opacity; lastMatrix.copy(splat.matrixWorld);
+      lastCenters = centers; lastOpacity = opacity; lastCov = cov; lastMatrix.copy(splat.matrixWorld);
       console.log(`loaded ${id}: radius ${o.radius.toFixed(2)} → scaled ${k.toFixed(2)}x`);
-      await buildCollision(id, token, centers, opacity, splat.matrixWorld);
+      await buildCollision(id, token, centers, opacity, cov, splat.matrixWorld);
       if (token === loadToken && charLoaded) resetToSpawn();
     },
     undefined,
@@ -207,6 +248,7 @@ function onLoaded(gltf: GLTF): void {
 
   play('idle', 0);
   charLoaded = true;
+  if (collision) rebuildPlatformOverlay(); // rebuild the NavGrid now charH (headroom/step) is real
   resetToSpawn();
   console.log(`character: ${charH.toFixed(3)} tall, ${gltf.animations.length} clips`);
 }
@@ -222,9 +264,16 @@ function resetToSpawn(): void {
   } else {
     player.position.set(0, 0, 0);
   }
+  // align the spawn with the NavGrid so the reliability layer picks it up cleanly
+  if (navGrid) {
+    const s = navGrid.surfaceNear(player.position.x, player.position.z, player.position.y, charH);
+    if (s !== null) player.position.y = s;
+  }
   player.rotation.set(0, 0, 0);
   velocity.set(0, 0, 0);
   wasGrounded = false;
+  supportY = player.position.y;         // stand on the spawn surface
+  lastGood.copy(player.position);
   smoothFeetY = player.position.y;
   if (charModel) charModel.position.y = charFeetOffset;
   state = 'ground';
@@ -283,6 +332,7 @@ function keyEvent(e: KeyboardEvent, v: 0 | 1): void {
     case 'Space': if (v && state === 'ground') startJump(); e.preventDefault(); break;
     case 'KeyC': if (v) toggleClimb(); break;
     case 'KeyV': if (v) setVoxelOverlay(!showVoxels); break;
+    case 'KeyP': if (v) setPlatformOverlay(!showPlatforms); break;
   }
 }
 addEventListener('keydown', (e) => keyEvent(e, 1));
@@ -306,15 +356,16 @@ voxelWorker.onmessage = (e: MessageEvent<{ id: number; surface?: VoxelSurface; e
 };
 voxelWorker.onerror = (e) => console.error('voxel worker error:', e.message, e.filename, e.lineno);
 
-function voxelizeInWorker(centers: THREE.BufferAttribute, opacity: Float32Array, matrixWorld: THREE.Matrix4, opts: VoxelOptions): Promise<VoxelSurface> {
+function voxelizeInWorker(centers: THREE.BufferAttribute, opacity: Float32Array, cov: Float32Array | null, matrixWorld: THREE.Matrix4, opts: VoxelOptions): Promise<VoxelSurface> {
   return new Promise((resolve) => {
     const id = ++voxelReqId;
     voxelPending.set(id, resolve);
     const positions = (centers.array as Float32Array).slice(); // copies so we can transfer
     const op = opacity.slice();                                 // (originals kept for re-voxelize)
+    const cv = cov ? cov.slice() : null;
     voxelWorker.postMessage(
-      { id, positions, opacity: op, count: centers.count, matrix: Array.from(matrixWorld.elements), voxelSize: VOXEL_SIZE, opts },
-      [positions.buffer, op.buffer],
+      { id, positions, opacity: op, cov: cv, count: centers.count, matrix: Array.from(matrixWorld.elements), voxelSize: VOXEL_SIZE, opts },
+      cv ? [positions.buffer, op.buffer, cv.buffer] : [positions.buffer, op.buffer],
     );
   });
 }
@@ -322,7 +373,7 @@ function voxelizeInWorker(centers: THREE.BufferAttribute, opacity: Float32Array,
 // Build the surface (cached after the first load), a three-mesh-bvh over it for
 // the controller, and a toggleable debug overlay. `token` guards a slow async
 // build from landing after the user has already swapped to another scan.
-async function buildCollision(file: string, token: number, centers: THREE.BufferAttribute, opacity: Float32Array, matrixWorld: THREE.Matrix4): Promise<void> {
+async function buildCollision(file: string, token: number, centers: THREE.BufferAttribute, opacity: Float32Array, cov: Float32Array | null, matrixWorld: THREE.Matrix4): Promise<void> {
   const t0 = performance.now();
   // uploads aren't cached: re-cleaning changes the splat under a stable id, so the
   // key wouldn't reflect it — always re-voxelize an upload.
@@ -332,7 +383,7 @@ async function buildCollision(file: string, token: number, centers: THREE.Buffer
   const cached = surf !== null;
   if (token !== loadToken) return; // superseded while awaiting the cache
   if (!surf) {
-    surf = await voxelizeInWorker(centers, opacity, matrixWorld, VOXEL_OPTS);
+    surf = await voxelizeInWorker(centers, opacity, cov, matrixWorld, VOXEL_OPTS);
     if (token !== loadToken) return; // superseded while voxelizing
     if (useCache) void voxelCachePut(key, surf);
   }
@@ -340,11 +391,15 @@ async function buildCollision(file: string, token: number, centers: THREE.Buffer
   collision = new MeshCollision(geom, GROUND_OFFSET); // note: MeshBVH indexes geom in place
   const mesh = new THREE.Mesh(
     geom,
-    new THREE.MeshBasicMaterial({ color: 0x35e08b, wireframe: true, transparent: true, opacity: 0.55 }),
+    MESHONLY
+      ? new THREE.MeshStandardMaterial({ color: 0x9fb4c8, roughness: 0.95, metalness: 0, side: THREE.DoubleSide })
+      : new THREE.MeshBasicMaterial({ color: 0x35e08b, wireframe: true, transparent: true, opacity: 0.55 }),
   );
-  mesh.visible = showVoxels;
+  mesh.visible = showVoxels || MESHONLY;
   scene.add(mesh);
   collisionDebug = mesh;
+  lastVoxelSize = surf.voxelSize;
+  rebuildPlatformOverlay();
   console.log(
     `collision${cached ? ' (cached)' : ''}: ${surf.occupiedCount.toLocaleString()} voxels, ` +
     `${surf.triangleCount.toLocaleString()} tris @ ${surf.voxelSize.toFixed(3)}u ` +
@@ -357,7 +412,7 @@ async function buildCollision(file: string, token: number, centers: THREE.Buffer
 function rebuildCollision(): void {
   if (!lastCenters || !lastOpacity) return;
   disposeCollision();
-  void buildCollision(currentFile, ++loadToken, lastCenters, lastOpacity, lastMatrix);
+  void buildCollision(currentFile, ++loadToken, lastCenters, lastOpacity, lastCov, lastMatrix);
 }
 
 // --- controller update ------------------------------------------------------
@@ -378,6 +433,21 @@ function updateCamera(): void {
   camDir.divideScalar(want);
   const allowed = collision.rayDistance(orbit.target, camDir, want);
   if (allowed < want) camera.position.copy(orbit.target).addScaledVector(camDir, Math.max(allowed - charH * 0.15, charH * 0.4));
+}
+/** Debug free-camera: park at a fixed spherical orbit around the look-at point
+ *  (see FREECAM_OPTS). Deterministic — lets a headless screenshot frame any region. */
+const freeCenter = new THREE.Vector3();
+function updateFreeCam(): void {
+  const { az, el, dist, cx, cy, cz } = FREECAM_OPTS;
+  freeCenter.set(cx, cy, cz);
+  const r = TARGET_RADIUS * dist;
+  camera.position.set(
+    cx + r * Math.cos(el) * Math.sin(az),
+    cy + r * Math.sin(el),
+    cz + r * Math.cos(el) * Math.cos(az),
+  );
+  camera.lookAt(freeCenter);
+  orbit.target.copy(freeCenter);
 }
 function lerpAngle(a: number, b: number, t: number): number {
   let d = (b - a) % (Math.PI * 2);
@@ -414,15 +484,18 @@ function climbUpdate(dt: number): void {
     player.position.y = climbTopY;
     player.position.addScaledVector(climbNormal, -charH * 0.35);
     state = 'ground'; play('idle', TUNE.fade);
+    supportY = player.position.y; lastGood.copy(player.position); // now on the upper platform
   } else if (player.position.y <= floorY) { // slid back to the floor
     player.position.y = floorY;
     player.position.addScaledVector(climbNormal, charH * 0.05);
     state = 'ground'; play('idle', TUNE.fade);
+    supportY = player.position.y; lastGood.copy(player.position);
   }
 }
 
 // scratch vectors for the collide-and-slide loop (avoid per-frame allocation)
 const hVel = new THREE.Vector3(), disp = new THREE.Vector3(), correction = new THREE.Vector3(), slideN = new THREE.Vector3();
+const navRecover = new THREE.Vector3();
 
 function updateController(dt: number): void {
   camera.getWorldDirection(camFwd); camFwd.y = 0; camFwd.normalize();
@@ -434,41 +507,20 @@ function updateController(dt: number): void {
   if (state === 'climb') { climbUpdate(dt); return; }
   if (state === 'jump_start') return;        // anticipation freeze; onActionFinished launches
   if (!collision) return;
-  if (player.position.y < -charH * 3) { resetToSpawn(); return; } // fell out of the world → respawn
+  if (player.position.y < -charH * 3) { console.log(`FELL-THROUGH y=${player.position.y.toFixed(2)}`); resetToSpawn(); return; } // fell out of the world → respawn
+  if (q.get('tel') === '1' && frames % 30 === 0) console.log(`x=${player.position.x.toFixed(2)} z=${player.position.z.toFixed(2)} Y=${player.position.y.toFixed(2)} sup=${supportY.toFixed(2)} ${state}`);
 
   if (moving) player.rotation.y = lerpAngle(player.rotation.y, Math.atan2(wishDir.x, wishDir.z), TUNE.turnLerp * dt);
   const speed = (move.run ? TUNE.runSpeed : TUNE.walkSpeed) * charH;
   hVel.copy(wishDir).multiplyScalar(moving ? speed : 0);
 
-  // Capsule collide-and-slide: apply gravity + horizontal input, depenetrate the
-  // capsule out of the mesh, and slide along contacts. One unified pass handles
-  // walls, floor, steps and slopes — no separate wall-push vs ground-snap conflict.
+  // Locomotion. With the reliability layer on, movement is NAV-DRIVEN: free
+  // horizontal motion confined to the walkable platform — so the figurine can't be
+  // trapped by the bumpy mesh, fall through a hole, or walk off an edge — standing
+  // on the hole-filled NavGrid. With it off, fall back to raw capsule-vs-mesh
+  // collide-and-slide (kept for A/B comparison via the debug toggle).
   const radius = CAPSULE_RADIUS * charH;
-  const segLen = Math.max(0.02, charH - 2 * radius);
-  const subdt = dt / PHYSICS_STEPS;
-  let grounded = false;
-  for (let s = 0; s < PHYSICS_STEPS; s++) {
-    velocity.y += TUNE.gravity * charH * subdt;
-    disp.set(hVel.x * subdt, velocity.y * subdt, hVel.z * subdt);
-    collision.moveCapsule(player.position, radius, segLen, disp, correction);
-    // `correction` is the depenetration push-out only (excludes the move above),
-    // so jumping up (no penetration) is not mistaken for standing on ground.
-    if (correction.y > Math.abs(subdt * velocity.y * 0.25)) {   // pushed up ⇒ on ground
-      velocity.set(0, 0, 0); grounded = true;
-    } else if (correction.lengthSq() > 1e-12) {                 // hit a wall ⇒ slide along it
-      slideN.copy(correction).normalize();
-      velocity.addScaledVector(slideN, -slideN.dot(velocity));
-    }
-  }
-
-  // Ground snapping: if we just walked off a small down-step, stick to it rather
-  // than briefly launching (kills stair-edge jitter). Only heading downward.
-  if (!grounded && wasGrounded && velocity.y <= 0) {
-    const gy = collision.groundHeightAt(player.position.x, player.position.z, player.position.y + radius);
-    if (gy <= player.position.y && player.position.y - gy < charH * 0.35) {
-      player.position.y = gy; velocity.set(0, 0, 0); grounded = true;
-    }
-  }
+  const grounded = navGrid && useNavGround ? navMove(dt, radius) : meshMove(dt, radius);
   wasGrounded = grounded;
 
   // Visual-only vertical smoothing: physics feet (player.position.y) can bob as the
@@ -479,6 +531,63 @@ function updateController(dt: number): void {
   if (charModel) charModel.position.y = charFeetOffset + (smoothFeetY - player.position.y);
 
   updateLocomotion(grounded, moving);
+}
+
+/** Nav-driven movement: horizontal motion confined to the walkable platform (with
+ *  axis-separated edge-sliding so you slide along a wall instead of freezing),
+ *  standing on the hole-filled NavGrid. Ballistic while airborne (jump/fall),
+ *  landing on the platform at its real height. Returns whether we're grounded. */
+function navMove(dt: number, radius: number): boolean {
+  const nav = navGrid!, p = player.position;
+  const band = charH * PLATFORM_OPTS.stepFactor; // max step you can walk up/down
+  if (state === 'air') {
+    velocity.y += TUNE.gravity * charH * dt;
+    p.x += hVel.x * dt; p.z += hVel.z * dt; p.y += velocity.y * dt;
+    if (velocity.y <= 0) {
+      const floor = nav.surfaceBelow(p.x, p.z, p.y + radius * 0.5);
+      if (floor !== null && p.y <= floor) { p.y = floor; velocity.set(0, 0, 0); supportY = floor; lastGood.copy(p); return true; }
+    }
+    return false;
+  }
+  navMoveHoriz(hVel.x * dt, hVel.z * dt, band);
+  const here = nav.surfaceNear(p.x, p.z, supportY, band);
+  if (here !== null) { p.y = here; supportY = here; velocity.set(0, 0, 0); lastGood.copy(p); return true; }
+  if (nav.nearest(lastGood.x, lastGood.z, supportY, navRecover)) { p.copy(navRecover); supportY = navRecover.y; velocity.set(0, 0, 0); lastGood.copy(p); } // recovered
+  return true;
+}
+
+/** Move (dx,dz) but stay on the platform: take the full step if it lands on a
+ *  walkable surface (within `band` of the current support height, so small steps
+ *  up/down are fine), else slide along whichever axis keeps ground underfoot. */
+function navMoveHoriz(dx: number, dz: number, band: number): void {
+  const nav = navGrid!, p = player.position, x0 = p.x, z0 = p.z;
+  if (nav.surfaceNear(x0 + dx, z0 + dz, supportY, band) !== null) { p.x = x0 + dx; p.z = z0 + dz; return; }
+  if (dx !== 0 && nav.surfaceNear(x0 + dx, z0, supportY, band) !== null) p.x = x0 + dx;
+  if (dz !== 0 && nav.surfaceNear(p.x, z0 + dz, supportY, band) !== null) p.z = z0 + dz;
+}
+
+/** Raw capsule-vs-mesh collide-and-slide (the pre-nav movement, kept for A/B). One
+ *  unified pass handles walls, floor, steps and slopes. Returns whether grounded. */
+function meshMove(dt: number, radius: number): boolean {
+  if (!collision) return false;
+  const segLen = Math.max(0.02, charH - 2 * radius);
+  const subdt = dt / PHYSICS_STEPS;
+  let grounded = false;
+  for (let s = 0; s < PHYSICS_STEPS; s++) {
+    velocity.y += TUNE.gravity * charH * subdt;
+    disp.set(hVel.x * subdt, velocity.y * subdt, hVel.z * subdt);
+    collision.moveCapsule(player.position, radius, segLen, disp, correction);
+    // `correction` is the depenetration push-out only (excludes the move above),
+    // so jumping up (no penetration) is not mistaken for standing on ground.
+    if (correction.y > Math.abs(subdt * velocity.y * 0.25)) { velocity.set(0, 0, 0); grounded = true; }
+    else if (correction.lengthSq() > 1e-12) { slideN.copy(correction).normalize(); velocity.addScaledVector(slideN, -slideN.dot(velocity)); }
+  }
+  // stick to a small down-step rather than briefly launching (kills stair-edge jitter)
+  if (!grounded && wasGrounded && velocity.y <= 0) {
+    const gy = collision.groundHeightAt(player.position.x, player.position.z, player.position.y + radius);
+    if (gy <= player.position.y && player.position.y - gy < charH * 0.35) { player.position.y = gy; velocity.set(0, 0, 0); grounded = true; }
+  }
+  return grounded;
 }
 
 /** Drive the animation state machine from grounded + movement. */
@@ -509,7 +618,7 @@ async function main(): Promise<void> {
 
   renderer.setAnimationLoop(() => {
     const dt = Math.min(clock.getDelta(), 0.05);
-    if (charLoaded) { updateController(dt); updateCamera(); }
+    if (charLoaded) { updateController(dt); if (FREECAM) updateFreeCam(); else updateCamera(); }
     mixer?.update(dt);
     void renderer.renderAsync(scene, camera).then(() => {
       if (charLoaded && ++frames === 3) (window as unknown as { __wwReady?: boolean }).__wwReady = true;
@@ -571,6 +680,54 @@ function setVoxelOverlay(on: boolean): void {
   if (voxelCheckbox) voxelCheckbox.checked = on;
 }
 
+function setPlatformOverlay(on: boolean): void {
+  showPlatforms = on;
+  if (platformDebug) platformDebug.visible = on;
+  if (platformCheckbox) platformCheckbox.checked = on;
+}
+
+// Spike 1 overlay: decompose the current collision into walkable platforms and
+// draw one flat colored tile per cell, colored by platform (golden-ratio hues so
+// neighbors are distinct). Rebuilt on scan swap or when a platform slider moves.
+const platformTmp = new THREE.Object3D();
+const platformColor = new THREE.Color();
+function rebuildPlatformOverlay(): void {
+  disposePlatformOverlay();
+  navGrid = null;
+  if (!collision) return;
+  navGrid = collision.buildNavGrid(lastVoxelSize, charH, charH * PLATFORM_OPTS.stepFactor, PLATFORM_OPTS.minCells);
+  const field = navGrid.toField();
+  const cells = field.positions.length / 3;
+  // size histogram: how concentrated are cells? (a few big surfaces + noise specks?)
+  const sizes = new Int32Array(field.platformCount);
+  for (let i = 0; i < cells; i++) sizes[field.platformId[i]]++;
+  const sorted = [...sizes].sort((a, b) => b - a);
+  const big = sorted.filter((s) => s >= cells * 0.05).length; // platforms holding >=5% of cells
+  const top3 = cells ? Math.round((100 * (sorted[0] + (sorted[1] ?? 0) + (sorted[2] ?? 0))) / cells) : 0;
+  console.log(
+    `platforms: ${field.platformCount} total (${big} big), ${cells} cells @ step ${field.sampleStep.toFixed(3)}u — ` +
+    `top3 hold ${top3}% of cells, largest=${sorted[0] ?? 0}`,
+  );
+  if (cells === 0) return;
+  const tile = field.sampleStep * 0.92;
+  const geom = new THREE.BoxGeometry(tile, tile * 0.35, tile);
+  const mat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.7 });
+  const mesh = new THREE.InstancedMesh(geom, mat, cells);
+  for (let i = 0; i < cells; i++) {
+    platformTmp.position.set(field.positions[i * 3], field.positions[i * 3 + 1], field.positions[i * 3 + 2]);
+    platformTmp.updateMatrix();
+    mesh.setMatrixAt(i, platformTmp.matrix);
+    platformColor.setHSL((field.platformId[i] * 0.61803) % 1, 0.7, 0.55);
+    mesh.setColorAt(i, platformColor);
+  }
+  mesh.instanceMatrix.needsUpdate = true;
+  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  mesh.visible = showPlatforms;
+  mesh.frustumCulled = false;
+  scene.add(mesh);
+  platformDebug = mesh;
+}
+
 // A small debug panel (top-right). Put new debug tunables here (addToggle /
 // addSlider) rather than reaching for URL params.
 let debugPanel: HTMLDivElement | null = null;
@@ -623,6 +780,38 @@ function setupDebugMenu(): void {
   debugPanel = panel;
 
   voxelCheckbox = addToggle('Voxel wireframe (V)', showVoxels, setVoxelOverlay);
+  platformCheckbox = addToggle('Platforms (P)', showPlatforms, setPlatformOverlay,
+    'Spike 1: color the walkable surfaces the collision decomposes into — floor, ' +
+    'couch, counter. Distinct colors = distinct platforms (reached by climbing/jumping).');
+  addToggle('Reliable ground (nav)', useNavGround, (on) => { useNavGround = on; },
+    'Spike 2: stand on / confine to the hole-filled NavGrid so the figurine can\'t ' +
+    'fall through gaps or walk off platform edges. Off = raw mesh collision only.');
+  addSlider('Platform: step limit', PLATFORM_OPTS.stepFactor, 0.1, 1, 0.05, (v) => {
+    PLATFORM_OPTS.stepFactor = v; rebuildPlatformOverlay();
+  }, 'Max height (in char-heights) two neighboring cells can differ and still be ONE ' +
+     'platform. Higher = merges steps/bumps into one surface; lower = splits into more platforms.');
+  addSlider('Platform: min size', PLATFORM_OPTS.minCells, 1, 40, 1, (v) => {
+    PLATFORM_OPTS.minCells = v; rebuildPlatformOverlay();
+  }, 'Drop platforms smaller than this many cells (floater/noise rejection). Higher = only big surfaces survive.');
+  addSlider('Isovalue (fill)', VOXEL_OPTS.iso, 0.15, 0.7, 0.05, (v) => {
+    VOXEL_OPTS.iso = v;
+    rebuildCollision();
+  }, 'Surface threshold as a fraction of median density. LOWER fills faint flat ' +
+     'panels (cabinet doors, distant walls) but eventually admits floater haze; ' +
+     'higher hugs only well-scanned surfaces. Default 0.35 suits casual scans.');
+  addSlider('Surface hole-fill', VOXEL_OPTS.close, 0, 5, 1, (v) => {
+    VOXEL_OPTS.close = v;
+    rebuildCollision();
+  }, 'Bridges holes in the collision mesh (walls / climbable faces / floor) by ' +
+     'closing gaps up to ~2× this many voxels. Higher fills bigger holes on sparse ' +
+     'scans; too high can close small real openings. Default 3 suits casual scans.');
+  addSlider('Panel fill (area)', VOXEL_OPTS.panelFill, 0, 4, 0.25, (v) => {
+    VOXEL_OPTS.panelFill = v;
+    rebuildCollision();
+  }, 'Fills enclosed holes in flat vertical panels (blank cabinet doors / walls that ' +
+     'splatting captured too faintly) up to this area, in normalized scan units² ' +
+     '(~room-relative — not metres). Bigger fills larger blank panels but can start ' +
+     'closing real openings (doorways/windows); 0 = off. Default 2.5.');
   addSlider('Floor flatten (voxels)', VOXEL_OPTS.floorFlat, 0, 2, 0.05, (v) => {
     VOXEL_OPTS.floorFlat = v;
     rebuildCollision();

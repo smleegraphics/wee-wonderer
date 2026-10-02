@@ -17,10 +17,11 @@
 // then Taubin smoothing relaxes the mesh (no occupancy drift).
 
 export interface VoxelOptions {
-  iso?: number;        // isovalue as a fraction of the median surface density (default 0.5)
-  despeckle?: number;  // remove solid components smaller than this many voxels (default 12; 0 = off)
+  iso?: number;        // isovalue as a fraction of the median surface density (default 0.35)
+  despeckle?: number;  // remove solid components smaller than this many voxels (default 20; 0 = off)
   close?: number;      // morphological-close iterations, fills holes/gaps (default 1; 0 = off)
   fillFloor?: number;  // fill enclosed holes in the floor layer (default 1; 0 = off)
+  panelFill?: number;  // fill enclosed holes in vertical panels up to this area, in NORMALIZED scan units² (~room-relative, not metres — world coords are scaled to TARGET_RADIUS); blank cabinet doors / walls; 0 = off (default 2.5)
   smooth?: number;     // majority-filter passes on occupancy (default 0; Taubin handles smoothing)
   taubin?: number;     // Taubin mesh-smoothing iterations (default 6; 0 = off)
   floorFlat?: number;  // snap mesh vertices within this many voxels of y=0 flat (default 0.75; 0 = off)
@@ -70,13 +71,15 @@ export function voxelizeCore(
   m: ArrayLike<number>,
   voxelSize: number,
   opts: VoxelOptions = {},
+  cov?: ArrayLike<number> | null, // per-splat 3-D covariance (6 floats: Cxx,Cxy,Cxz,Cyy,Cyz,Czz) for anisotropic splatting
 ): VoxelSurface {
-  const isoFactor = opts.iso ?? 0.5;
-  const despeckleMin = opts.despeckle ?? 12;
+  const isoFactor = opts.iso ?? 0.35;
+  const despeckleMin = opts.despeckle ?? 20;
   const closeIters = opts.close ?? 1;
   const smoothPasses = opts.smooth ?? 0;
   const taubinIters = opts.taubin ?? 6;
   const doFillFloor = (opts.fillFloor ?? 1) !== 0;
+  const panelArea = opts.panelFill ?? 2.5; // vertical-panel hole-fill cap, in normalized world units² (~room-relative; 0 = off)
 
   // affine transform of splat center i into world space (w = 1, no divide)
   const wx = (i: number) => m[0] * positions[i * 3] + m[4] * positions[i * 3 + 1] + m[8] * positions[i * 3 + 2] + m[12];
@@ -120,15 +123,76 @@ export function voxelizeCore(
   const gy = Math.max(1, Math.ceil((maxY - minY) / vs) + 2);
   const gz = Math.max(1, Math.ceil((maxZ - minZ) / vs) + 2);
 
-  // pass 2: accumulate opacity mass per voxel → a density field. Splats outside
-  // the (floater-excluded) bounds are skipped.
+  // pass 2: accumulate opacity mass per voxel → a density field. Each splat is an
+  // anisotropic 3-D Gaussian: its covariance is an ellipsoid — a thin DISK for a flat
+  // wall/floor splat. We add its opacity to the voxels inside that ellipsoid, weighted
+  // by the Gaussian and normalised so each splat's total stays its opacity. Spreading
+  // ALONG a flat surface fills sparse panels (a plain cabinet door has few splat
+  // centres), while NOT spreading perpendicular keeps the surface hugging the real
+  // splats (no puffing / hovering). Tiny floaters stay ~1 faint voxel and get rejected.
   const dens = new Float32Array(gx * gy * gz);
+  const centerBin = (cx: number, cy: number, cz: number, op: number) => {
+    const vx = Math.floor(cx), vy = Math.floor(cy), vz = Math.floor(cz);
+    if (vx >= 0 && vx < gx && vy >= 0 && vy < gy && vz >= 0 && vz < gz) dens[(vx * gy + vy) * gz + vz] += op;
+  };
+  // linear (rotation × uniform-scale) part of the world matrix, row-major 3×3
+  const L0 = m[0], L1 = m[4], L2 = m[8], L3 = m[1], L4 = m[5], L5 = m[9], L6 = m[2], L7 = m[6], L8 = m[10];
+  const inv2 = 1 / (vs * vs); // world → voxel² scale for the covariance
+  // Floor each world-axis variance to a small epsilon (voxel²). This keeps the
+  // covariance invertible for razor-flat splats WITHOUT inflating the surface
+  // perpendicular: at 0.05 a flat splat spreads ~1 voxel thick (√0.05·σ), not the
+  // ±2-voxel slab a larger floor produced (which made floors/items hover & bloat).
+  const MIN_VAR = 0.05;
+  const MAX_R = 3, SIGMA = 2.5;
+  const wbuf = new Float32Array((2 * MAX_R + 1) ** 3); // per-splat weights, reused pass A → pass B
   for (let i = 0; i < count; i++) {
-    const vx = Math.floor((wx(i) - minX) / vs);
-    const vy = Math.floor((wy(i) - minY) / vs);
-    const vz = Math.floor((wz(i) - minZ) / vs);
-    if (vx < 0 || vx >= gx || vy < 0 || vy >= gy || vz < 0 || vz >= gz) continue;
-    dens[(vx * gy + vy) * gz + vz] += opacity[i];
+    const cx = (wx(i) - minX) / vs, cy = (wy(i) - minY) / vs, cz = (wz(i) - minZ) / vs;
+    const op = opacity[i];
+    if (!cov) { centerBin(cx, cy, cz, op); continue; }
+    const a = cov[i * 6], b = cov[i * 6 + 1], c = cov[i * 6 + 2], d = cov[i * 6 + 3], e = cov[i * 6 + 4], f = cov[i * 6 + 5];
+    // world covariance in voxel units = (L·Σ·Lᵀ)/vs², inlined (hot loop). Each Wab is
+    // rowA(L)ᵀ · Σ · rowB(L) for the symmetric local Σ [a,b,c; b,d,e; c,e,f].
+    const W00 = (a * L0 * L0 + d * L1 * L1 + f * L2 * L2 + 2 * (b * L0 * L1 + c * L0 * L2 + e * L1 * L2)) * inv2 + MIN_VAR;
+    const W11 = (a * L3 * L3 + d * L4 * L4 + f * L5 * L5 + 2 * (b * L3 * L4 + c * L3 * L5 + e * L4 * L5)) * inv2 + MIN_VAR;
+    const W22 = (a * L6 * L6 + d * L7 * L7 + f * L8 * L8 + 2 * (b * L6 * L7 + c * L6 * L8 + e * L7 * L8)) * inv2 + MIN_VAR;
+    const W01 = (a * L0 * L3 + d * L1 * L4 + f * L2 * L5 + b * (L0 * L4 + L1 * L3) + c * (L0 * L5 + L2 * L3) + e * (L1 * L5 + L2 * L4)) * inv2;
+    const W02 = (a * L0 * L6 + d * L1 * L7 + f * L2 * L8 + b * (L0 * L7 + L1 * L6) + c * (L0 * L8 + L2 * L6) + e * (L1 * L8 + L2 * L7)) * inv2;
+    const W12 = (a * L3 * L6 + d * L4 * L7 + f * L5 * L8 + b * (L3 * L7 + L4 * L6) + c * (L3 * L8 + L5 * L6) + e * (L4 * L8 + L5 * L7)) * inv2;
+    const det = W00 * (W11 * W22 - W12 * W12) - W01 * (W01 * W22 - W12 * W02) + W02 * (W01 * W12 - W11 * W02);
+    if (!(det > 1e-9)) { centerBin(cx, cy, cz, op); continue; }
+    const idet = 1 / det; // inverse covariance (symmetric) → the anisotropic distance metric
+    const I00 = (W11 * W22 - W12 * W12) * idet, I11 = (W00 * W22 - W02 * W02) * idet, I22 = (W00 * W11 - W01 * W01) * idet;
+    const I01 = (W02 * W12 - W01 * W22) * idet, I02 = (W01 * W12 - W02 * W11) * idet, I12 = (W01 * W02 - W00 * W12) * idet;
+    const rx = Math.min(MAX_R, Math.ceil(SIGMA * Math.sqrt(W00))), ry = Math.min(MAX_R, Math.ceil(SIGMA * Math.sqrt(W11))), rz = Math.min(MAX_R, Math.ceil(SIGMA * Math.sqrt(W22)));
+    const vxc = Math.floor(cx), vyc = Math.floor(cy), vzc = Math.floor(cz);
+    // pass A: Gaussian weight at each footprint voxel → wbuf; sum for mass normalisation
+    let sw = 0, n = 0;
+    for (let dx = -rx; dx <= rx; dx++) {
+      const vx = vxc + dx, ddx = vx + 0.5 - cx, inx = vx >= 0 && vx < gx;
+      for (let dy = -ry; dy <= ry; dy++) {
+        const vy = vyc + dy, ddy = vy + 0.5 - cy, iny = inx && vy >= 0 && vy < gy;
+        for (let dz = -rz; dz <= rz; dz++) {
+          const vz = vzc + dz, ddz = vz + 0.5 - cz;
+          if (!iny || vz < 0 || vz >= gz) { wbuf[n++] = 0; continue; } // outside grid → no mass
+          const s = I00 * ddx * ddx + I11 * ddy * ddy + I22 * ddz * ddz + 2 * (I01 * ddx * ddy + I02 * ddx * ddz + I12 * ddy * ddz);
+          const w = s > 12 ? 0 : Math.exp(-0.5 * s);
+          wbuf[n++] = w; sw += w;
+        }
+      }
+    }
+    if (sw <= 0) { centerBin(cx, cy, cz, op); continue; }
+    // pass B: distribute opacity by the normalised weights (voxels with w>0 are in-grid)
+    const scale = op / sw; n = 0;
+    for (let dx = -rx; dx <= rx; dx++) {
+      const vx = vxc + dx;
+      for (let dy = -ry; dy <= ry; dy++) {
+        const vy = vyc + dy;
+        for (let dz = -rz; dz <= rz; dz++) {
+          const w = wbuf[n++];
+          if (w > 0) dens[(vx * gy + vy) * gz + (vzc + dz)] += w * scale;
+        }
+      }
+    }
   }
 
   // isovalue: a fraction of the median density among voxels that hold real
@@ -146,6 +210,11 @@ export function voxelizeCore(
   for (let i = 0; i < closeIters; i++) occ = dilate(occ, gx, gy, gz);
   for (let i = 0; i < closeIters; i++) occ = erode(occ, gx, gy, gz);
   if (doFillFloor) fillFloorHoles(occ, gx, gy, gz);
+  // ASSUMES a single, nav-confined room: this fills ANY enclosed vertical-panel hole
+  // up to the area cap, so a real passage (doorway/window) of that size would be walled
+  // off. Safe because the character can't reach such openings here; revisit for
+  // multi-room scans (would need to tell a furniture panel from a passage — see PR #7).
+  if (panelArea > 0) fillVerticalPanelHoles(occ, gx, gy, gz, Math.round(panelArea / (vs * vs)));
   for (let i = 0; i < smoothPasses; i++) occ = majority(occ, gx, gy, gz);
 
   let occupied = 0;
@@ -387,6 +456,77 @@ function fillSlice(occ: Uint8Array, gx: number, gy: number, gz: number, vy: numb
   for (let x = 0; x < gx; x++)
     for (let z = 0; z < gz; z++)
       if (!occ[at(x, z)] && !seen[k2(x, z)]) occ[at(x, z)] = 1;
+}
+
+/**
+ * Fill enclosed holes in vertical flat panels that splatting left empty — most
+ * visibly blank cabinet/furniture doors. A featureless painted surface gives weak
+ * photometric signal, so it's reconstructed as sparse/low-opacity splats that fall
+ * below any density threshold (and the floater cleaner strips them entirely) — so the
+ * door's OWN splats can't be used. But the panel reads as a hole fully enclosed,
+ * within its own plane, by the meshed frame/edges around it, which ARE captured. So
+ * we recover it geometrically: for each dense slice perpendicular to X and to Z (the
+ * vertical planes) we flood the "outside" in from the slice border and fill any
+ * enclosed empty region up to `maxCells` in area. The area cap keeps it honest — a
+ * door-sized gap fills; larger openings (which in a single-room scene can only be
+ * windows/doorways the character never uses) stay open. Horizontal panels (floor,
+ * tabletops) are handled by fillFloorHoles.
+ */
+function fillVerticalPanelHoles(occ: Uint8Array, gx: number, gy: number, gz: number, maxCells: number): void {
+  const dims = [gx, gy, gz], strides = [gy * gz, gz, 1];
+  fillAxisHoles(occ, dims, strides, 0, maxCells); // YZ slices — panels facing ±X
+  fillAxisHoles(occ, dims, strides, 2, maxCells); // XY slices — panels facing ±Z
+}
+
+/** Fill size-capped enclosed holes in each dense slice ⟂ `axis`. */
+function fillAxisHoles(occ: Uint8Array, dims: number[], strides: number[], axis: number, maxCells: number): void {
+  const na = dims[axis], sa = strides[axis];
+  const others = [0, 1, 2].filter((x) => x !== axis);
+  const u = others[0], v = others[1];
+  const nu = dims[u], nv = dims[v], su = strides[u], sv = strides[v];
+  // per-slice occupancy → only process slices dense enough to be a real surface plane
+  let maxCount = 0;
+  const counts = new Int32Array(na);
+  for (let a = 0; a < na; a++) {
+    let c = 0; const base = a * sa;
+    for (let iu = 0; iu < nu; iu++) { const bu = base + iu * su; for (let iv = 0; iv < nv; iv++) if (occ[bu + iv * sv]) c++; }
+    counts[a] = c; if (c > maxCount) maxCount = c;
+  }
+  // Only process slices dense enough to be a real surface plane. Best-effort heuristic:
+  // on a scan where one plane dominates (a big wall), a smaller cabinet's slices can
+  // fall below this bar and its doors won't fill — a known cause of the occasional
+  // unfilled panel. An absolute floor would be more robust if this proves too coarse.
+  const domThresh = 0.2 * maxCount;
+  const seen = new Uint8Array(nu * nv);
+  const stack: number[] = [], comp: number[] = [];
+  for (let a = 0; a < na; a++) {
+    if (counts[a] === 0 || counts[a] < domThresh) continue;
+    const base = a * sa;
+    seen.fill(0);
+    // flood the outside from the slice border through empty cells
+    stack.length = 0;
+    const pushOut = (iu: number, iv: number) => { const k = iu * nv + iv; if (!seen[k] && !occ[base + iu * su + iv * sv]) { seen[k] = 1; stack.push(iu, iv); } };
+    for (let iu = 0; iu < nu; iu++) { pushOut(iu, 0); pushOut(iu, nv - 1); }
+    for (let iv = 0; iv < nv; iv++) { pushOut(0, iv); pushOut(nu - 1, iv); }
+    while (stack.length) {
+      const iv = stack.pop()!, iu = stack.pop()!;
+      if (iu > 0) pushOut(iu - 1, iv); if (iu < nu - 1) pushOut(iu + 1, iv);
+      if (iv > 0) pushOut(iu, iv - 1); if (iv < nv - 1) pushOut(iu, iv + 1);
+    }
+    // each enclosed empty region (not occupied, not reached from outside) → fill if ≤ cap
+    for (let iu = 0; iu < nu; iu++)
+      for (let iv = 0; iv < nv; iv++) {
+        if (occ[base + iu * su + iv * sv] || seen[iu * nv + iv]) continue;
+        comp.length = 0; stack.length = 0; seen[iu * nv + iv] = 1; stack.push(iu, iv);
+        while (stack.length) {
+          const jv = stack.pop()!, ju = stack.pop()!; comp.push(ju, jv);
+          const grow = (pu: number, pv: number) => { const kk = pu * nv + pv; if (!seen[kk] && !occ[base + pu * su + pv * sv]) { seen[kk] = 1; stack.push(pu, pv); } };
+          if (ju > 0) grow(ju - 1, jv); if (ju < nu - 1) grow(ju + 1, jv);
+          if (jv > 0) grow(ju, jv - 1); if (jv < nv - 1) grow(ju, jv + 1);
+        }
+        if (comp.length / 2 <= maxCells) for (let m = 0; m < comp.length; m += 2) occ[base + comp[m] * su + comp[m + 1] * sv] = 1;
+      }
+  }
 }
 
 /** Majority filter over the 26-neighborhood (incl. self): flips lone bumps/pits. */

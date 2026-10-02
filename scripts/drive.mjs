@@ -41,6 +41,7 @@ try {
       await page.locator('input[type=range]').nth(Number(nth)).fill(value);
     } else if (op === 'file') {
       await page.setInputFiles('input[type=file]', arg); // arg = path to upload
+      await page.evaluate(() => (document.activeElement instanceof HTMLElement) && document.activeElement.blur()); // release focus so keys land on window
     } else if (op === 'shot') { await page.screenshot({ path: arg }); console.log('[drive] shot', arg); }
   }
 } finally {
