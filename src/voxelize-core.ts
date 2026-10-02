@@ -21,7 +21,7 @@ export interface VoxelOptions {
   despeckle?: number;  // remove solid components smaller than this many voxels (default 20; 0 = off)
   close?: number;      // morphological-close iterations, fills holes/gaps (default 1; 0 = off)
   fillFloor?: number;  // fill enclosed holes in the floor layer (default 1; 0 = off)
-  panelFill?: number;  // fill enclosed holes in vertical panels up to this area in m² (blank cabinet doors / walls); 0 = off (default 2.5)
+  panelFill?: number;  // fill enclosed holes in vertical panels up to this area, in NORMALIZED scan units² (~room-relative, not metres — world coords are scaled to TARGET_RADIUS); blank cabinet doors / walls; 0 = off (default 2.5)
   smooth?: number;     // majority-filter passes on occupancy (default 0; Taubin handles smoothing)
   taubin?: number;     // Taubin mesh-smoothing iterations (default 6; 0 = off)
   floorFlat?: number;  // snap mesh vertices within this many voxels of y=0 flat (default 0.75; 0 = off)
@@ -79,7 +79,7 @@ export function voxelizeCore(
   const smoothPasses = opts.smooth ?? 0;
   const taubinIters = opts.taubin ?? 6;
   const doFillFloor = (opts.fillFloor ?? 1) !== 0;
-  const panelArea = opts.panelFill ?? 2.5; // m² cap for vertical-panel hole fill (0 = off)
+  const panelArea = opts.panelFill ?? 2.5; // vertical-panel hole-fill cap, in normalized world units² (~room-relative; 0 = off)
 
   // affine transform of splat center i into world space (w = 1, no divide)
   const wx = (i: number) => m[0] * positions[i * 3] + m[4] * positions[i * 3 + 1] + m[8] * positions[i * 3 + 2] + m[12];
@@ -210,6 +210,10 @@ export function voxelizeCore(
   for (let i = 0; i < closeIters; i++) occ = dilate(occ, gx, gy, gz);
   for (let i = 0; i < closeIters; i++) occ = erode(occ, gx, gy, gz);
   if (doFillFloor) fillFloorHoles(occ, gx, gy, gz);
+  // ASSUMES a single, nav-confined room: this fills ANY enclosed vertical-panel hole
+  // up to the area cap, so a real passage (doorway/window) of that size would be walled
+  // off. Safe because the character can't reach such openings here; revisit for
+  // multi-room scans (would need to tell a furniture panel from a passage — see PR #7).
   if (panelArea > 0) fillVerticalPanelHoles(occ, gx, gy, gz, Math.round(panelArea / (vs * vs)));
   for (let i = 0; i < smoothPasses; i++) occ = majority(occ, gx, gy, gz);
 
@@ -488,7 +492,11 @@ function fillAxisHoles(occ: Uint8Array, dims: number[], strides: number[], axis:
     for (let iu = 0; iu < nu; iu++) { const bu = base + iu * su; for (let iv = 0; iv < nv; iv++) if (occ[bu + iv * sv]) c++; }
     counts[a] = c; if (c > maxCount) maxCount = c;
   }
-  const domThresh = 0.2 * maxCount; // skip sparse slices (mostly-empty room interior)
+  // Only process slices dense enough to be a real surface plane. Best-effort heuristic:
+  // on a scan where one plane dominates (a big wall), a smaller cabinet's slices can
+  // fall below this bar and its doors won't fill — a known cause of the occasional
+  // unfilled panel. An absolute floor would be more robust if this proves too coarse.
+  const domThresh = 0.2 * maxCount;
   const seen = new Uint8Array(nu * nv);
   const stack: number[] = [], comp: number[] = [];
   for (let a = 0; a < na; a++) {

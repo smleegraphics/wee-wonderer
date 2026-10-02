@@ -37,7 +37,7 @@ const VOXEL_OPTS = {
   despeckle: num('despeckle', 20), // drop solid islands smaller than this (stray cubes / floaters the low iso admits)
   close: num('close', 3),        // dilate→erode iterations (bridges holes in floors/walls/surfaces)
   fillFloor: num('fillfloor', 1), // fill enclosed holes in the floor layer
-  panelFill: num('panelfill', 2.5), // fill enclosed holes in vertical panels up to this m² (blank cabinet doors/walls); 0 = off
+  panelFill: num('panelfill', 2.5), // fill enclosed holes in vertical panels up to this area, in NORMALIZED scan units² (~room-relative, not metres — every scan is scaled to TARGET_RADIUS); blank cabinet doors/walls; 0 = off
   smooth: num('smooth', 0),      // majority occupancy passes (Taubin handles smoothing)
   taubin: num('taubin', 6),      // Taubin mesh-smoothing iterations
   floorFlat: num('floorflat', 0.75), // snap mesh within this many voxels of y=0 flat
@@ -805,12 +805,13 @@ function setupDebugMenu(): void {
   }, 'Bridges holes in the collision mesh (walls / climbable faces / floor) by ' +
      'closing gaps up to ~2× this many voxels. Higher fills bigger holes on sparse ' +
      'scans; too high can close small real openings. Default 3 suits casual scans.');
-  addSlider('Panel fill (m²)', VOXEL_OPTS.panelFill, 0, 4, 0.25, (v) => {
+  addSlider('Panel fill (area)', VOXEL_OPTS.panelFill, 0, 4, 0.25, (v) => {
     VOXEL_OPTS.panelFill = v;
     rebuildCollision();
   }, 'Fills enclosed holes in flat vertical panels (blank cabinet doors / walls that ' +
-     'splatting captured too faintly) up to this area. Bigger fills larger blank panels ' +
-     'but can start closing real openings (doorways/windows); 0 = off. Default 2.5 m².');
+     'splatting captured too faintly) up to this area, in normalized scan units² ' +
+     '(~room-relative — not metres). Bigger fills larger blank panels but can start ' +
+     'closing real openings (doorways/windows); 0 = off. Default 2.5.');
   addSlider('Floor flatten (voxels)', VOXEL_OPTS.floorFlat, 0, 2, 0.05, (v) => {
     VOXEL_OPTS.floorFlat = v;
     rebuildCollision();
