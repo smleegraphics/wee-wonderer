@@ -17,10 +17,11 @@
 // then Taubin smoothing relaxes the mesh (no occupancy drift).
 
 export interface VoxelOptions {
-  iso?: number;        // isovalue as a fraction of the median surface density (default 0.5)
-  despeckle?: number;  // remove solid components smaller than this many voxels (default 12; 0 = off)
+  iso?: number;        // isovalue as a fraction of the median surface density (default 0.35)
+  despeckle?: number;  // remove solid components smaller than this many voxels (default 20; 0 = off)
   close?: number;      // morphological-close iterations, fills holes/gaps (default 1; 0 = off)
   fillFloor?: number;  // fill enclosed holes in the floor layer (default 1; 0 = off)
+  panelFill?: number;  // fill enclosed holes in vertical panels up to this area in m² (blank cabinet doors / walls); 0 = off (default 2.5)
   smooth?: number;     // majority-filter passes on occupancy (default 0; Taubin handles smoothing)
   taubin?: number;     // Taubin mesh-smoothing iterations (default 6; 0 = off)
   floorFlat?: number;  // snap mesh vertices within this many voxels of y=0 flat (default 0.75; 0 = off)
@@ -72,12 +73,13 @@ export function voxelizeCore(
   opts: VoxelOptions = {},
   cov?: ArrayLike<number> | null, // per-splat 3-D covariance (6 floats: Cxx,Cxy,Cxz,Cyy,Cyz,Czz) for anisotropic splatting
 ): VoxelSurface {
-  const isoFactor = opts.iso ?? 0.5;
-  const despeckleMin = opts.despeckle ?? 12;
+  const isoFactor = opts.iso ?? 0.35;
+  const despeckleMin = opts.despeckle ?? 20;
   const closeIters = opts.close ?? 1;
   const smoothPasses = opts.smooth ?? 0;
   const taubinIters = opts.taubin ?? 6;
   const doFillFloor = (opts.fillFloor ?? 1) !== 0;
+  const panelArea = opts.panelFill ?? 2.5; // m² cap for vertical-panel hole fill (0 = off)
 
   // affine transform of splat center i into world space (w = 1, no divide)
   const wx = (i: number) => m[0] * positions[i * 3] + m[4] * positions[i * 3 + 1] + m[8] * positions[i * 3 + 2] + m[12];
@@ -136,7 +138,11 @@ export function voxelizeCore(
   // linear (rotation × uniform-scale) part of the world matrix, row-major 3×3
   const L0 = m[0], L1 = m[4], L2 = m[8], L3 = m[1], L4 = m[5], L5 = m[9], L6 = m[2], L7 = m[6], L8 = m[10];
   const inv2 = 1 / (vs * vs); // world → voxel² scale for the covariance
-  const MIN_VAR = 0.25;       // floor each axis variance to (½ voxel)² → invertible + ≥~1 voxel thick
+  // Floor each world-axis variance to a small epsilon (voxel²). This keeps the
+  // covariance invertible for razor-flat splats WITHOUT inflating the surface
+  // perpendicular: at 0.05 a flat splat spreads ~1 voxel thick (√0.05·σ), not the
+  // ±2-voxel slab a larger floor produced (which made floors/items hover & bloat).
+  const MIN_VAR = 0.05;
   const MAX_R = 3, SIGMA = 2.5;
   const wbuf = new Float32Array((2 * MAX_R + 1) ** 3); // per-splat weights, reused pass A → pass B
   for (let i = 0; i < count; i++) {
@@ -204,6 +210,7 @@ export function voxelizeCore(
   for (let i = 0; i < closeIters; i++) occ = dilate(occ, gx, gy, gz);
   for (let i = 0; i < closeIters; i++) occ = erode(occ, gx, gy, gz);
   if (doFillFloor) fillFloorHoles(occ, gx, gy, gz);
+  if (panelArea > 0) fillVerticalPanelHoles(occ, gx, gy, gz, Math.round(panelArea / (vs * vs)));
   for (let i = 0; i < smoothPasses; i++) occ = majority(occ, gx, gy, gz);
 
   let occupied = 0;
@@ -445,6 +452,73 @@ function fillSlice(occ: Uint8Array, gx: number, gy: number, gz: number, vy: numb
   for (let x = 0; x < gx; x++)
     for (let z = 0; z < gz; z++)
       if (!occ[at(x, z)] && !seen[k2(x, z)]) occ[at(x, z)] = 1;
+}
+
+/**
+ * Fill enclosed holes in vertical flat panels that splatting left empty — most
+ * visibly blank cabinet/furniture doors. A featureless painted surface gives weak
+ * photometric signal, so it's reconstructed as sparse/low-opacity splats that fall
+ * below any density threshold (and the floater cleaner strips them entirely) — so the
+ * door's OWN splats can't be used. But the panel reads as a hole fully enclosed,
+ * within its own plane, by the meshed frame/edges around it, which ARE captured. So
+ * we recover it geometrically: for each dense slice perpendicular to X and to Z (the
+ * vertical planes) we flood the "outside" in from the slice border and fill any
+ * enclosed empty region up to `maxCells` in area. The area cap keeps it honest — a
+ * door-sized gap fills; larger openings (which in a single-room scene can only be
+ * windows/doorways the character never uses) stay open. Horizontal panels (floor,
+ * tabletops) are handled by fillFloorHoles.
+ */
+function fillVerticalPanelHoles(occ: Uint8Array, gx: number, gy: number, gz: number, maxCells: number): void {
+  const dims = [gx, gy, gz], strides = [gy * gz, gz, 1];
+  fillAxisHoles(occ, dims, strides, 0, maxCells); // YZ slices — panels facing ±X
+  fillAxisHoles(occ, dims, strides, 2, maxCells); // XY slices — panels facing ±Z
+}
+
+/** Fill size-capped enclosed holes in each dense slice ⟂ `axis`. */
+function fillAxisHoles(occ: Uint8Array, dims: number[], strides: number[], axis: number, maxCells: number): void {
+  const na = dims[axis], sa = strides[axis];
+  const others = [0, 1, 2].filter((x) => x !== axis);
+  const u = others[0], v = others[1];
+  const nu = dims[u], nv = dims[v], su = strides[u], sv = strides[v];
+  // per-slice occupancy → only process slices dense enough to be a real surface plane
+  let maxCount = 0;
+  const counts = new Int32Array(na);
+  for (let a = 0; a < na; a++) {
+    let c = 0; const base = a * sa;
+    for (let iu = 0; iu < nu; iu++) { const bu = base + iu * su; for (let iv = 0; iv < nv; iv++) if (occ[bu + iv * sv]) c++; }
+    counts[a] = c; if (c > maxCount) maxCount = c;
+  }
+  const domThresh = 0.2 * maxCount; // skip sparse slices (mostly-empty room interior)
+  const seen = new Uint8Array(nu * nv);
+  const stack: number[] = [], comp: number[] = [];
+  for (let a = 0; a < na; a++) {
+    if (counts[a] === 0 || counts[a] < domThresh) continue;
+    const base = a * sa;
+    seen.fill(0);
+    // flood the outside from the slice border through empty cells
+    stack.length = 0;
+    const pushOut = (iu: number, iv: number) => { const k = iu * nv + iv; if (!seen[k] && !occ[base + iu * su + iv * sv]) { seen[k] = 1; stack.push(iu, iv); } };
+    for (let iu = 0; iu < nu; iu++) { pushOut(iu, 0); pushOut(iu, nv - 1); }
+    for (let iv = 0; iv < nv; iv++) { pushOut(0, iv); pushOut(nu - 1, iv); }
+    while (stack.length) {
+      const iv = stack.pop()!, iu = stack.pop()!;
+      if (iu > 0) pushOut(iu - 1, iv); if (iu < nu - 1) pushOut(iu + 1, iv);
+      if (iv > 0) pushOut(iu, iv - 1); if (iv < nv - 1) pushOut(iu, iv + 1);
+    }
+    // each enclosed empty region (not occupied, not reached from outside) → fill if ≤ cap
+    for (let iu = 0; iu < nu; iu++)
+      for (let iv = 0; iv < nv; iv++) {
+        if (occ[base + iu * su + iv * sv] || seen[iu * nv + iv]) continue;
+        comp.length = 0; stack.length = 0; seen[iu * nv + iv] = 1; stack.push(iu, iv);
+        while (stack.length) {
+          const jv = stack.pop()!, ju = stack.pop()!; comp.push(ju, jv);
+          const grow = (pu: number, pv: number) => { const kk = pu * nv + pv; if (!seen[kk] && !occ[base + pu * su + pv * sv]) { seen[kk] = 1; stack.push(pu, pv); } };
+          if (ju > 0) grow(ju - 1, jv); if (ju < nu - 1) grow(ju + 1, jv);
+          if (jv > 0) grow(ju, jv - 1); if (jv < nv - 1) grow(ju, jv + 1);
+        }
+        if (comp.length / 2 <= maxCells) for (let m = 0; m < comp.length; m += 2) occ[base + comp[m] * su + comp[m + 1] * sv] = 1;
+      }
+  }
 }
 
 /** Majority filter over the 26-neighborhood (incl. self): flips lone bumps/pits. */
