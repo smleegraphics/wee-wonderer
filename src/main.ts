@@ -544,6 +544,7 @@ let climbV = 0, climbH = 0;             // this frame's climb input after latche
 let climbSideMix = 0;                   // animation blend: -1 = shimmy left, 0 = up/down climb, +1 = shimmy right
 let climbAtEdge = false;                // sideways shuffle is stopped at the wall's edge (telemetry de-dupe)
 let climbCling = false;                 // topped out with nowhere to stand → hanging
+let climbBlocked = false;               // the body is being pushed out of something (telemetry de-dupe)
 
 /** Climb geometry. Heights and reaches are fractions of the figurine's height; `gap`
  *  and `mantleOver` are in capsule radii. */
@@ -562,6 +563,7 @@ const CLIMB = {
   mantleNear: 0.4,  // ...onto a surface within this of the feet...
   mantleUp: 0.3,    // ...and no more than this above them
   landTol: 0.1,     // descending: step off once the feet are this close to the ground
+  skin: 0.05,       // radii: the body resting this far into a surface is touching it, not inside it
 };
 
 /** Walk it or climb it — one cutoff, the "Climb threshold" slider: a surface steeper
@@ -815,15 +817,30 @@ function climbUpdate(dt: number): boolean {
       climbDir.z += (-wall.nz / hn - climbDir.z) * t;
       climbDir.normalize();
     }
-    return false;
-  }
-
-  // no wall at this height. Going up → topped out: mantle onto a surface, else cling.
-  if (v > 0) {
+  } else if (v > 0) {
+    // no wall at this height. Going up → topped out: mantle onto a surface, else cling.
     if (tryMantle()) return true;
     climbCling = true; // nothing up there → cling at the top
     if (TEL) console.log(`CLIMB-CLING y=${p.y.toFixed(2)}`);
   }
+
+  // --- the whole body has to fit, not just the grip ---
+  // The face is followed at one point near the feet, so the rest of the body can be
+  // carried into whatever is beside or above it. Push the body out of anything this
+  // move put it in — the same collide-and-slide walking uses, in all three axes here.
+  // An object in the way pushes straight back, so the move makes no headway; a lump
+  // of the wall itself pushes outward, and the climber rides over it.
+  //   Only while the overlap is shallower than the body's radius, though: that is as
+  // deep as one frame's move can take it, and as deep as "which way is out" has a
+  // single answer. Deeper means the body was already inside something when the move
+  // began (a grab that started that way) — pushing then can eject it through the far
+  // side of a thin shell, so it is left alone.
+  const sunk = bodyOverlap(p.x, p.y, p.z, radius);
+  if (sunk > radius * CLIMB.skin && sunk <= radius) {
+    if (TEL && !climbBlocked) console.log(`CLIMB-PUSHED y=${p.y.toFixed(2)} by=${(sunk / radius).toFixed(2)}r`);
+    p.set(wallFeet.x, wallFeet.y - charH * WALL_LIFT, wallFeet.z);
+    climbBlocked = true;
+  } else climbBlocked = false;
   return false;
 }
 
