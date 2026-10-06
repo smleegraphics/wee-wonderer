@@ -22,11 +22,11 @@ const SHAPE = {
   sway: 0.06,      // rad — and rocks as the weight shifts
 };
 
-export const trackNode = (t: THREE.KeyframeTrack) => THREE.PropertyBinding.parseTrackName(t.name);
+const trackNode = (t: THREE.KeyframeTrack) => THREE.PropertyBinding.parseTrackName(t.name);
 
 /** The clip's pose averaged over its cycle — a neutral "on the wall" pose (both arms
  *  up, both legs tucked) to shimmy from, with no up/down stepping left in it. */
-export function meanPose(clip: THREE.AnimationClip): Map<string, Float32Array> {
+function meanPose(clip: THREE.AnimationClip): Map<string, Float32Array> {
   const pose = new Map<string, Float32Array>();
   for (const t of clip.tracks) {
     const size = t.getValueSize(), n = t.times.length, v = t.values, out = new Float32Array(size);

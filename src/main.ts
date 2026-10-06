@@ -18,7 +18,6 @@ import { voxelCacheKey, voxelCacheGet, voxelCachePut } from './voxel-cache';
 import type { VoxelSurface, VoxelOptions } from './voxelize';
 import type { CleanOptions } from './clean-scan-core';
 import { buildClimbSideClip } from './climb-side-anim';
-import { buildCrawlClip } from './climb-crawl-anim'; // EXPERIMENT (spider crawl)
 
 const q = new URLSearchParams(location.search);
 // demo scans for the switcher UI — config, not logic (each auto-levels at load).
@@ -221,13 +220,6 @@ const CONTRACT = [
 
 const TUNE = { walkSpeed: 1.6, runSpeed: 4.0, jumpVel: 3.2, gravity: -9.0, climbSpeed: 1.2, climbTurn: 6, fade: 0.18, turnLerp: 12, camIn: 20, camOut: 3, camSwing: 4 };
 
-// EXPERIMENT (spider crawl): a Spider-Man-style wall crawl in place of the climb's look.
-// Movement is untouched — this only swaps animation + body orientation on the wall.
-// To remove: delete climb-crawl-anim.ts and everything marked "EXPERIMENT (spider crawl)".
-const SPIDER = { crawl: true, headFirst: true };
-let crawlOn = 0;   // eased 0..1: how much of the crawl look is showing
-let crawlRoll = 0; // head-first: the body's turn on the wall (0 = head up, +90° = head toward its right)
-
 const move = { f: 0, b: 0, l: 0, r: 0, run: false };
 let state: 'ground' | 'jump_start' | 'air' | 'land' | 'climb' = 'ground';
 const velocity = new THREE.Vector3(); // gravity/jump; horizontal input is applied per-frame
@@ -313,18 +305,6 @@ function setupMixer(gltf: GLTF, model: THREE.Object3D): void {
   if (clipByName['climb']) {
     for (const [name, dir] of [['climb_side_r', 1], ['climb_side_l', -1]] as const) {
       const clip = buildClimbSideClip(clipByName['climb'], model, dir, name);
-      if (!clip) continue;
-      const a = mixer.clipAction(clip);
-      a.setLoop(THREE.LoopRepeat, Infinity);
-      a.weight = 0; a.paused = true;
-      a.play();
-      actions[name] = a;
-    }
-  }
-  // EXPERIMENT (spider crawl): crawl cycles along and across the body, also at zero weight
-  if (clipByName['climb']) {
-    for (const [name, along] of [['crawl_up', 'up'], ['crawl_side', 'side']] as const) {
-      const clip = buildCrawlClip(clipByName['climb'], model, along, name);
       if (!clip) continue;
       const a = mixer.clipAction(clip);
       a.setLoop(THREE.LoopRepeat, Infinity);
@@ -669,35 +649,10 @@ function updateClimbBlend(dt: number): void {
   // resting on the wall holds whatever blend the last move left (the pose just freezes)
   const target = !on ? 0 : moving ? climbH / (Math.abs(climbV) + Math.abs(climbH)) : climbSideMix;
   climbSideMix += (target - climbSideMix) * Math.min(1, 10 * dt);
-  // EXPERIMENT (spider crawl): cross over to the crawl clips while it's switched on
-  const cu = actions['crawl_up'], cs = actions['crawl_side'];
-  const crawl = SPIDER.crawl && !!cu && !!cs;
-  crawlOn += ((on && crawl ? 1 : 0) - crawlOn) * Math.min(1, 10 * dt);
-  const plain = 1 - crawlOn, across = Math.abs(climbSideMix);
-  r.weight = plain * Math.max(0, climbSideMix);
-  l.weight = plain * Math.max(0, -climbSideMix);
-  c.weight = plain * (on ? 1 - across : 1);
+  r.weight = Math.max(0, climbSideMix);
+  l.weight = Math.max(0, -climbSideMix);
+  c.weight = on ? 1 - Math.abs(climbSideMix) : 1;
   r.paused = l.paused = !moving;
-  if (cu && cs) {
-    // head-first: the body turns to face its travel, so the stride always runs along it
-    cu.weight = crawlOn * (SPIDER.headFirst ? 1 : 1 - across);
-    cs.weight = crawlOn * (SPIDER.headFirst ? 0 : across);
-    cu.paused = cs.paused = !moving;
-    if (moving) {
-      cu.timeScale = !SPIDER.headFirst && climbV < 0 ? -1 : 1; // backing down the wall = the cycle in reverse
-      cs.timeScale = climbH < 0 ? -1 : 1;
-    }
-  }
-  // head-first: roll the body about the wall's normal toward the direction of travel,
-  // pivoting on its middle (so it turns in place instead of swinging round its feet)
-  const rollTo = on && crawl && SPIDER.headFirst ? (moving ? Math.atan2(climbH, climbV) : crawlRoll) : 0;
-  crawlRoll = lerpAngle(crawlRoll, rollTo, 8 * dt);
-  if (charModel) {
-    const pivot = charH * 0.5, k = pivot - charFeetOffset; // pivot height in player space / in the model's own
-    charModel.rotation.z = crawlRoll;
-    charModel.position.x = k * Math.sin(crawlRoll);
-    charModel.position.y += pivot - k * Math.cos(crawlRoll) - charFeetOffset;
-  }
 }
 
 /** Free movement on the wall: W/S = up/down, A/D = the figurine's own left/right along
@@ -1174,11 +1129,6 @@ function setupDebugMenu(): void {
      'splatting captured too faintly) up to this area, in normalized scan units² ' +
      '(~room-relative — not metres). Bigger fills larger blank panels but can start ' +
      'closing real openings (doorways/windows); 0 = off. Default 2.5.');
-  // EXPERIMENT (spider crawl)
-  addToggle('Spider crawl (experiment)', SPIDER.crawl, (on) => { SPIDER.crawl = on; },
-    'Experimental look for climbing: splayed, low, crawling in diagonal pairs. Off = the normal climb.');
-  addToggle('Crawl: head-first', SPIDER.headFirst, (on) => { SPIDER.headFirst = on; },
-    'With the spider crawl on: the body turns on the wall to lead with its head (sideways, or down). Off = stays upright.');
   addSlider('Climb threshold (deg)', PLATFORM_OPTS.climbDeg, 30, 89, 1, (v) => { PLATFORM_OPTS.climbDeg = v; rebuildPlatformOverlay(); },
     'Surfaces steeper than this angle (from the ground) are CLIMBED; gentler ones you walk up. ' +
     'Lower = more things count as climbable walls; higher = only near-vertical faces climb.');
