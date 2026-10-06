@@ -7,8 +7,6 @@
 import * as THREE from 'three';
 import { MeshBVH, type ExtendedTriangle } from 'three-mesh-bvh';
 
-/** A climbable surface: outward face normal (points back at the character), the
- *  height to mantle onto, and the flush stand position to snap to. */
 /** A surface found by a forward probe: how far it is and which way it faces (the
  *  normal points back toward the probe). */
 export interface WallHit {
@@ -17,12 +15,6 @@ export interface WallHit {
   nx: number; // horizontal part of the normal
   nz: number;
   front: boolean; // true = seen from outside; false = from behind / inside the solid
-}
-
-export interface ClimbFace {
-  normal: THREE.Vector3;
-  topY: number;
-  snap: THREE.Vector3;
 }
 
 /** A decomposition of the reachable geometry into connected walkable surfaces
@@ -84,17 +76,6 @@ export class NavGrid {
     return best;
   }
 
-  /** The lowest walkable surface at (x,z) strictly above `y` — a ledge ahead to
-   *  auto-climb onto (or a wall, if it's out of climb reach). */
-  surfaceAbove(x: number, z: number, y: number): number | null {
-    const c = this.cellIndex(x, z);
-    if (c < 0) return null;
-    let best: number | null = null;
-    for (let e = this.head[c]; e !== -1; e = this.nextE[e])
-      if (this.ey[e] > y && (best === null || this.ey[e] < best)) best = this.ey[e];
-    return best;
-  }
-
   /** Nearest walkable point to (x,z) with height near `targetY`, searched in
    *  expanding rings — recovery when the player has left every platform. */
   nearest(x: number, z: number, targetY: number, out: THREE.Vector3): boolean {
@@ -142,9 +123,8 @@ export interface Collision {
    *  (post-move push-out, excluding `displacement`) into `outCorrection` — used to
    *  detect ground and to slide. The collide-and-slide core. */
   moveCapsule(feet: THREE.Vector3, radius: number, segLength: number, displacement: THREE.Vector3, outCorrection: THREE.Vector3): void;
-  /** Nearest climbable vertical face along `forward`, or null. */
-  climbableFaceAt(pos: THREE.Vector3, charH: number, forward: THREE.Vector3): ClimbFace | null;
-  /** Nearest surface ahead along `dir` within `max` — its distance + facing normal, or null. */
+  /** Nearest surface ahead along `dir` within `max` — its distance + facing normal, or null.
+   *  The result is a reused object: read it before the next call. */
   wallAhead(origin: THREE.Vector3, dir: THREE.Vector3, max: number): WallHit | null;
   /** Find a sensible spawn near the content centre: stand on the lowest real
    *  up-facing surface with headroom (the floor in a room, the couch/table top in
@@ -213,17 +193,21 @@ export class MeshCollision implements Collision {
   /** Nearest surface straight ahead along `dir` within `max`: its distance and its
    *  normal, flipped to face back at the ray (|up| near 0 ⇒ a near-vertical wall face;
    *  nx/nz say which way that face points, so the climb can turn with the wall). null
-   *  if nothing's there. Used by the climb to find and follow a wall. */
+   *  if nothing's there. Used by the climb to find and follow a wall. Returns one
+   *  reused object — read it before calling again. */
+  private readonly wallHit: WallHit = { distance: 0, up: 0, nx: 0, nz: 0, front: false };
   wallAhead(origin: THREE.Vector3, dir: THREE.Vector3, max: number): WallHit | null {
     this.ray.origin.copy(origin);
     this.ray.direction.copy(dir);
     const hit = this.bvh.raycastFirst(this.ray, THREE.DoubleSide);
     if (!hit || hit.distance > max) return null;
-    const n = hit.face?.normal;
-    if (!n) return { distance: hit.distance, up: 1, nx: 0, nz: 0, front: false };
-    const front = n.dot(dir) <= 0;       // the ray met the surface's outer side
-    const flip = front ? 1 : -1;         // double-sided hit → make the normal oppose the ray
-    return { distance: hit.distance, up: n.y * flip, nx: n.x * flip, nz: n.z * flip, front };
+    const n = hit.face?.normal, out = this.wallHit; // reused: probes run every frame
+    out.distance = hit.distance;
+    if (!n) { out.up = 1; out.nx = 0; out.nz = 0; out.front = false; return out; }
+    out.front = n.dot(dir) <= 0;         // the ray met the surface's outer side
+    const flip = out.front ? 1 : -1;     // double-sided hit → make the normal oppose the ray
+    out.up = n.y * flip; out.nx = n.x * flip; out.nz = n.z * flip;
+    return out;
   }
 
   groundHeightAt(x: number, z: number, fromY = 1e4): number {
@@ -249,28 +233,6 @@ export class MeshCollision implements Collision {
     this.bvh.shapecast(this.shapecastCbs);
     feet.set(seg.start.x, seg.start.y - radius, seg.start.z);
     outCorrection.set(feet.x - ax, feet.y - ay, feet.z - az);
-  }
-
-  climbableFaceAt(pos: THREE.Vector3, charH: number, forward: THREE.Vector3): ClimbFace | null {
-    this.ray.origin.set(pos.x, pos.y + charH * 0.4, pos.z);
-    this.ray.direction.set(forward.x, 0, forward.z).normalize();
-    if (this.ray.direction.lengthSq() < 1e-6) return null;
-    const hit = this.bvh.raycastFirst(this.ray, THREE.DoubleSide);
-    if (!hit || hit.distance > charH * 0.6) return null;
-    const nrm = hit.face?.normal;
-    if (!nrm || Math.abs(nrm.y) > 0.4) return null; // not a vertical-ish face
-
-    const d = this.ray.direction;
-    // stand-on height just past the wall; cast down from well above
-    const topY = this.groundHeightAt(pos.x + d.x * (hit.distance + charH * 0.3), pos.z + d.z * (hit.distance + charH * 0.3), pos.y + charH * 3);
-    if (topY <= pos.y + charH * 0.15) return null; // nothing higher to mantle onto
-
-    const back = Math.max(0, hit.distance - charH * 0.12);
-    return {
-      normal: new THREE.Vector3(-d.x, 0, -d.z).normalize(),
-      topY,
-      snap: new THREE.Vector3(pos.x + d.x * back, pos.y, pos.z + d.z * back),
-    };
   }
 
   findSpawn(radius: number, segLength: number, out: THREE.Vector3): void {
