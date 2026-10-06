@@ -16,6 +16,7 @@ export interface WallHit {
   up: number; // normal.y — near 0 ⇒ a near-vertical wall face
   nx: number; // horizontal part of the normal
   nz: number;
+  front: boolean; // true = seen from outside; false = from behind / inside the solid
 }
 
 export interface ClimbFace {
@@ -219,9 +220,10 @@ export class MeshCollision implements Collision {
     const hit = this.bvh.raycastFirst(this.ray, THREE.DoubleSide);
     if (!hit || hit.distance > max) return null;
     const n = hit.face?.normal;
-    if (!n) return { distance: hit.distance, up: 1, nx: 0, nz: 0 };
-    const flip = n.dot(dir) > 0 ? -1 : 1; // double-sided hit → make the normal oppose the ray
-    return { distance: hit.distance, up: n.y * flip, nx: n.x * flip, nz: n.z * flip };
+    if (!n) return { distance: hit.distance, up: 1, nx: 0, nz: 0, front: false };
+    const front = n.dot(dir) <= 0;       // the ray met the surface's outer side
+    const flip = front ? 1 : -1;         // double-sided hit → make the normal oppose the ray
+    return { distance: hit.distance, up: n.y * flip, nx: n.x * flip, nz: n.z * flip, front };
   }
 
   groundHeightAt(x: number, z: number, fromY = 1e4): number {

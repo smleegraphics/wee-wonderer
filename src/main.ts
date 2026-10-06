@@ -13,7 +13,7 @@ import { GaussianSplat } from 'three/addons/objects/GaussianSplat.js';
 import { GaussianSplatPLYLoader } from 'three/addons/loaders/GaussianSplatPLYLoader.js';
 import { orientScan } from './orient-scan';
 import { surfaceToGeometry } from './voxelize';
-import { MeshCollision, type NavGrid } from './collision';
+import { MeshCollision, type NavGrid, type WallHit } from './collision';
 import { voxelCacheKey, voxelCacheGet, voxelCachePut } from './voxel-cache';
 import type { VoxelSurface, VoxelOptions } from './voxelize';
 import type { CleanOptions } from './clean-scan-core';
@@ -438,7 +438,7 @@ function rebuildCollision(): void {
 
 // --- controller update ------------------------------------------------------
 const camFwd = new THREE.Vector3(), camRight = new THREE.Vector3(), wishDir = new THREE.Vector3();
-const WORLD_UP = new THREE.Vector3(0, 1, 0);
+const WORLD_UP = new THREE.Vector3(0, 1, 0), WORLD_DOWN = new THREE.Vector3(0, -1, 0);
 const camLook = new THREE.Vector3(), camDir = new THREE.Vector3();
 
 // The follow camera is a spring arm from the pivot (the figurine) to the camera. The
@@ -540,9 +540,34 @@ let climbAtEdge = false;                // sideways shuffle is stopped at the wa
 let climbCling = false;                 // topped out with nowhere to stand → hanging
 let climbFrameCount = 0;                // frames spent ascending in the current climb
 
-/** True if a near-vertical wall is right in front (in the `dx,dz` move direction);
- *  if so, enter the climb. Called when horizontal movement got blocked. */
-function tryStartClimb(dx: number, dz: number): boolean {
+/** A wall the climber can be on: the nearest surface along `dir`, seen from its OUTER
+ *  side. A surface met from behind means the probe began inside something solid (a
+ *  jump can sink into the top of an object with no walkable surface on it) — that is
+ *  the inside of a wall, not a wall to hang on, and nothing beyond it counts either. */
+function climbWall(origin: THREE.Vector3, dir: THREE.Vector3, max: number): WallHit | null {
+  const w = collision ? collision.wallAhead(origin, dir, max) : null;
+  return w && w.front ? w : null;
+}
+
+/** The walkable ground a climber at feet height `y` would come down onto: under it, or
+ *  — since the cell hard against a wall's foot often isn't walkable — a step back from
+ *  the wall. null = this wall hangs over nothing we can stand on. */
+const climbGroundAt = new THREE.Vector3();
+function climbGround(y: number): THREE.Vector3 | null {
+  if (!navGrid) return null;
+  const p = player.position;
+  for (const back of [0, navGrid.step]) {
+    const x = p.x - climbDir.x * back, z = p.z - climbDir.z * back;
+    const g = navGrid.surfaceBelow(x, z, y);
+    if (g !== null) return climbGroundAt.set(x, g, z);
+  }
+  return null;
+}
+
+/** True if a near-vertical wall is right in front (in the `dx,dz` direction); if so,
+ *  enter the climb at `feetY` — the ground we're standing on, or wherever the feet are
+ *  when a jump carries us into the wall. */
+function tryStartClimb(dx: number, dz: number, feetY = supportY): boolean {
   if (!collision || !actions['climb']) return false;
   climbDir.set(dx, 0, dz);
   if (climbDir.lengthSq() < 1e-9) return false;
@@ -553,7 +578,7 @@ function tryStartClimb(dx: number, dz: number): boolean {
   // at, so the climb doesn't top out the instant it starts.
   let wall: { up: number; distance: number } | null = null;
   for (const h of [0.5, 0.9]) {
-    const w = collision.wallAhead(climbProbe.set(player.position.x, supportY + charH * h, player.position.z), climbDir, reach);
+    const w = climbWall(climbProbe.set(player.position.x, feetY + charH * h, player.position.z), climbDir, reach);
     if (!w || Math.abs(w.up) > 0.5) { wall = null; break; }  // must be a wall at BOTH heights
     if (!wall || w.distance < wall.distance) wall = w;
   }
@@ -561,6 +586,7 @@ function tryStartClimb(dx: number, dz: number): boolean {
     if (q.get('tel') === '1') console.log(`CLIMB-NO no-wall (reach=${reach.toFixed(2)})`);
     return false;
   }
+  const midAir = state === 'air';
   climbCling = false;
   climbAwaitRelease = false;
   state = 'climb';
@@ -569,7 +595,7 @@ function tryStartClimb(dx: number, dz: number): boolean {
   play('climb', TUNE.fade);
   climbFrameCount = 0;
   camHandsOff = true;
-  if (q.get('tel') === '1') console.log(`CLIMB-START y=${player.position.y.toFixed(2)} dist=${wall.distance.toFixed(2)} up=${wall.up.toFixed(2)}`);
+  if (q.get('tel') === '1') console.log(`CLIMB-START${midAir ? ' (mid-air)' : ''} y=${player.position.y.toFixed(2)} dist=${wall.distance.toFixed(2)} up=${wall.up.toFixed(2)}`);
   return true;
 }
 
@@ -594,7 +620,7 @@ function tryStartClimbDown(dx: number, dz: number): boolean {
   const reach = radius + charH * 0.6;
   climbProbe.set(p.x + climbDir.x * reach, supportY - charH * 0.3, p.z + climbDir.z * reach);
   climbSide.copy(climbDir).negate();
-  const w = collision.wallAhead(climbProbe, climbSide, reach);
+  const w = climbWall(climbProbe, climbSide, reach);
   if (!w || Math.abs(w.up) > 0.5) return false;
   const hn = Math.hypot(w.nx, w.nz);
   if (hn < 1e-6) return false;
@@ -694,7 +720,7 @@ function climbUpdate(dt: number): void {
     climbSide.set(-climbDir.z * sgn, 0, climbDir.x * sgn);
     const hStep = Math.abs(h) * step;
     climbProbe.set(p.x, p.y + probeUp, p.z);
-    const beside = collision.wallAhead(climbProbe, climbSide, gap + hStep);
+    const beside = climbWall(climbProbe, climbSide, gap + hStep);
     if (beside) {
       // something in the way sideways. A near-vertical face = an inside corner → carry
       // on around it onto that wall; anything else just stops the shuffle.
@@ -707,7 +733,7 @@ function climbUpdate(dt: number): void {
       // only shuffle while the SAME face continues there: a hit that jumps by more than
       // a body radius is some other surface beyond the wall's edge, not this wall.
       const nx = p.x + climbSide.x * hStep, nz = p.z + climbSide.z * hStep;
-      const w = collision.wallAhead(climbProbe.set(nx, p.y + probeUp, nz), climbDir, radius + charH * 0.4);
+      const w = climbWall(climbProbe.set(nx, p.y + probeUp, nz), climbDir, radius + charH * 0.4);
       if (w && Math.abs(w.distance - gap) <= radius) { p.x = nx; p.z = nz; climbAtEdge = false; }
       else {
         if (!climbAtEdge && q.get('tel') === '1') console.log(`CLIMB-EDGE y=${p.y.toFixed(2)} ${w ? `jump=${(w.distance - gap).toFixed(2)}` : 'no-wall'}`);
@@ -723,18 +749,23 @@ function climbUpdate(dt: number): void {
   // come DOWN onto counts: a surface above them (the ledge we're hanging from, just
   // over the lip) is not somewhere a descent lands.
   if (v < 0) {
-    const g = navGrid ? navGrid.surfaceBelow(p.x, p.z, prevY) : null;
-    if (g !== null && p.y <= g + charH * 0.1) {
-      p.y = g; supportY = g; lastGood.copy(p);
+    const at = climbGround(prevY);
+    if (at && p.y <= at.y + charH * 0.1) {
+      p.set(at.x, at.y, at.z); supportY = at.y; lastGood.copy(p);
       state = 'ground'; velocity.set(0, 0, 0); play('idle', TUNE.fade);
       return;
     }
+    // Not ground we can stand on — but if it's solid, it's still the bottom of this
+    // wall. Without this a descent with no walkable cell at the wall's foot carries
+    // straight on down through the floor.
+    const solid = climbWall(climbProbe.set(p.x, prevY + radius, p.z), WORLD_DOWN, radius + step);
+    if (solid) p.y = Math.max(p.y, prevY + radius - solid.distance);
   }
 
   // --- stay on the face: hold the gap to it and turn with it ---
-  let wall = collision.wallAhead(climbProbe.set(p.x, p.y + charH * 0.15, p.z), climbDir, radius + charH * 0.4);
+  let wall = climbWall(climbProbe.set(p.x, p.y + charH * 0.15, p.z), climbDir, radius + charH * 0.4);
   if (wall) climbCling = false;                // wall above the feet again (the lip rose) → not topped out
-  else if (climbCling) wall = collision.wallAhead(climbProbe.set(p.x, p.y + probeUp, p.z), climbDir, radius + charH * 0.4);
+  else if (climbCling) wall = climbWall(climbProbe.set(p.x, p.y + probeUp, p.z), climbDir, radius + charH * 0.4);
   if (wall) {
     p.addScaledVector(climbDir, wall.distance - gap);
     // steer into the face along its normal, so a curved / angled wall is followed
@@ -823,7 +854,37 @@ function navMove(dt: number, radius: number): boolean {
     velocity.y += TUNE.gravity * charH * dt;
     const prevY = p.y;
     // horizontal = input (air control) + any launch velocity (e.g. jumping off a wall)
-    p.x += (hVel.x + velocity.x) * dt; p.z += (hVel.z + velocity.z) * dt; p.y += velocity.y * dt;
+    const vx = hVel.x + velocity.x, vz = hVel.z + velocity.z;
+    p.x += vx * dt; p.z += vz * dt; p.y += velocity.y * dt;
+    // Walls are solid in the air too: push the body out of them sideways (the same
+    // push-out walking uses; landing stays with the nav below). Touching a wall we're
+    // travelling INTO is how a jump grabs it — if it's climbable we start climbing
+    // right there, otherwise it simply stops us and we slide along it.
+    if (collision) {
+      const lift = charH * 0.25; // as on the ground: clear of floor lumps, which landing handles
+      wallFeet.set(p.x, p.y + lift, p.z);
+      collision.moveCapsule(wallFeet, radius, Math.max(0.02, charH - lift - 2 * radius), zeroDisp, wallCorr);
+      const push = Math.hypot(wallCorr.x, wallCorr.z);
+      if (push > 1e-5) {
+        p.x = wallFeet.x; p.z = wallFeet.z;
+        const nx = wallCorr.x / push, nz = wallCorr.z / push; // out of the wall
+        if (vx * nx + vz * nz < 0) {
+          // Only grab a wall that stands on ground we could drop back to: beneath us, or
+          // a step out from the wall's foot. In the air nothing confines us to the
+          // walkable area, so a jump can sail past its edge (or through a gap in the
+          // scan) — the faces out there hang over nothing, and grabbing one strands us.
+          climbDir.set(-nx, 0, -nz);
+          const ground = climbGround(p.y + radius * 0.5);
+          if (!ground) { if (q.get('tel') === '1') console.log(`CLIMB-NO (mid-air) no ground below y=${p.y.toFixed(2)}`); }
+          else if (tryStartClimb(-nx, -nz, p.y)) {
+            if (q.get('tel') === '1') console.log(`CLIMB-AIR ground=${ground.y.toFixed(2)} y=${p.y.toFixed(2)}`);
+            return false;
+          }
+        }
+        const into = velocity.x * nx + velocity.z * nz;       // a launch can't keep driving into it
+        if (into < 0) { velocity.x -= into * nx; velocity.z -= into * nz; }
+      }
+    }
     if (velocity.y <= 0) {
       // SWEPT landing: query from where the feet WERE this frame, so a fast fall
       // (jumping off a wall) catches any surface crossed during the step instead of
@@ -928,7 +989,19 @@ async function main(): Promise<void> {
     if (charLoaded) { updateController(dt); if (FREECAM) updateFreeCam(); else updateCamera(dt); }
     mixer?.update(dt);
     const ca = actions['climb'];
+    // ?tel=1 only: what's around the climber's chest (distance + F/B = surface seen from its
+    // front/back). Any B means it is inside something solid — the invariant the climb tests check.
+    let probe: unknown = null;
+    if (q.get('tel') === '1' && collision && state === 'climb') {
+      const P = player.position, c = new THREE.Vector3(P.x, P.y + charH * 0.5, P.z);
+      const ahead = collision.wallAhead(c, climbDir, charH * 2), behind = collision.wallAhead(c, climbDir.clone().negate(), charH * 2);
+      const above = collision.wallAhead(c, WORLD_UP, charH * 20), below = collision.wallAhead(c, WORLD_UP.clone().negate(), charH * 20);
+      const f = (w: { distance: number; front: boolean } | null) => (w ? `${w.distance.toFixed(2)}${w.front ? 'F' : 'B'}` : '-');
+      probe = { ahead: f(ahead), behind: f(behind), above: f(above), below: f(below),
+        faceErr: +Math.abs(lerpAngle(player.rotation.y, Math.atan2(climbDir.x, climbDir.z), 1) - player.rotation.y).toFixed(2) };
+    }
     (window as unknown as { __dbg?: unknown }).__dbg = {
+      probe,
       state, cling: climbCling, px: +player.position.x.toFixed(3), pz: +player.position.z.toFixed(3), climbYaw: +(Math.atan2(climbDir.x, climbDir.z) * 180 / Math.PI).toFixed(1), py: +player.position.y.toFixed(3), vy: +velocity.y.toFixed(2), smoothFeetY: +smoothFeetY.toFixed(2),
       targetY: +orbit.target.y.toFixed(2), camDist: +camera.position.distanceTo(orbit.target).toFixed(2), camWant: +camWant.toFixed(2), camSwinging,
       anim: activeAction ? activeAction.getClip().name : 'none',
