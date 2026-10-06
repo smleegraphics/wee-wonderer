@@ -237,12 +237,21 @@ export function voxelizeCore(
   const sn = surfaceNets(field, gx, gy, gz, minX, minY, minZ, vs);
   taubinSmooth(sn.positions, sn.index, taubinIters);
 
-  // Flatten the floor: the real floor is flat at y=0 (leveling), but the density
-  // isosurface reconstructs it slightly wavy. Snap vertices within a thin band of
-  // y=0 flat so walking is smooth. The band is small so low clutter above it
-  // (toys, box lips) keeps its real height and stays collidable.
+  // Flatten the floor so walking is smooth. The density isosurface reconstructs the
+  // floor slightly wavy AND — crucially — not exactly at y=0: leveling places y=0 at
+  // the floor SPLAT plane, but the reconstructed surface sits a bit below it, so
+  // snapping to a hardcoded 0 would LIFT the collision floor above the real floor
+  // (the figurine would hover). Instead we detect the floor's actual level (the median
+  // height of the low band) and flatten to THAT — flat and flush. The band stays
+  // one-sided so low clutter above it (toys, box lips) keeps its real height.
   const floorBand = (opts.floorFlat ?? 0.75) * vs;
-  if (floorBand > 0) for (let i = 1; i < sn.positions.length; i += 3) if (sn.positions[i] < floorBand) sn.positions[i] = 0;
+  let floorLevel = 0;
+  if (floorBand > 0) {
+    const fv: number[] = [];
+    for (let i = 1; i < sn.positions.length; i += 3) if (sn.positions[i] < floorBand) fv.push(sn.positions[i]);
+    if (fv.length) { fv.sort((a, b) => a - b); floorLevel = fv[fv.length >> 1]; }
+    for (let i = 1; i < sn.positions.length; i += 3) if (sn.positions[i] < floorBand) sn.positions[i] = floorLevel;
+  }
 
   // Safety floor plane at y=0. Leveling puts the real floor there, and the
   // reconstructed mesh isn't watertight (holes in walls/cabinet fronts let a
@@ -250,10 +259,10 @@ export function voxelizeCore(
   // gap — the character always has floor — while walls/furniture (above it) still
   // collide from the surface mesh.
   const nv = sn.positions.length / 3;
-  // Sit the plane just below y=0 so a real reconstructed floor (snapped to 0) is
-  // hit first by downward rays — lets the spawn search tell "real floor" from
+  // Sit the plane just below the detected floor level so the real reconstructed floor
+  // is hit first by downward rays — lets the spawn search tell "real floor" from
   // "fell through to the backstop plane".
-  const planeY = -vs * 0.5;
+  const planeY = floorLevel - vs * 0.5;
   const px0 = minX, px1 = minX + gx * vs, pz0 = minZ, pz1 = minZ + gz * vs;
   const meshPos = new Float32Array(sn.positions.length + 12);
   meshPos.set(sn.positions);
