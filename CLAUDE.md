@@ -71,6 +71,39 @@ Visual and behavioural checks run headless in real Chrome through Playwright.
 - Scans are scaled to `TARGET_RADIUS`, so distances are in normalized scan units,
   not metres. Express sizes relative to `charH`.
 
+## Code review
+
+When reviewing a change here, look for these, in this order:
+
+1. **Regressions.** There is no unit-test suite, so reading the diff is not enough.
+   Drive the app (see "Testing without a human") and check the rules listed in the
+   relevant `context/` doc still hold. For anything touching movement or climbing,
+   the invariant is that `__dbg.probe` never shows a `B` while climbing.
+2. **Bandaids.** A fix must address why the bug happens. Flag special cases,
+   tolerances and early-returns that hide a symptom, and any fix whose comment
+   cannot state the root cause.
+3. **Hard-coding.** Sizes and distances should be relative to `charH`, the capsule
+   radius or the nav step, with a reason. Flag bare numbers, per-scan or per-object
+   special cases, and thresholds repeated in more than one place.
+4. **Architecture and cleanliness.** One place for each decision (for example, all
+   climb wall probes go through `climbWall`). Flag duplicated logic, state that two
+   systems both write, functions doing several jobs, and comments that no longer
+   match the code.
+5. **Debug leftovers.** Console output and measurement code must be gated behind
+   `?tel=1` and worth keeping. Remove temporary instrumentation, stale scripts and
+   URL-param tunables that belong in the Debug panel.
+
+Project-specific checks:
+
+- No allocations in per-frame paths (`updateController`, `climbUpdate`,
+  `updateCamera`, the render loop). Reuse module-level scratch vectors.
+- `SCHEMA` in `src/voxel-cache.ts` is bumped if the collision surface changes.
+- The controller still reaches collision only through the `Collision` interface.
+- `npm run typecheck` and `npm run build` pass.
+
+Report findings before changing anything, most severe first, each with the file
+and line, what goes wrong, and the root cause.
+
 ## Keeping this useful
 
 When you finish a feature, update this file and the relevant `context/` doc with
