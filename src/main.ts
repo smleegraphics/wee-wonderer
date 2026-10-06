@@ -35,7 +35,7 @@ const num = (key: string, def: number) => (q.has(key) ? Number(q.get(key)) : def
 const VOXEL_OPTS = {
   iso: num('iso', 0.35),         // isovalue as a fraction of median surface density (low → fills faint flat panels)
   despeckle: num('despeckle', 20), // drop solid islands smaller than this (stray cubes / floaters the low iso admits)
-  close: num('close', 3),        // dilate→erode iterations (bridges holes in floors/walls/surfaces)
+  close: num('close', 1),        // dilate→erode iterations (bridges tiny holes); kept low so it doesn't weld objects to the floor / web surfaces (loose "seal"). Big holes are handled by the enclosed floor/panel fills.
   fillFloor: num('fillfloor', 1), // fill enclosed holes in the floor layer
   panelFill: num('panelfill', 2.5), // fill enclosed holes in vertical panels up to this area, in NORMALIZED scan units² (~room-relative, not metres — every scan is scaled to TARGET_RADIUS); blank cabinet doors/walls; 0 = off
   smooth: num('smooth', 0),      // majority occupancy passes (Taubin handles smoothing)
@@ -803,8 +803,9 @@ function setupDebugMenu(): void {
     VOXEL_OPTS.close = v;
     rebuildCollision();
   }, 'Bridges holes in the collision mesh (walls / climbable faces / floor) by ' +
-     'closing gaps up to ~2× this many voxels. Higher fills bigger holes on sparse ' +
-     'scans; too high can close small real openings. Default 3 suits casual scans.');
+     'closing gaps up to ~2× this many voxels. Higher fills bigger holes but welds ' +
+     'objects to the floor / webs surfaces (a looser "seal"); big holes are better ' +
+     'handled by the floor/panel fills. Default 1 keeps the seal tight.');
   addSlider('Panel fill (area)', VOXEL_OPTS.panelFill, 0, 4, 0.25, (v) => {
     VOXEL_OPTS.panelFill = v;
     rebuildCollision();
