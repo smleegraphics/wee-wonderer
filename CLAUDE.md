@@ -46,17 +46,18 @@ Visual and behavioural checks run headless in real Chrome through Playwright.
   and lit. `?voxel=1` (or `V`) overlays it as a wireframe.
 - **Frame a region:** `?az=&el=&dist=&cx=&cy=&cz=` parks a fixed orbit camera
   (`dist` in `TARGET_RADIUS` units). Without it the camera follows the figurine.
-- **Read internal state:** `window.__dbg` is refreshed every frame (state, position,
-  climb facing, camera distances). `window.__wwReady` is set once the first frames
-  have rendered.
-- **Telemetry:** `?tel=1` logs `CLIMB-*` events to the console and adds
-  `__dbg.probe`.
+- **Telemetry and internal state:** `?tel=1` logs `CLIMB-*` events to the console
+  and publishes `window.__dbg` every frame (state, position, climb facing, camera
+  distances, `probe`). Without `?tel=1` there is no `__dbg`. `window.__wwReady` is
+  always set once the first frames have rendered.
+- **Climb regression check:** `node scripts/climbfuzz.mjs <scan> <seconds> <seed>`
+  walks, jumps and climbs at random and reports any frame where the climber is
+  inside a solid. Run a few seeds, at most three browsers at a time.
 - **Drive it:** press keys with Playwright and poll `__dbg`. Do not judge movement
   from screenshots alone.
 - **Blind walks rarely reach walls.** Holding one key from spawn usually ends at a
   walkable-area edge. Counter and Kitchen have climbable objects near spawn;
   Playroom and Living Room mostly need a human to aim at a wall.
-- `scripts/climbtest.mjs` is stale (it polls `window.__ww`, which does not exist).
 
 ## Conventions
 
@@ -78,7 +79,7 @@ When reviewing a change here, look for these, in this order:
 1. **Regressions.** There is no unit-test suite, so reading the diff is not enough.
    Drive the app (see "Testing without a human") and check the rules listed in the
    relevant `context/` doc still hold. For anything touching movement or climbing,
-   the invariant is that `__dbg.probe` never shows a `B` while climbing.
+   run `scripts/climbfuzz.mjs`; it must report no violations.
 2. **Bandaids.** A fix must address why the bug happens. Flag special cases,
    tolerances and early-returns that hide a symptom, and any fix whose comment
    cannot state the root cause.

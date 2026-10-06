@@ -6,7 +6,8 @@ of it is in `src/main.ts` unless noted.
 
 ## Behaviour
 
-- Walk into a tall near-vertical wall: the climb starts. No button.
+- Walk into a tall wall: the climb starts. No button. A wall is any surface steeper
+  than the "Climb threshold" slider (70° by default).
 - On the wall, W/S go up and down, A/D go along the face. A/D are the figurine's own
   left and right, never camera-relative. Diagonals combine at the same speed.
 - At the top: mantle onto a walkable surface if there is one, otherwise cling.
@@ -22,11 +23,14 @@ state back to `air` on the frame the climb starts.
 
 | Function | Job |
 |---|---|
-| `climbWall` | The only way climb code probes for a wall. Rejects surfaces seen from behind. |
+| `CLIMB` | Every climb distance (probe heights, reaches, wall gap, mantle tolerances), named once with its reason. |
+| `isWall` / `wallSlopeMax` | The one definition of a wall, from the "Climb threshold" slider. Also the NavGrid's `slopeMin`. |
+| `climbWall` | The only way climb code probes for a surface. Rejects surfaces seen from behind. |
 | `climbGround` | Walkable ground a climber would come down onto: beneath it, or one step back from the wall. |
-| `tryStartClimb` | Shared start check for ground and air: near-vertical face at chest and head height. |
+| `tryStartClimb` | Shared start check for ground and air: a wall at chest and head height. |
 | `tryStartClimbDown` | Lip grab when walking off a ledge. |
-| `climbUpdate` | Movement on the wall, wall following, edges, corners, top-out, stepping off. |
+| `climbUpdate` | Movement on the wall, wall following, edges, corners, top-out, stepping off. Returns true on the frame it ends standing. |
+| `pushOutOfWalls` | Sideways capsule push-out shared by walking and airborne movement. |
 | `climbJumpOff` | Launch up and away. |
 | `updateClimbBlend` | Mixes the up/down clip with the generated sideways clips. |
 
@@ -46,8 +50,9 @@ These were each found by a bug. Breaking one brings the bug back.
    the figurine facing outward and stuck.
 4. **A descent only lands on ground at or below the feet.** Otherwise pressing S
    just under a lip snaps up onto the ledge.
-5. **A descent has a floor.** The cell hard against a wall's foot is often not
-   walkable, so also look one step back, and stop on solid geometry.
+5. **A descent has a bottom.** The cell hard against a wall's foot is often not
+   walkable, so also look one step back; stop on solid geometry; and do not descend
+   at all where there is no ground to come down onto.
 6. **A sideways step needs the same face to continue.** A hit that jumps by more
    than a body radius is a different surface beyond the wall's edge.
 7. **A held key keeps the meaning it was pressed with.** After a lip grab the held
@@ -55,6 +60,14 @@ These were each found by a bug. Breaking one brings the bug back.
    held keys keep steering by the camera frame they were pressed in.
 8. **Airborne wall contact, not a forward ray, triggers the grab.** The air path
    pushes the capsule out of walls sideways; the push direction gives the wall.
+9. **Walkable or climbable, never two cutoffs.** The climb probes once used a fixed
+   60° while the slider fed only the NavGrid, so some slopes were both and, with the
+   slider lowered, some were neither.
+10. **`climbUpdate` says when it ended on the ground.** The controller once assumed
+    "not grounded" after every climb update, which flipped the state to `air` for a
+    frame on every mantle and step-off.
+11. **A failed climb attempt must not write `climbDir`.** The camera reads it. Use
+    `climbTry` until the climb actually starts.
 
 ## Follow camera
 
@@ -88,23 +101,25 @@ the upright climb read better. It is in history as a commit and its revert.
 
 ## Testing
 
-- `?tel=1` logs `CLIMB-START`, `CLIMB-AIR`, `CLIMBDOWN-START`, `CLIMB-MANTLE`,
-  `CLIMB-CLING`, `CLIMB-EDGE`, `CLIMB-CORNER` and `CLIMB-NO` refusals.
-- `__dbg.probe` (with `?tel=1`, while climbing) reports the nearest surface ahead,
-  behind, above and below the chest, each tagged `F` or `B`. **Any `B` means the
-  climber is inside a solid.** That is the invariant to check.
-- The most useful test so far: random walk, jump and climb on Counter for 90 s
-  across several seeds, sampling that invariant. It found three of the rules above.
-  20 violations in about 135 samples before the fixes, 2 in 160 after.
+- `?tel=1` logs `CLIMB-START`, `CLIMBDOWN-START`, `CLIMB-MANTLE`, `CLIMB-CLING`,
+  `CLIMB-EDGE`, `CLIMB-CORNER` and the mid-air `CLIMB-NO` refusal.
+- `__dbg.probe` (while climbing) reports the nearest surface ahead, behind, above
+  and below the chest, each tagged `F` or `B`. **A `B` ahead, behind or above means
+  the climber is inside a solid.** `below` is not reliable: flattening the floor
+  leaves its top and underside coincident, so a ray straight down can report either.
+- `scripts/climbfuzz.mjs` checks that invariant over random walking, jumping and
+  climbing. It found most of the rules above. Counter has been clean since the
+  review fixes (0 in 113 samples); Living Room showed 1 in 27.
 - Counter (the plant, the clutter) and Kitchen (the Lego bulldozer) reach climbs
-  from spawn. Playroom and Living Room walls need a human.
+  from spawn. Playroom and Living Room get only a handful of climb samples per run,
+  so walls there still need a human.
 
 ## Known limitations
 
 - **No body collision while climbing.** The wall is followed with one probe near
-  the feet, so in clutter the body can pass into objects beside or above the wall.
-  The remaining invariant violations are this. Adding a capsule check risks
-  blocking climbs on lumpy walls that work today.
+  the feet, so the body can pass into objects beside or above the wall. The
+  remaining invariant violations are this. Adding a capsule check risks blocking
+  climbs on lumpy walls that work today.
 - **A gap in a lumpy face reads as the top.** On the Counter plant, pressing W
   partway up can cling as if topped out.
 - **Small tops are not standable.** Jumping onto something with no walkable cells
@@ -113,5 +128,14 @@ the upright climb read better. It is in history as a commit and its revert.
   purpose, to avoid wedging.
 - **No wrapping around outside corners.**
 - **Steering on small round objects swings a lot.** The rate is `TUNE.climbTurn`.
-- The "is it a wall" cutoff is `|normal.y| <= 0.5`. Grabs on things that look like
-  slopes come from surfaces just inside it.
+- **A climb can start during a landing animation.** `tryStartClimb` runs in the
+  `land` state, and the `jump_land` finish event would then reset the state to
+  `ground`. Latent: `character.glb` has no `jump_land` clip. Fix it when one is added.
+- **The walkable grid assumes the floor is at y=0.** `buildNavGrid` is passed
+  `minY = -charH` to reject sub-floor floaters, so a sunken area or stairs down more
+  than one body-height below the leveled floor would not be walkable.
+- **Falling out of the world recovers silently.** With the NavGrid on, it snaps back
+  to the last good position with no log, so fall-throughs are invisible in
+  telemetry. Add a `?tel=1` log before relying on "no fall-throughs" as a result.
+- **Grabs are stricter since the single cutoff.** Surfaces between 60° and 70° used
+  to be grabbable and are now ground. If climbs feel rare, lower the slider.
