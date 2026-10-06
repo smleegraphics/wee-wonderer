@@ -1126,6 +1126,14 @@ function setupScanSwitcher(): void {
   btn.onclick = () => picker.click();
   bar.append(btn, picker);
 
+  // the way out of any spot the figurine gets stuck in: back to the scan's spawn point
+  const reset = document.createElement('button');
+  reset.textContent = 'Reset';
+  reset.title = 'Put the figurine back at the starting point';
+  reset.style.cssText = btn.style.cssText;
+  reset.onclick = () => { if (charLoaded) resetToSpawn(); reset.blur(); }; // blur: Space must go back to being "jump", not "press Reset again"
+  bar.appendChild(reset);
+
   document.body.appendChild(bar);
   setupDropZone();
 }
