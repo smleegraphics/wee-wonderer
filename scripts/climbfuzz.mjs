@@ -6,7 +6,7 @@
 //   node scripts/climbfuzz.mjs counter-clean.ply 90 1
 //
 // Prints each violation with the climb events that led up to it, then a summary
-// line. Exits 1 if there were violations. Counter and Kitchen reach climbs from
+// line, including how deep the climber's body sat in the mesh (`sunk`). Exits 1 if there were violations. Counter and Kitchen reach climbs from
 // spawn; Playroom needs loadWaitMs ≈ 20000. Run a few seeds, a few at a time.
 import { chromium } from 'playwright';
 
@@ -33,12 +33,14 @@ await page.waitForFunction(() => window.__wwReady === true, { timeout: 60000 }).
 await page.waitForTimeout(loadWait);
 await page.mouse.click(640, 400);
 
-let samples = 0, violations = 0;
+let samples = 0, violations = 0, sunkSum = 0, sunkMax = 0, sunkDeep = 0;
+const DEEP = 0.5; // radii: the body is half a capsule radius into something
 const check = async () => {
   const d = await page.evaluate(() => window.__dbg);
   const p = d?.probe;
   if (!p) return; // not climbing
   samples++;
+  if (typeof d.sunk === 'number') { sunkSum += d.sunk; sunkMax = Math.max(sunkMax, d.sunk); if (d.sunk > DEEP) sunkDeep++; }
   // `below` is not counted: flattening the floor leaves its top and underside
   // coincident, so a ray straight down can report either side of a floor it is above.
   if (![p.ahead, p.behind, p.above].some((v) => v.endsWith('B'))) return;
@@ -62,6 +64,6 @@ while (Date.now() - t0 < seconds * 1000) {
     await check();
   }
 }
-console.log(`${scan} seed=${seed0}: ${samples} climb samples, ${violations} violations, ${errors} page errors`);
+console.log(`${scan} seed=${seed0}: ${samples} climb samples, ${violations} violations, ${errors} page errors | body sunk (radii): mean ${(samples ? sunkSum / samples : 0).toFixed(2)} max ${sunkMax.toFixed(2)}, ${sunkDeep} samples > ${DEEP}`);
 await browser.close();
 process.exit(violations || errors ? 1 : 0);
