@@ -7,12 +7,14 @@
 import * as THREE from 'three';
 import { MeshBVH, type ExtendedTriangle } from 'three-mesh-bvh';
 
-/** A climbable surface: outward face normal (points back at the character), the
- *  height to mantle onto, and the flush stand position to snap to. */
-export interface ClimbFace {
-  normal: THREE.Vector3;
-  topY: number;
-  snap: THREE.Vector3;
+/** A surface found by a forward probe: how far it is and which way it faces (the
+ *  normal points back toward the probe). */
+export interface WallHit {
+  distance: number;
+  up: number; // normal.y — near 0 ⇒ a near-vertical wall face
+  nx: number; // horizontal part of the normal
+  nz: number;
+  front: boolean; // true = seen from outside; false = from behind / inside the solid
 }
 
 /** A decomposition of the reachable geometry into connected walkable surfaces
@@ -121,15 +123,16 @@ export interface Collision {
    *  (post-move push-out, excluding `displacement`) into `outCorrection` — used to
    *  detect ground and to slide. The collide-and-slide core. */
   moveCapsule(feet: THREE.Vector3, radius: number, segLength: number, displacement: THREE.Vector3, outCorrection: THREE.Vector3): void;
-  /** Nearest climbable vertical face along `forward`, or null. */
-  climbableFaceAt(pos: THREE.Vector3, charH: number, forward: THREE.Vector3): ClimbFace | null;
+  /** Nearest surface ahead along `dir` within `max` — its distance + facing normal, or null.
+   *  The result is a reused object: read it before the next call. */
+  wallAhead(origin: THREE.Vector3, dir: THREE.Vector3, max: number): WallHit | null;
   /** Find a sensible spawn near the content centre: stand on the lowest real
    *  up-facing surface with headroom (the floor in a room, the couch/table top in
    *  a floorless scan), never the phantom backstop plane. Writes {x,y,z} to `out`. */
   findSpawn(radius: number, segLength: number, out: THREE.Vector3): void;
   /** Build the walkable NavGrid — the reliable, hole-filled ground the controller
    *  stands on and is confined to. */
-  buildNavGrid(sampleStep: number, headroom: number, stepThreshold: number, minCells: number, bridge?: number, fillIters?: number): NavGrid;
+  buildNavGrid(sampleStep: number, headroom: number, stepThreshold: number, minCells: number, slopeMin?: number, minY?: number, bridge?: number, fillIters?: number): NavGrid;
 }
 
 const DOWN = new THREE.Vector3(0, -1, 0);
@@ -187,6 +190,26 @@ export class MeshCollision implements Collision {
     return hit && hit.distance < max ? hit.distance : max;
   }
 
+  /** Nearest surface straight ahead along `dir` within `max`: its distance and its
+   *  normal, flipped to face back at the ray (|up| near 0 ⇒ a near-vertical wall face;
+   *  nx/nz say which way that face points, so the climb can turn with the wall). null
+   *  if nothing's there. Used by the climb to find and follow a wall. Returns one
+   *  reused object — read it before calling again. */
+  private readonly wallHit: WallHit = { distance: 0, up: 0, nx: 0, nz: 0, front: false };
+  wallAhead(origin: THREE.Vector3, dir: THREE.Vector3, max: number): WallHit | null {
+    this.ray.origin.copy(origin);
+    this.ray.direction.copy(dir);
+    const hit = this.bvh.raycastFirst(this.ray, THREE.DoubleSide);
+    if (!hit || hit.distance > max) return null;
+    const n = hit.face?.normal, out = this.wallHit; // reused: probes run every frame
+    out.distance = hit.distance;
+    if (!n) { out.up = 1; out.nx = 0; out.nz = 0; out.front = false; return out; }
+    out.front = n.dot(dir) <= 0;         // the ray met the surface's outer side
+    const flip = out.front ? 1 : -1;     // double-sided hit → make the normal oppose the ray
+    out.up = n.y * flip; out.nx = n.x * flip; out.nz = n.z * flip;
+    return out;
+  }
+
   groundHeightAt(x: number, z: number, fromY = 1e4): number {
     this.ray.origin.set(x, fromY, z);
     this.ray.direction.copy(DOWN);
@@ -210,28 +233,6 @@ export class MeshCollision implements Collision {
     this.bvh.shapecast(this.shapecastCbs);
     feet.set(seg.start.x, seg.start.y - radius, seg.start.z);
     outCorrection.set(feet.x - ax, feet.y - ay, feet.z - az);
-  }
-
-  climbableFaceAt(pos: THREE.Vector3, charH: number, forward: THREE.Vector3): ClimbFace | null {
-    this.ray.origin.set(pos.x, pos.y + charH * 0.4, pos.z);
-    this.ray.direction.set(forward.x, 0, forward.z).normalize();
-    if (this.ray.direction.lengthSq() < 1e-6) return null;
-    const hit = this.bvh.raycastFirst(this.ray, THREE.DoubleSide);
-    if (!hit || hit.distance > charH * 0.6) return null;
-    const nrm = hit.face?.normal;
-    if (!nrm || Math.abs(nrm.y) > 0.4) return null; // not a vertical-ish face
-
-    const d = this.ray.direction;
-    // stand-on height just past the wall; cast down from well above
-    const topY = this.groundHeightAt(pos.x + d.x * (hit.distance + charH * 0.3), pos.z + d.z * (hit.distance + charH * 0.3), pos.y + charH * 3);
-    if (topY <= pos.y + charH * 0.15) return null; // nothing higher to mantle onto
-
-    const back = Math.max(0, hit.distance - charH * 0.12);
-    return {
-      normal: new THREE.Vector3(-d.x, 0, -d.z).normalize(),
-      topY,
-      snap: new THREE.Vector3(pos.x + d.x * back, pos.y, pos.z + d.z * back),
-    };
   }
 
   findSpawn(radius: number, segLength: number, out: THREE.Vector3): void {
@@ -292,6 +293,16 @@ export class MeshCollision implements Collision {
     return plane;
   }
 
+  /** True if a capsule at (x,z) standing at world height `y` has `need` clear space
+   *  above it — used to tell a real floor-gap (empty above, fill it) from a wall
+   *  footprint (solid above, don't fill it) when closing platform holes. */
+  private hasHeadroom(x: number, z: number, y: number, need: number): boolean {
+    this.ray.origin.set(x, y + this.groundOffset + 0.02, z);
+    this.ray.direction.copy(UP);
+    const hit = this.bvh.raycastFirst(this.ray, THREE.DoubleSide);
+    return !hit || hit.distance >= need;
+  }
+
   /** Decompose the reachable geometry into connected walkable platforms and index
    *  them into a queryable, hole-filled NavGrid — the reliable ground.
    *  Sample a grid of downward columns; at each, every up-facing surface (not the
@@ -302,11 +313,11 @@ export class MeshCollision implements Collision {
    *  climb). Platforms under `minCells` cells are dropped as floater noise, then
    *  interior holes within each surviving platform are filled (`fillIters` cells)
    *  so there is nothing to fall through. */
-  buildNavGrid(sampleStep: number, headroom: number, stepThreshold: number, minCells: number, bridge = 2, fillIters = 3): NavGrid {
+  buildNavGrid(sampleStep: number, headroom: number, stepThreshold: number, minCells: number, slopeMin = 0.4, minY = -Infinity, bridge = 2, fillIters = 3): NavGrid {
     const b = this.bounds;
     const nx = Math.max(1, Math.ceil((b.max.x - b.min.x) / sampleStep));
     const nz = Math.max(1, Math.ceil((b.max.z - b.min.z) / sampleStep));
-    const SLOPE_MIN = 0.4; // normal.y below this is a wall/ceiling, not standable
+    const SLOPE_MIN = slopeMin; // up-face normal.y at/below this is too steep to stand → a climbable wall
     // walkable cells in parallel arrays; per column a singly-linked list
     // (head in `colHead`, next in `cnext`) threads its cells for neighbor lookup.
     const cy: number[] = [], cix: number[] = [], ciz: number[] = [], cnext: number[] = [];
@@ -326,8 +337,10 @@ export class MeshCollision implements Collision {
           let above = Infinity;
           for (let j = 0; j < hits.length; j++) { const yj = hits[j].point.y; if (yj > h.point.y + 0.02 && yj < above) above = yj; }
           if (above - h.point.y < headroom) continue;                  // no room to stand
+          const y = h.point.y - this.groundOffset;
+          if (y < minY) continue;                                      // below the leveled floor → sub-floor floater, not walkable
           const id = cy.length;
-          cy.push(h.point.y - this.groundOffset); cix.push(ix); ciz.push(iz);
+          cy.push(y); cix.push(ix); ciz.push(iz);
           cnext.push(colHead[ix * nz + iz]); colHead[ix * nz + iz] = id;
         }
       }
@@ -366,8 +379,11 @@ export class MeshCollision implements Collision {
       addEntry(cix[i] * nz + ciz[i], cy[i], pid);
     }
     // fill interior holes per platform: close its footprint mask, and for each newly
-    // enclosed cell add an entry at the height of its nearest platform neighbor.
-    fillPlatformHoles(nx, nz, platformCount, head, nextE, ey, ep, addEntry, fillIters);
+    // enclosed cell add an entry at the height of its nearest platform neighbor —
+    // but only where a capsule actually fits (skips wall footprints, so walls stay solid).
+    const clear = (ix: number, iz: number, y: number) =>
+      this.hasHeadroom(b.min.x + (ix + 0.5) * sampleStep, b.min.z + (iz + 0.5) * sampleStep, y, headroom);
+    fillPlatformHoles(nx, nz, platformCount, head, nextE, ey, ep, addEntry, fillIters, clear);
 
     return new NavGrid(nx, nz, b.min.x, b.min.z, sampleStep,
       head, Int32Array.from(nextE), Float32Array.from(ey), Int32Array.from(ep), platformCount);
@@ -395,6 +411,7 @@ function fillPlatformHoles(
   nx: number, nz: number, platformCount: number,
   head: Int32Array, nextE: number[], ey: number[], ep: number[],
   addEntry: (c: number, y: number, p: number) => void, iters: number,
+  clear: (ix: number, iz: number, y: number) => boolean,
 ): void {
   if (iters <= 0) return;
   const N = nx * nz;
@@ -420,7 +437,7 @@ function fillPlatformHoles(
               if (jx < 0 || jx >= nx || jz < 0 || jz >= nz) continue;
               if (mask[jx * nz + jz]) { hy = h[jx * nz + jz]; break; }
             }
-        if (!Number.isNaN(hy)) addEntry(c, hy, p);
+        if (!Number.isNaN(hy) && clear(ix, iz, hy)) addEntry(c, hy, p); // skip cells blocked by a wall
       }
   }
 }
