@@ -33,7 +33,6 @@ export interface Hud {
   /** The value of a style token (e.g. `--paper`), for 3D things that must match the UI. */
   token(name: string): string;
   toggleDebug(): void;
-  showTitle(): void;
   /** True while the title screen is up: the game should not take input yet. */
   titleOpen(): boolean;
   /** True if `target` is part of the UI: a key pressed there belongs to that control. */
@@ -202,7 +201,6 @@ export function createHud(opts: HudOptions): Hud {
     setLoading,
     token: (name) => getComputedStyle(root).getPropertyValue(name).trim(),
     toggleDebug() { unfold(debug.el.hidden ? debug.el : null); },
-    showTitle,
     titleOpen: () => !title.hidden,
     owns: (target) => target instanceof Node && root.contains(target),
   };

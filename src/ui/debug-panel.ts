@@ -8,10 +8,6 @@ export interface DebugSection {
   addToggle(label: string, initial: boolean, onChange: (v: boolean) => void, help?: string): HTMLInputElement;
   /** A labelled slider with a live value readout; fires `onChange` on release. */
   addSlider(label: string, initial: number, min: number, max: number, step: number, onChange: (v: number) => void, help?: string): void;
-  /** A pick-one list. `options` maps each value to the name shown for it. */
-  addChoice(label: string, options: Record<string, string>, initial: string, onChange: (v: string) => void, help?: string): void;
-  /** A one-shot action. */
-  addButton(label: string, onClick: () => void, help?: string): void;
 }
 
 export interface DebugPanel {
@@ -83,33 +79,6 @@ export function createDebugPanel(): DebugPanel {
         row.append(el('span', '', label), readout, slider);
         describe(row, slider, help);
         add(row);
-      },
-      addChoice(label, options, initial, onChange, help) {
-        // One button per option, not a dropdown: a dropdown has to keep focus to stay
-        // open, and the HUD takes focus back from anything clicked with the mouse.
-        const row = el('div', 'ww-debug-choice');
-        row.setAttribute('role', 'group');
-        row.setAttribute('aria-label', label);
-        row.appendChild(el('span', '', label));
-        const buttons = row.appendChild(el('div'));
-        for (const [value, name] of Object.entries(options)) {
-          const button = buttons.appendChild(el('button', 'ww-debug-button', name));
-          button.type = 'button';
-          button.setAttribute('aria-pressed', String(value === initial));
-          button.onclick = () => {
-            for (const b of buttons.children) b.setAttribute('aria-pressed', String(b === button));
-            onChange(value);
-          };
-          describe(button, button, help);
-        }
-        add(row);
-      },
-      addButton(label, onClick, help) {
-        const button = el('button', 'ww-debug-button', label);
-        button.type = 'button';
-        button.onclick = onClick;
-        describe(button, button, help);
-        add(button);
       },
     };
   }

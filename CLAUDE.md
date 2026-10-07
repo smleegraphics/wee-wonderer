@@ -34,7 +34,7 @@ the default is `room2.ply` (Playroom). Cleaned demo scans are `*-clean.ply`.
 | `src/ui/` | The on-screen UI: `hud.ts` (tiles, cards, screens), `debug-panel.ts`, `paper.ts` (building blocks), `ui.css` (all styles and tokens) |
 | `src/collision.ts` | `MeshCollision` (three-mesh-bvh over the collision mesh) and `NavGrid` (walkable cells) |
 | `src/voxelize-core.ts` (+ `.worker.ts`, `voxelize.ts`) | Splat → density field → collision surface |
-| `src/room-reveal.ts`, `src/loading-scene.ts`, `src/paper-bits.ts`, `src/paper-figurine.ts` | How a room arrives after loading (the scan's points start as paper bits and travel home, in the scan's shader), the stand-in bits before it has loaded, the formulas both share, and the figurine's paper look meanwhile |
+| `src/room-reveal.ts`, `src/loading-scene.ts`, `src/paper-bits.ts`, `src/paper-figurine.ts` | How a room arrives after loading (the scan's points start as a sheet of paper dots and rise to their places, in the scan's shader), the stand-in dots before it has loaded, the formulas both share, and the figurine's paper look meanwhile |
 | `src/splat-internals.ts` | Every private field of three's `GaussianSplat` the app touches; check it on a three.js upgrade |
 | `src/load-scan.worker.ts` | Fetches and parses a scan's `.ply` off the main thread |
 | `src/worker-call.ts` | `workerCaller`: promise-based request/response for all three workers (a failed job rejects) |

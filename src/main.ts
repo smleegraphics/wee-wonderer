@@ -22,7 +22,7 @@ import { createHud } from './ui/hud';
 import { workerCaller } from './worker-call';
 import type { ParsedScan } from './load-scan.worker';
 import { splatInternals } from './splat-internals';
-import { installReveal, startReveal, updateReveal, revealPaused, waitingBits, HANDOVER, REVEAL, REVEAL_STYLES, type RevealStyle } from './room-reveal';
+import { installReveal, startReveal, updateReveal, revealPaused, HANDOVER } from './room-reveal';
 import { createLoadingScene, type LoadingScene } from './loading-scene';
 import { createPaperFigurine, type PaperFigurine } from './paper-figurine';
 import { cameraPosition, cameraProjectionMatrixInverse, cameraWorldMatrix, cos, float, Fn, If, instanceIndex, mix, modelWorldMatrix, PI, pmremTexture, sin, smoothstep, uniform, uv, varying, vec3, vec4, viewportUV } from 'three/tsl';
@@ -109,10 +109,9 @@ const hud = createHud({
   onReset: () => { if (charLoaded) resetToSpawn(); }, // the way out of any spot the figurine gets stuck in
 });
 let scanLoading = false; // a scan is being fetched or its collision built
-// The loading view: there is no room yet, and the figurine waits, idle, in a drifting
-// field of paper dots (loading-scene.ts). When the view ends the room grows in around the figurine
-// (room-reveal.ts). `hold` keeps the view up after loading, to look at it.
-const LOADING_VIEW = { hold: false };
+// The loading view: there is no room yet, and the figurine waits, idle, on a rippling
+// sheet of paper dots (loading-scene.ts). When the view ends the room rises out of the
+// sheet around the figurine (room-reveal.ts).
 let loadingScene: LoadingScene | null = null; // made once the figurine's height is known
 let paperFigurine: PaperFigurine | null = null; // the figurine's paper look while it waits (paper-figurine.ts)
 let loadingShown = true;
@@ -120,7 +119,7 @@ let revealProgress = 1; // the last value of updateReveal, for telemetry
 
 /** True until there is a room to stand in and a figurine to stand in it. */
 function loadingViewOn(): boolean {
-  return scanLoading || !charLoaded || LOADING_VIEW.hold;
+  return scanLoading || !charLoaded;
 }
 
 /** Bring the screen in line with whether the loading view is on. Call after anything it depends on changes. */
@@ -133,16 +132,11 @@ function updateLoading(): void {
   loadingShown = on;
 }
 
-/** The UI's paper colours, for the 3D things made of the same paper. */
-function paperColours(): { paper: string; accent: string; ink: string } {
-  return { paper: hud.token('--paper'), accent: hud.token('--accent'), ink: hud.token('--ink') };
-}
-
 /** Bring the room in around the figurine, from where it stands. */
 function revealRoom(): void {
   loadingScene?.place(player.position);
   // the scan is centred on the origin and scaled to TARGET_RADIUS, so this reaches all of the room from wherever the figurine is
-  startReveal(player.position, TARGET_RADIUS + Math.hypot(player.position.x, player.position.z), charH, paperColours());
+  startReveal(player.position, TARGET_RADIUS + Math.hypot(player.position.x, player.position.z), charH, hud.token('--paper'));
 }
 
 const renderer = new WebGPURenderer({ antialias: true });
@@ -331,7 +325,7 @@ function onLoaded(gltf: GLTF): void {
 
   play('idle', 0);
   charLoaded = true;
-  loadingScene = createLoadingScene(charH, paperColours());
+  loadingScene = createLoadingScene(charH, hud.token('--paper'));
   paperFigurine = createPaperFigurine(model, renderer, hud.token('--paper'));
   scene.add(loadingScene.object);
   updateLoading();
@@ -1498,7 +1492,7 @@ async function main(): Promise<void> {
     const revealed = revealProgress = updateReveal(dt);
     // the waiting dots are all there while waiting, and give way to the scan's own at the start of its arrival
     const waiting = loadingViewOn();
-    loadingScene?.show(waiting ? 1 : 1 - Math.min(1, revealed / HANDOVER), waitingBits());
+    loadingScene?.show(waiting ? 1 : 1 - Math.min(1, revealed / HANDOVER));
     // the figurine waits as paper too, and becomes itself as the room arrives (which is also when the room's light reaches it)
     paperFigurine?.show(waiting ? 0 : revealed);
     surround.lerpColors(SURROUND.sky, SURROUND.beyond, waiting ? 0 : THREE.MathUtils.smoothstep(revealed, SURROUND.darken[0], SURROUND.darken[1]));
@@ -1653,16 +1647,6 @@ function setupDebugMenu(): void {
   cleanup.addToggle('Crop to room', CLEAN_OPTS.crop ?? true, (on) => { CLEAN_OPTS.crop = on; void recleanUpload(); },
     'For imported scans: auto-level and crop to the room box (removes far background spray).');
 
-  const ui = hud.debug.section('Interface');
-  ui.addButton('Show the title screen', () => hud.showTitle(),
-    'The title screen only appears the first time the game is opened on a device. This brings it back.');
-  ui.addToggle('Hold the loading view', LOADING_VIEW.hold, (on) => { LOADING_VIEW.hold = on; updateLoading(); },
-    'Keep the loading view up (room hidden, figurine waiting) so you can look at it. Movement is off while it is held. Letting go plays the reveal.');
-  ui.addChoice('Room reveal', Object.fromEntries(Object.entries(REVEAL_STYLES).map(([k, v]) => [k, v.name])), REVEAL.style, (v) => { REVEAL.style = v as RevealStyle; revealRoom(); },
-    'How a room arrives around the figurine once it has loaded. Picking one plays it.');
-  ui.addSlider('Reveal length (s)', REVEAL.seconds, 0.6, 8, 0.2, (v) => { REVEAL.seconds = v; revealRoom(); },
-    'How long the room takes to arrive.');
-  ui.addButton('Play the reveal again', revealRoom, 'Replay the room arriving, from where the figurine is standing now.');
 }
 
 // --- scan import (upload + in-browser cleanup) ------------------------------

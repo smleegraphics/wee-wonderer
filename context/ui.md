@@ -13,20 +13,18 @@ that unfold from them.
   `Escape` folds it. `` ` `` toggles Debug.
 - **Controls hint** (bottom-left), **status note** (top-centre).
 - **Loading view** while a scan is fetched and its collision built, and until the
-  figurine has loaded. There is no room yet: the figurine stands idle among paper
-  bits (by default a rippling sheet of hole-punch dots), itself drawn as paper dots,
-  with a "Building the room…" note.
-- **Room reveal** when the loading view ends: the scan's own points start out as
-  those paper bits and travel to where they belong, in 3D, while the figurine's dots
-  close up and it takes its colours. Five styles are switchable in Debug → Interface
-  (flat sheet rises, paper snowfall, turning pages, paper confetti, unfold), with a
-  length slider and a replay button, until one is chosen. The default is the sheet.
+  figurine has loaded. There is no room yet: the figurine stands idle on a rippling
+  sheet of hole-punch dots, itself drawn as paper dots, with a "Building the room…"
+  note.
+- **Room reveal** when the loading view ends: the scan's own points start out as the
+  sheet's dots and lift off to where they belong, in 3D, nearest the figurine first,
+  while the figurine's dots close up and it takes its colours. It lasts
+  `REVEAL.seconds`.
 - **The surround.** The space around a scan is the `--sky` token (paper-blue) while
   waiting and darkens to `--beyond` (near-black) as the room arrives, following the
   reveal's progress (`SURROUND` in `main.ts`), so a scan's gaps and edges recede.
 - **Title screen**, the first time the game is opened on a device only
-  (`localStorage['ww.titleSeen']`). Debug → Interface → "Show the title screen"
-  brings it back.
+  (`localStorage['ww.titleSeen']`). To see it again, remove that key.
 
 ## Where things are
 
@@ -35,10 +33,10 @@ that unfold from them.
 | `src/ui/ui.css` | Every style. Tokens at the top, on `.ww-ui`. |
 | `src/ui/paper.ts` | The building blocks: `piece` (shadow holder + cut face), `tile`, `el`, the icon paths |
 | `src/ui/hud.ts` | `createHud`: builds all of it, owns what is open, returns the `Hud` handle |
-| `src/ui/debug-panel.ts` | The Debug card: `section()` → `addToggle` / `addSlider` / `addChoice` / `addButton` |
-| `src/paper-bits.ts` | The paper bits: what they look like and the arrangements they wait in. One set of formulas, used by both files below |
-| `src/loading-scene.ts` | The stand-in bits drawn before a scan has loaded (one instanced sprite) |
-| `src/room-reveal.ts` | The room's arrival: per-splat journey in the scan's own shader, all styles |
+| `src/ui/debug-panel.ts` | The Debug card: `section()` → `addToggle` / `addSlider` |
+| `src/paper-bits.ts` | The sheet of paper dots: where they sit and what a dot looks like. One set of formulas, used by both files below |
+| `src/loading-scene.ts` | The stand-in dots drawn before a scan has loaded (one instanced sprite) |
+| `src/room-reveal.ts` | The room's arrival: per-splat journey in the scan's own shader |
 | `src/paper-figurine.ts` | The figurine's paper-dots look while waiting, and how it becomes itself |
 | `src/splat-internals.ts` | The private parts of three's `GaussianSplat` the app reaches into, in one place |
 
@@ -65,8 +63,8 @@ the player asked for (`onPickRoom`, `onImport`, `onReset`).
 - **A control clicked with the mouse gives up focus** (one handler on the UI root),
   so Space stays "jump". Do not add per-button `blur()` calls. It also means no
   control may need to keep focus to work: a native `<select>` closes the moment it
-  opens (measured: blurred 41 ms after the click). `addChoice` is a row of buttons
-  for that reason.
+  opens (measured: blurred 41 ms after the click). A pick-one control must be a row
+  of buttons.
 - **Debug tunables go in a section of the Debug card**, in `setupDebugMenu`. Give
   every control a help string: it shows in the strip pinned at the bottom of the card.
 - **Status kinds:** `busy` stays until replaced, `done` clears itself, `error` stays
@@ -77,24 +75,23 @@ the player asked for (`onPickRoom`, `onImport`, `onReset`).
 Everything is in the 3D scene, so there is no hand-over between layers.
 
 - **Before the scan has loaded** there are no splats, so `loading-scene.ts` draws
-  stand-in bits (`BITS.count` of them) in the style's arrangement, coloured from the
-  UI tokens (`hud.token`).
+  stand-in dots (`BITS.count` of them) on the sheet's grid, coloured from the UI's
+  `--paper` token (`hud.token`).
 - **The reveal** (`room-reveal.ts`) is part of how the scan draws itself:
   `installReveal` wraps the splat's vertex stage and colour. Each splat starts as a
-  bit of paper of fixed size on screen, placed by the same arrangement formula
-  (`paper-bits.ts`), and travels to its real place, growing into the splat it is and
-  taking its colour on the way. Over the first `HANDOVER` of the reveal the stand-ins
-  fade out as the scan's own bits fade in underneath, in the same places.
-- **A style** is a look (`LOOK`: scrap or punch dot), an arrangement (`ARRANGE`) and
-  `dense`, how many of the scan's points start as bits per stand-in bit. 'Unfold' has
-  no journey: splats appear outward from the figurine by distance.
+  paper dot of fixed size on screen, on the grid point straight below its place
+  (`paper-bits.ts`), and travels up to its real place, growing into the splat it is
+  and taking its colour on the way. Over the first `HANDOVER` of the reveal the
+  stand-ins fade out as the scan's own dots fade in underneath, in the same places.
+  `RISE.dense` is how many of the scan's points start as dots per stand-in dot; the
+  rest stay unseen until they are nearly home.
 - **The figurine** (`paper-figurine.ts`) is drawn in paper-coloured dots on a screen
   grid, the same size as a punch dot (`PUNCH_PX`). `show(arrived)` takes the reveal's
   progress: the dots grow until they close up, then its lit colours soak in. This
   hides the change of lighting: the scan's light is captured on the first frame of
   the reveal, while the figurine is still plain paper.
 
-At rest (`progress = 1`) every style reduces to "draw the splat unchanged", and the
+At rest (`progress = 1`) the reveal reduces to "draw the splat unchanged", and the
 figurine's material to its normal output.
 
 `loadingViewOn()` in `main.ts` is the one definition of "loading"; `updateLoading()`
@@ -115,15 +112,15 @@ changing anything it reads.
   the end up and every splat is guaranteed drawn normally when it finishes.
 - **A shader value used in several sibling `If` blocks must be its own variable
   (`.toVar()`) before them.** TSL computes a shared expression only inside the first
-  block that uses it and leaves it unset in the others. This made 'turning pages' and
-  'paper confetti' never arrive (their journey clock read as zero) while the sheet,
-  first in the list, worked.
+  block that uses it and leaves it unset in the others. Found when the reveal had
+  several styles, one block each, sharing a clock: only the first block's style ever
+  arrived.
 - **The scan's light must be captured before the figurine's colours show.** It is
   today because `requestScanLight()` is called when the load ends and the capture is
   taken on the next frame, the first of the reveal; the figurine stays paper until
   `ARRIVE.colour[0]` of the way through. A room switch cross-fades the light over
-  `SCAN_LIGHT.blend` (0.4 s), so at reveal lengths under about 1.2 s the end of that
-  fade shows.
+  `SCAN_LIGHT.blend` (0.4 s), which must stay shorter than that part of
+  `REVEAL.seconds`.
 - **The figurine's materials are converted to node materials at load**
   (`renderer.library.fromMaterial`, the conversion the renderer would do itself on
   first draw), so the dots and paper colour have somewhere to go. Anything that
@@ -168,9 +165,13 @@ changing anything it reads.
 - **A paper mat and drifting scraps as separate meshes**, replaced at the end by the
   room. Any waiting scene that is not what the room is made of needs a swap; the bits
   are the scan's own points for that reason.
-- **Reveals that differ only in the bit's look** (confetti, flurry, punch dots over
-  the same drifting field) read as the same effect. Styles now differ in arrangement.
-- **A native `<select>` for the reveal style.** See the focus rule above.
+- **Four other reveals**: paper snowfall (scraps fall and pile up into the room),
+  turning pages (the room lies flat in slices that swing up), paper confetti (a
+  drifting field of scraps flies home) and unfold (the room appears outward from the
+  figurine with no journey). All worked; the sheet was preferred, and the others and
+  their Debug switch were removed. Variants that differed only in the bit's look
+  read as the same effect.
+- **A native `<select>` in the Debug card.** See the focus rule above.
 - **Paper-blue around the scan during play.** Every gap in a scan and everything past
   its edges showed light blue, which is a lot of blue on the tabletop scans.
 - **Greying out Begin until loading finished.** It would have hidden the frozen page
@@ -196,9 +197,10 @@ changing anything it reads.
   draw in the wrong order for a moment while they travel.
 - The figurine's dots are fixed to the screen, so they slide over it as it or the
   camera moves during the fill-in.
-- Checked headless by stills only (sheet, pages and confetti arrive; the figurine
-  fills in on Kitchen). Smoothness of the motion needs a person.
-- The loading note has no progress indication.
+- Checked headless by stills only (the room arrives and the figurine fills in on
+  Kitchen). Smoothness of the motion needs a person.
+- There is no Debug control to hold the loading view or replay the reveal; reload, or
+  switch rooms, to see them again.
 
 - No touch controls; the HUD is laid out for a desktop window.
 - Drag-and-drop and file-picker import are not covered by a headless check.
