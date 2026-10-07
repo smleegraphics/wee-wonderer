@@ -6,7 +6,7 @@
 // floor-plane fit in the room inspector; baked as constants here.
 
 import * as THREE from 'three';
-import { WebGPURenderer } from 'three/webgpu';
+import { WebGPURenderer, MeshBasicNodeMaterial } from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import { GaussianSplat } from 'three/addons/objects/GaussianSplat.js';
@@ -18,6 +18,7 @@ import { voxelCacheKey, voxelCacheGet, voxelCachePut } from './voxel-cache';
 import type { VoxelSurface, VoxelOptions } from './voxelize';
 import type { CleanOptions } from './clean-scan-core';
 import { buildClimbSideClip } from './climb-side-anim';
+import { cameraPosition, cameraProjectionMatrixInverse, cameraWorldMatrix, cos, float, Fn, If, instanceIndex, mix, modelWorldMatrix, PI, pmremTexture, sin, smoothstep, uniform, uv, varying, vec3, vec4, viewportUV } from 'three/tsl';
 
 const q = new URLSearchParams(location.search);
 const TEL = q.get('tel') === '1'; // debug telemetry: CLIMB-* console events + window.__dbg
@@ -100,7 +101,8 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 app.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x1a1c22);
+const BACKDROP = new THREE.Color(0x1a1c22);
+scene.background = BACKDROP;
 
 const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.001, 200);
 
@@ -113,8 +115,9 @@ orbit.addEventListener('start', () => { camHandsOff = false; camSwinging = false
 orbit.enablePan = false; // pivot tracks the figurine; panning it away would fight that
 orbit.maxPolarAngle = Math.PI * 0.49; // don't drop below the floor
 
-scene.add(new THREE.HemisphereLight(0x8899bb, 0x22201c, 0.9));
-const sun = new THREE.DirectionalLight(0xfff4e0, 2.4);
+const hemi = new THREE.HemisphereLight(0x8899bb, 0x22201c, 0.9); // fixed ambient fill...
+scene.add(hemi);
+const sun = new THREE.DirectionalLight(0xfff4e0, 2.4);            // ...and fixed key light. Both are the fallback: off while the scan lights the scene (applyScanLight)
 sun.position.set(3, 6, 4);
 scene.add(sun);
 
@@ -185,6 +188,7 @@ function loadFromURL(url: string, id: string): void {
       const covAttr = geometry.getAttribute('covariance') as THREE.BufferAttribute | undefined;
       const cov = covAttr && covAttr.itemSize === 6 ? (covAttr.array as Float32Array) : null;
       const splat = new GaussianSplat(geometry);
+      installContactShadow(splat);
       splat.position.copy(o.center).multiplyScalar(-1); // recenter to origin
       splat.visible = !MESHONLY; // mesh-only debug view hides the splat
       room.add(splat);
@@ -194,9 +198,10 @@ function loadFromURL(url: string, id: string): void {
       currentSplat = splat;
       room.updateMatrixWorld(true);
       lastCenters = centers; lastOpacity = opacity; lastCov = cov; lastMatrix.copy(splat.matrixWorld);
+      estimateScanFill(centers, color, cov, splat.matrixWorld, scanFill);
       console.log(`loaded ${id}: radius ${o.radius.toFixed(2)} → scaled ${k.toFixed(2)}x`);
       await buildCollision(id, token, centers, opacity, cov, splat.matrixWorld);
-      if (token === loadToken && charLoaded) resetToSpawn();
+      if (token === loadToken && charLoaded) { resetToSpawn(); requestScanLight(); }
     },
     undefined,
     (err) => showBanner(`${id} load failed: ${String(err)}`),
@@ -255,6 +260,7 @@ function onLoaded(gltf: GLTF): void {
   charLoaded = true;
   if (collision) rebuildPlatformOverlay(); // rebuild the NavGrid now charH (headroom/step) is real
   resetToSpawn();
+  requestScanLight();
   console.log(`character: ${charH.toFixed(3)} tall, ${gltf.animations.length} clips`);
 }
 
@@ -435,6 +441,354 @@ function rebuildCollision(): void {
   if (!lastCenters || !lastOpacity) return;
   disposeCollision();
   void buildCollision(currentFile, ++loadToken, lastCenters, lastOpacity, lastCov, lastMatrix);
+}
+
+/** The parts of three's GaussianSplat this app reaches into that it does not make
+ *  public. All of them are named here, so a three.js upgrade has one place to check.
+ *    _buffers.centerRead — the splats' centres, as a GPU storage buffer
+ *    _sort.orderRead     — the draw order: which splat each drawn instance is
+ *    _sortInitialized    — false makes the next render sort again, whatever the view */
+type SplatInternals = { _buffers?: { centerRead?: any }; _sort?: { orderRead?: any }; _sortInitialized: boolean };
+function splatInternals(splat: GaussianSplat): SplatInternals { return splat as unknown as SplatInternals; }
+
+// --- light the figurine from the scan (see context/lighting.md) ----------------
+// The scan's lighting is baked into its splat colours, so the figurine can only match
+// it by looking at the scan: render the splats into a cubemap from where the figurine
+// is, prefilter it, and use that as the scene's environment light in place of the
+// fixed lights. One probe, captured at the figurine — `follow` re-captures as it
+// moves, which is the cheapest possible "dynamic" probe.
+//   There are two captures, not one: a new capture goes into whichever isn't showing,
+// and the light cross-fades over to it, so a re-capture never swaps in a single frame.
+const SCAN_LIGHT = { on: true, intensity: 1.5, follow: false, blend: 0.4, fill: true, debug: false }; // blend: seconds to cross-fade to a new capture; fill: see scanFill
+// (intensity 1.5: at 1 the figurine is lit like its surroundings, which reads as dull on a
+// dark-green character; 2 washes it out in a bright scan like Playroom — context/lighting.md.)
+// The probe: where it sits, what it renders, and how often follow mode moves it.
+const SCAN_PROBE = {
+  height: 0.7,              // body heights up the figurine. The value the default strength was tuned at (context/lighting.md)
+  near: 0.05,               // body heights: the probe camera's near plane, well inside the figurine's own width so nothing beside it is clipped
+  far: TARGET_RADIUS * 20,  // the probe camera's far plane: well past any scan (they are all scaled to TARGET_RADIUS)
+  size: 64,                 // px per cube face. It lights one small figurine, mostly diffusely; the debug mirror ball is the only thing that shows the pixels
+  followStep: 1,            // body heights: follow mode re-captures once the figurine is this far from the last capture...
+  followIntervalMs: 500,    // ...and at most this often
+};
+// What the probe sees where the scan has nothing — typically the ceiling, which phone
+// scans rarely capture, and the empty space around a tabletop scan. Left as the dark
+// backdrop those directions read as "no light from there" and the figurine goes dark
+// on top. The scan can't say what was really there, so this is an estimate: the
+// average colour of the upper half of the scan (see estimateScanFill).
+const scanFill = new THREE.Color();
+// The probe's backdrop is our own dome, centred on the probe. (PMREMGenerator can paint
+// a solid colour itself, but it does so with a unit box at the world origin, drawn from
+// wherever its camera was left by the PREVIOUS capture — so once a capture has been
+// taken more than half a unit from the origin, the next one's gaps come out black.)
+const scanFillDome = new THREE.Mesh(
+  new THREE.SphereGeometry(SCAN_PROBE.far * 0.5, 24, 12), // anywhere inside the far plane will do: it is drawn first and ignores depth
+  new THREE.MeshBasicMaterial({ side: THREE.BackSide, depthTest: false, depthWrite: false, toneMapped: false, fog: false }),
+);
+scanFillDome.renderOrder = -1e6; // behind everything
+scanFillDome.frustumCulled = false;
+scanFillDome.visible = false;
+scene.add(scanFillDome);
+let scanLightPmrem: THREE.PMREMGenerator | null = null;
+const scanLightEnv: Array<THREE.WebGLRenderTarget | null> = [null, null];
+const scanLightMix = uniform(0);           // which capture is lighting the scene: 0 = the first, 1 = the second, between = mid-fade
+let scanLightShown = 0;                    // the capture being shown, or faded toward
+let scanLightNode: unknown = null;         // the environment: the two captures mixed by scanLightMix
+const scanLightAt = new THREE.Vector3();   // where the newest probe was captured
+let scanLightWanted = false;               // a capture has been asked for and not yet taken
+let scanLightLast = -Infinity;             // when the last capture ran (performance.now)
+let scanLightBroken = false;               // a capture threw: stop trying, and leave the fixed lights (or the last good capture) in charge
+const scanProbeAt = new THREE.Vector3();
+
+/** Ask for a new capture. It is taken as soon as one can be (see updateScanLight), so
+ *  it is safe to ask at any time: before the scan has loaded, or in the middle of a fade. */
+function requestScanLight(): void { scanLightWanted = true; }
+
+/** Where the probe belongs right now: at the figurine. */
+function scanProbePoint(out: THREE.Vector3): THREE.Vector3 {
+  return out.set(player.position.x, player.position.y + charH * SCAN_PROBE.height, player.position.z);
+}
+
+/** Can a capture be taken? There has to be a scan to look at (the mesh-only view hides
+ *  it, so there the fixed lights stay), and the figurine has to be standing in it — it
+ *  is only placed once the scan's collision exists (resetToSpawn). */
+function scanLightReady(): boolean {
+  return !MESHONLY && !scanLightBroken && !!currentSplat && charLoaded && !!collision;
+}
+
+/** Render the scan into the capture that isn't showing, and start fading over to it. */
+function captureScanLight(): void {
+  const splat = currentSplat!;
+  const pmrem = (scanLightPmrem ??= new THREE.PMREMGenerator(renderer as unknown as THREE.WebGLRenderer));
+  const lit = scene as unknown as { environmentNode: unknown };
+  // everything the capture changes about the scene, put back whatever happens
+  const hidden: THREE.Object3D[] = [];
+  const envNode = lit.environmentNode, bg = scene.background, dark = shadowDark.value;
+  const t0 = performance.now();
+  try {
+    // only the scan lights the probe: hide the figurine and the debug overlays...
+    for (const o of [player, collisionDebug, platformDebug, scanDebugBalls, scanDebugThumb]) if (o && o.visible) { o.visible = false; hidden.push(o); }
+    lit.environmentNode = null; scene.background = null;
+    shadowDark.value = 0; // ...and the figurine's own shadow
+    scanProbePoint(scanLightAt);
+    scanFillDome.material.color.copy(SCAN_LIGHT.fill ? scanFill : BACKDROP);
+    scanFillDome.position.copy(scanLightAt);
+    scanFillDome.visible = true;
+    const shoot = (i: number) => {
+      scanLightEnv[i] = pmrem.fromScene(scene, 0, charH * SCAN_PROBE.near, SCAN_PROBE.far, { size: SCAN_PROBE.size, position: scanLightAt, renderTarget: scanLightEnv[i] ?? undefined } as never);
+    };
+    if (!scanLightNode) {
+      // first time: fill both, so the mix has two valid captures to read from
+      shoot(0); shoot(1);
+      scanLightNode = mix(pmremTexture(scanLightEnv[0]!.texture), pmremTexture(scanLightEnv[1]!.texture), scanLightMix);
+      buildScanDebug();
+      scanLightShown = 0; scanLightMix.value = 0;
+    } else {
+      const next = 1 - scanLightShown; // into the one that isn't showing, then fade over to it
+      shoot(next);
+      scanLightShown = next;
+      if (SCAN_LIGHT.blend <= 0) scanLightMix.value = next;
+    }
+    if (TEL) console.log(`SCANLIGHT captured at ${scanLightAt.x.toFixed(2)},${scanLightAt.y.toFixed(2)},${scanLightAt.z.toFixed(2)} in ${(performance.now() - t0).toFixed(1)}ms`);
+  } catch (err) {
+    scanLightBroken = true;
+    console.error('scan lighting: capture failed, so it is switched off', err);
+  } finally {
+    scanFillDome.visible = false;
+    shadowDark.value = dark;
+    lit.environmentNode = envNode; scene.background = bg;
+    for (const o of hidden) o.visible = true;
+    // The capture left the splats sorted for the probe's last view. GaussianSplat only
+    // re-sorts when the view DIRECTION changes, so a camera looking the same way as that
+    // last view would keep the probe's order — in which everything nearer than the probe
+    // shares one depth bin, i.e. is not sorted at all. Make the next frame sort afresh.
+    splatInternals(splat)._sortInitialized = false;
+    scanLightLast = performance.now();
+  }
+  applyScanLight();
+}
+
+/** Estimate the colour of what the scan is missing overhead: the average colour of its
+ *  upper half — the splats above the scan's median height, where "median" and
+ *  "average" are both weighted by how much each splat shows (opacity × size). In a
+ *  room that is the upper walls, which a ceiling usually resembles; in a tabletop scan
+ *  it is the upper part of whatever was captured. Colours are averaged as stored,
+ *  which is also how the probe's own blur averages them. */
+function estimateScanFill(centers: THREE.BufferAttribute, color: THREE.BufferAttribute, cov: Float32Array | null, world: THREE.Matrix4, out: THREE.Color): void {
+  const n = centers.count, e = world.elements, BINS = 256;
+  // one walk over the splats for each one's height and how much it shows — its opacity
+  // times its footprint (the sum of its variances ∝ area); the rest works from these
+  const height = new Float32Array(n), weight = new Float32Array(n);
+  let y0 = Infinity, y1 = -Infinity, total = 0;
+  for (let i = 0; i < n; i++) {
+    const y = height[i] = e[1] * centers.getX(i) + e[5] * centers.getY(i) + e[9] * centers.getZ(i) + e[13];
+    total += weight[i] = color.getW(i) * (cov ? cov[i * 6] + cov[i * 6 + 3] + cov[i * 6 + 5] : 1);
+    if (y < y0) y0 = y; if (y > y1) y1 = y;
+  }
+  const span = Math.max(y1 - y0, 1e-9), hist = new Float64Array(BINS);
+  for (let i = 0; i < n; i++) hist[Math.min(BINS - 1, Math.floor(((height[i] - y0) / span) * BINS))] += weight[i];
+  let acc = 0, bin = 0;
+  while (bin < BINS - 1 && acc + hist[bin] < total / 2) acc += hist[bin++];
+  const median = y0 + (bin / BINS) * span;
+  let r = 0, g = 0, b = 0, sum = 0;
+  for (let i = 0; i < n; i++) {
+    if (height[i] < median) continue;
+    const w = weight[i];
+    r += color.getX(i) * w; g += color.getY(i) * w; b += color.getZ(i) * w; sum += w;
+  }
+  if (sum > 0) out.setRGB(r / sum, g / sum, b / sum); else out.copy(BACKDROP);
+  if (TEL) console.log(`SCANFILL rgb=${out.r.toFixed(2)},${out.g.toFixed(2)},${out.b.toFixed(2)} from splats above y=${median.toFixed(2)} (scan spans ${y0.toFixed(2)}..${y1.toFixed(2)})`);
+}
+
+/** Scan lighting replaces both fixed lights; with it off, or with no capture to use
+ *  (before the first one, and always in the mesh-only view, which has no scan to
+ *  capture), the fixed fill and sun light the scene as before. */
+function applyScanLight(): void {
+  const on = SCAN_LIGHT.on && !!scanLightNode;
+  (scene as unknown as { environmentNode: unknown }).environmentNode = on ? scanLightNode : null;
+  scene.environmentIntensity = SCAN_LIGHT.intensity;
+  hemi.visible = sun.visible = !on;
+  const dbg = on && SCAN_LIGHT.debug;
+  if (scanDebugBalls) scanDebugBalls.visible = dbg;
+  if (scanDebugThumb) scanDebugThumb.visible = dbg;
+}
+
+// Debug view of the probe: a thumbnail of exactly what it captured, and three balls
+// lit by it. The thumbnail is the capture unwrapped as a panorama — up at the top,
+// down at the bottom, all the way round left to right — so a dark band along the top
+// IS the light arriving from overhead. The balls are a mirror (what the probe sees,
+// sharp), a half-rough metal (the same, blurred) and a matte white one (the soft
+// light every surface receives — its top is what the figurine's top gets).
+let scanDebugBalls: THREE.Group | null = null;
+let scanDebugThumb: THREE.Mesh | null = null;
+const SCAN_DEBUG_BALLS = [{ roughness: 0, metalness: 1 }, { roughness: 0.5, metalness: 1 }, { roughness: 1, metalness: 0 }];
+const SCAN_DEBUG = {
+  ballRadius: 0.18,  // body heights: small enough not to hide the figurine
+  ballHeight: 1.6,   // body heights above the feet: clear of its head
+  ballSpacing: 2.6,  // ball radii between centres: a gap between neighbours
+  thumbHeight: 0.2,  // of the view's height
+  thumbMargin: 0.02, // of the view's height, off the corner
+};
+
+function buildScanDebug(): void {
+  if (scanDebugBalls) return;
+  const balls = new THREE.Group(), geo = new THREE.SphereGeometry(1, 32, 16);
+  SCAN_DEBUG_BALLS.forEach((m, i) => {
+    const ball = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0xffffff, ...m }));
+    ball.position.x = (i - 1) * SCAN_DEBUG.ballSpacing; // a row, in ball radii
+    balls.add(ball);
+  });
+  balls.visible = false;
+  scene.add(balls);
+  scanDebugBalls = balls;
+
+  // the panorama: each pixel looks up the capture in the direction it stands for
+  const lon = uv().x.sub(0.5).mul(PI.mul(2)), lat = uv().y.sub(0.5).mul(PI);
+  const dir = vec3(cos(lat).mul(sin(lon)), sin(lat), cos(lat).mul(cos(lon)));
+  const mat = new MeshBasicNodeMaterial({ depthTest: false, depthWrite: false, transparent: true });
+  mat.colorNode = mix(pmremTexture(scanLightEnv[0]!.texture, dir, float(0)), pmremTexture(scanLightEnv[1]!.texture, dir, float(0)), scanLightMix);
+  const thumb = new THREE.Mesh(new THREE.PlaneGeometry(2, 1), mat);
+  thumb.renderOrder = 1e6; // over everything
+  thumb.frustumCulled = false;
+  thumb.visible = false;
+  scene.add(camera); // so the camera can carry the thumbnail
+  camera.add(thumb);
+  scanDebugThumb = thumb;
+}
+
+/** Keep the debug balls over the figurine's head and the thumbnail pinned to the
+ *  bottom-left corner of the view. */
+function updateScanDebug(): void {
+  if (!scanDebugBalls || !scanDebugThumb || !scanDebugBalls.visible) return;
+  scanDebugBalls.scale.setScalar(charH * SCAN_DEBUG.ballRadius);
+  scanDebugBalls.position.set(player.position.x, player.position.y + charH * SCAN_DEBUG.ballHeight, player.position.z);
+  scanDebugBalls.quaternion.copy(camera.quaternion); // the row runs across the screen
+  const d = charH, halfH = d * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2), halfW = halfH * camera.aspect;
+  const h = halfH * 2 * SCAN_DEBUG.thumbHeight, margin = halfH * 2 * SCAN_DEBUG.thumbMargin; // the panorama is twice as wide as tall
+  scanDebugThumb.scale.setScalar(h);
+  scanDebugThumb.position.set(-halfW + margin + h, -halfH + margin + h / 2, -d);
+}
+
+/** Per frame: advance the cross-fade, then take a capture if one is due — because it
+ *  was asked for, or because follow mode is on and the figurine has moved on. */
+function updateScanLight(dt: number): void {
+  if (scanLightNode && scanLightMix.value !== scanLightShown) {
+    const step = SCAN_LIGHT.blend > 0 ? dt / SCAN_LIGHT.blend : 1;
+    scanLightMix.value = scanLightShown ? Math.min(1, scanLightMix.value + step) : Math.max(0, scanLightMix.value - step);
+    // One fade at a time. A new capture is rendered into whichever isn't showing, and
+    // mid-fade both are: so every capture, asked for or not, waits for the fade to arrive.
+    return;
+  }
+  if (!scanLightReady()) return; // a request stays pending until there is something to capture
+  if (!scanLightWanted && scanLightNode && SCAN_LIGHT.on && SCAN_LIGHT.follow) {
+    const moved = scanProbePoint(scanProbeAt).distanceTo(scanLightAt);
+    scanLightWanted = moved > charH * SCAN_PROBE.followStep && performance.now() - scanLightLast > SCAN_PROBE.followIntervalMs;
+  }
+  if (!scanLightWanted) return;
+  scanLightWanted = false;
+  captureScanLight();
+}
+
+// --- contact shadow (see context/lighting.md) --------------------------------
+// The scan is not a surface a shadow can be cast onto: its splats are transparent
+// blobs with no depth, so anything drawn as a separate layer is either hidden under
+// them or shows through whatever stands in front. So the shadow is put INTO the
+// splats: a splat lying at the surface the figurine touches is darkened where it falls
+// inside a soft disc around the contact point (the same idea as Spark's SplatEdit). The
+// shadow then sits exactly on the visible surface and is hidden by whatever is in front.
+const CONTACT_SHADOW = { on: true, darkness: 0.55, size: 0.6 }; // size: radius in body heights
+const SHADOW_THICKNESS = 0.5;  // body heights: how far above/below the feet still counts as the surface. Generous, because the
+                               // visible floor is not where the feet are: measured medians of +0.18 (Playroom), -0.17 (Living Room), -0.25 (Counter)
+const SHADOW_FADE_HEIGHT = 2;  // body heights off the surface at which the shadow has faded out
+const SHADOW_EASE = 20;        // per second: how fast the shadow follows a change of surface (most of the way in a tenth of a second)
+const SHADOW_GRAZE = 1e-3;     // a view ray this close to parallel with the surface (the sine of ~0.06°) doesn't meet it anywhere useful
+const shadowCentre = uniform(new THREE.Vector3());          // where the figurine touches (or hangs over) a surface
+const shadowNormal = uniform(new THREE.Vector3(0, 1, 0));   // that surface's facing: up on the ground, out of the wall when climbing
+const shadowRadius = uniform(1), shadowThick = uniform(1), shadowDark = uniform(0);
+
+/** Make a splat object darken itself inside the contact-shadow region. Two questions,
+ *  answered at different rates:
+ *    - Is this splat at the contact surface? Once per splat, from its centre: how far
+ *      it is off the surface (`lift`). Everything further than the shadow's thickness
+ *      is left alone — that is nearly every splat, and what keeps this cheap.
+ *    - Which of its pixels are in the disc? Per pixel: where the view ray through the
+ *      pixel meets the plane the figurine stands on. Floors are often a few very
+ *      large, flat splats (a rug in Playroom is ~500 splats per body-width), so
+ *      darkening whole splats by their centre gives a faint smudge in the wrong place.
+ *      It is the figurine's plane, not the splat's own level: the figurine is drawn
+ *      where its feet are, which is not quite where the scan's floor is, and a disc
+ *      placed at each splat's height lands visibly in front of it.
+ *  It reads two things from the splat's internals (splatInternals), both already on
+ *  the GPU for the splat's own drawing: its centres, and the draw order, which says
+ *  which splat each drawn instance is. */
+function installContactShadow(splat: GaussianSplat): void {
+  // (typed loosely: three's types don't describe the material's colour hook)
+  const material = splat.material as unknown as { colorNode: any; needsUpdate: boolean };
+  const internals = splatInternals(splat);
+  const order = internals._sort?.orderRead, centreRead = internals._buffers?.centerRead;
+  if (!order || !centreRead || !material.colorNode) { console.warn('contact shadow: this GaussianSplat does not expose its centres and draw order — shadow disabled'); return; }
+  // per splat: how far its centre is off the contact surface, along the surface's normal
+  const lift = varying(Fn(() => {
+    const centre = centreRead.element(order.element(instanceIndex)).xyz;
+    return modelWorldMatrix.mul(vec4(centre, 1)).xyz.sub(shadowCentre).dot(shadowNormal);
+  })());
+  const base = material.colorNode; // vec4: the splat's colour and coverage
+  material.colorNode = Fn(() => {
+    const c = vec4(base).toVar();
+    If(lift.abs().lessThan(shadowThick).and(shadowDark.greaterThan(0)), () => {
+      // per pixel: the view ray through this pixel, met with the plane the figurine stands on
+      const ndc = vec4(viewportUV.x.mul(2).sub(1), viewportUV.y.oneMinus().mul(2).sub(1), 1, 1);
+      const far = cameraProjectionMatrixInverse.mul(ndc);
+      const ray = cameraWorldMatrix.mul(vec4(far.xyz.div(far.w), 0)).xyz.normalize();
+      const from = cameraPosition.sub(shadowCentre);
+      const toward = ray.dot(shadowNormal), off = from.dot(shadowNormal);       // the ray's and the camera's components along the normal
+      // the ray meets the plane only if it isn't running alongside it, and only ahead of
+      // the camera if it is heading toward the plane from the side the camera is on
+      If(toward.abs().greaterThan(SHADOW_GRAZE).and(toward.mul(off).lessThan(0)), () => {
+        const along = from.add(ray.mul(off.negate().div(toward)));               // offset from the contact point, in that plane
+        const inside = smoothstep(shadowRadius, shadowRadius.mul(0.15), along.length())
+          .mul(smoothstep(shadowThick, shadowThick.mul(0.6), lift.abs()));
+        c.rgb.mulAssign(inside.mul(shadowDark).oneMinus());
+      });
+    });
+    return c;
+  })();
+  material.needsUpdate = true;
+}
+
+/** Per frame: where the shadow falls, and how strong it is. */
+const shadowAt = new THREE.Vector3(), shadowFacing = new THREE.Vector3();
+function updateContactShadow(dt: number): void {
+  const p = player.position, radius = CAPSULE_RADIUS * charH;
+  let height = 0; // how far the figurine is off the surface it would shadow
+  if (state === 'climb') {
+    // on a wall: the shadow is on the face it's hanging from, behind its body
+    shadowAt.set(p.x, p.y + charH * CLIMB.chest, p.z).addScaledVector(climbDir, radius * CLIMB.gap);
+    shadowFacing.copy(climbDir).negate();
+  } else if (state === 'air') {
+    // in the air: onto the ground it would land on, straight below
+    const ground = navGrid ? navGrid.surfaceBelow(p.x, p.z, p.y + radius * 0.5) : null;
+    height = ground === null ? Infinity : Math.max(0, p.y - ground);
+    shadowAt.set(p.x, ground ?? p.y, p.z);
+    shadowFacing.copy(WORLD_UP);
+  } else {
+    // standing: right where the feet are
+    shadowAt.copy(p);
+    shadowFacing.copy(WORLD_UP);
+  }
+  // ease, so stepping onto a wall or off a ledge moves the shadow instead of jumping it
+  const t = Math.min(1, SHADOW_EASE * dt), normal = shadowNormal.value;
+  shadowCentre.value.lerp(shadowAt, t);
+  // The normal turns toward the new facing. Blending two unit vectors only does that
+  // while they aren't opposed: straight across (one wall to the wall facing it) the
+  // blend passes through zero, and short of halfway it normalises back to where it
+  // started. There is no shorter way round to ease along, so past a right angle it jumps.
+  if (normal.dot(shadowFacing) < 0) normal.copy(shadowFacing);
+  else normal.lerp(shadowFacing, t).normalize();
+  const fade = 1 - Math.min(1, height / (charH * SHADOW_FADE_HEIGHT)); // higher → fainter and wider
+  shadowRadius.value = charH * CONTACT_SHADOW.size * (2 - fade);
+  shadowThick.value = charH * SHADOW_THICKNESS;
+  shadowDark.value = CONTACT_SHADOW.on ? CONTACT_SHADOW.darkness * fade : 0;
 }
 
 // --- controller update ------------------------------------------------------
@@ -1076,6 +1430,7 @@ async function main(): Promise<void> {
     const dt = Math.min(clock.getDelta(), 0.05);
     if (charLoaded) { updateController(dt); if (FREECAM) updateFreeCam(); else updateCamera(dt); }
     mixer?.update(dt);
+    if (charLoaded) { updateContactShadow(dt); updateScanLight(dt); updateScanDebug(); }
     if (TEL) publishDebugState();
     void renderer.renderAsync(scene, camera).then(() => {
       if (charLoaded && ++frames === 3) (window as unknown as { __wwReady?: boolean }).__wwReady = true;
@@ -1238,7 +1593,8 @@ function setupDebugMenu(): void {
   panel.style.cssText =
     'position:fixed;top:12px;right:12px;z-index:10;display:flex;flex-direction:column;gap:10px;' +
     'padding:10px 12px;border:1px solid #3a3b44;border-radius:8px;background:rgba(23,24,29,0.85);' +
-    'color:#e8e8ea;font:12px ui-monospace,Menlo,monospace;backdrop-filter:blur(4px)';
+    'color:#e8e8ea;font:12px ui-monospace,Menlo,monospace;backdrop-filter:blur(4px);' +
+    'max-height:calc(100vh - 24px);box-sizing:border-box;overflow-y:auto'; // 24px: its own top margin, twice — it has outgrown short windows, so it scrolls
   const title = document.createElement('div');
   title.textContent = 'Debug';
   title.style.cssText = 'opacity:0.55;font-size:10px;letter-spacing:0.08em;text-transform:uppercase';
@@ -1249,6 +1605,22 @@ function setupDebugMenu(): void {
   platformCheckbox = addToggle('Platforms (P)', showPlatforms, setPlatformOverlay,
     'Spike 1: color the walkable surfaces the collision decomposes into — floor, ' +
     'couch, counter. Distinct colors = distinct platforms (reached by climbing/jumping).');
+  addToggle('Contact shadow', CONTACT_SHADOW.on, (on) => { CONTACT_SHADOW.on = on; },
+    'Darken the scan in a soft patch where the figurine touches it (the floor under its feet, or the wall it is climbing).');
+  addSlider('Contact shadow: darkness', CONTACT_SHADOW.darkness, 0, 1, 0.05, (v) => { CONTACT_SHADOW.darkness = v; });
+  addSlider('Contact shadow: size', CONTACT_SHADOW.size, 0.2, 1.5, 0.05, (v) => { CONTACT_SHADOW.size = v; },
+    'Radius of the shadow, in figurine heights.');
+  addToggle('Scan lighting', SCAN_LIGHT.on, (on) => { SCAN_LIGHT.on = on; applyScanLight(); },
+    'Light the figurine from the scan itself (a cubemap of the splats, captured at the figurine) instead of the fixed ambient fill.');
+  addToggle('Scan light: follow figurine', SCAN_LIGHT.follow, (on) => { SCAN_LIGHT.follow = on; if (on) requestScanLight(); },
+    'Re-capture the light as the figurine moves, so it changes from place to place. Off = captured once at the spawn point.');
+  addToggle('Scan light: fill gaps', SCAN_LIGHT.fill, (on) => { SCAN_LIGHT.fill = on; requestScanLight(); },
+    'Where the scan has nothing (usually the ceiling), light the figurine with the average colour of the scan\'s upper half instead of darkness.');
+  addToggle('Scan light: debug view', SCAN_LIGHT.debug, (on) => { SCAN_LIGHT.debug = on; applyScanLight(); },
+    'Show what the light probe captured (panorama, bottom-left: up is at the top) and three balls lit by it: mirror, half-rough metal, matte white.');
+  addSlider('Scan light: strength', SCAN_LIGHT.intensity, 0, 3, 0.05, (v) => { SCAN_LIGHT.intensity = v; applyScanLight(); });
+  addSlider('Scan light: blend (s)', SCAN_LIGHT.blend, 0, 2, 0.1, (v) => { SCAN_LIGHT.blend = v; },
+    'Seconds to cross-fade from one light capture to the next in follow mode. 0 = swap instantly.');
   addToggle('Reliable ground (nav)', useNavGround, (on) => { useNavGround = on; },
     'Spike 2: stand on / confine to the hole-filled NavGrid so the figurine can\'t ' +
     'fall through gaps or walk off platform edges. Off = raw mesh collision only.');
