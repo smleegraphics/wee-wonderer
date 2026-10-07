@@ -18,7 +18,6 @@ import { voxelCacheKey, voxelCacheGet, voxelCachePut } from './voxel-cache';
 import type { VoxelSurface, VoxelOptions } from './voxelize';
 import type { CleanOptions } from './clean-scan-core';
 import { buildClimbSideClip } from './climb-side-anim';
-import { LightProbeGrid } from 'three/addons/lighting/LightProbeGrid.js';
 
 const q = new URLSearchParams(location.search);
 const TEL = q.get('tel') === '1'; // debug telemetry: CLIMB-* console events + window.__dbg
@@ -447,7 +446,7 @@ function rebuildCollision(): void {
 // is, prefilter it, and use that as the scene's environment light in place of the
 // fixed hemisphere fill. One probe, captured at the figurine — `follow` re-captures as
 // it moves, which is the cheapest possible "dynamic" probe.
-const SCAN_LIGHT = { on: true, intensity: 1, follow: false, grid: false, gridSpacing: 4 }; // gridSpacing in body heights (2 took over a minute to bake on Counter)
+const SCAN_LIGHT = { on: true, intensity: 1, follow: false };
 let scanLightPmrem: THREE.PMREMGenerator | null = null;
 let scanLightEnv: THREE.WebGLRenderTarget | null = null;
 const scanLightAt = new THREE.Vector3();   // where the current probe was captured
@@ -476,82 +475,17 @@ function captureScanLight(): void {
 }
 
 function applyScanLight(): void {
-  const grid = SCAN_LIGHT.on && SCAN_LIGHT.grid && !!scanGrid && !scanGridBake, probe = SCAN_LIGHT.on && !SCAN_LIGHT.grid && !!scanLightEnv;
-  scene.environment = probe ? scanLightEnv!.texture : null;
+  const on = SCAN_LIGHT.on && !!scanLightEnv;
+  scene.environment = on ? scanLightEnv!.texture : null;
   scene.environmentIntensity = SCAN_LIGHT.intensity;
-  if (scanGrid) { scanGrid.visible = grid; scanGrid.intensity = SCAN_LIGHT.intensity; }
-  hemi.visible = !grid && !probe;
-}
-
-// The grid alternative: instead of one probe that follows the figurine, bake a 3D
-// grid of probes over the walkable space once, each reduced to spherical harmonics
-// (soft directional light, no reflections), and let the material blend the nearest
-// ones per pixel. three's LightProbeGrid does the capture, packing and sampling.
-let scanGrid: LightProbeGrid | null = null;
-let scanGridKey = ''; // which scan + spacing the current grid was baked for
-
-function bakeScanGrid(): void {
-  if (!currentSplat || !navGrid || !charLoaded) return;
-  const key = `${currentFile}|${SCAN_LIGHT.gridSpacing}`;
-  if (scanGrid && scanGridKey === key) return;
-  if (scanGrid) { scene.remove(scanGrid); scanGrid.dispose(); scanGrid = null; }
-  // the volume: everywhere the figurine can stand, plus room above to climb and jump
-  const pos = navGrid.toField().positions;
-  if (pos.length === 0) return;
-  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, z0 = Infinity, z1 = -Infinity;
-  for (let i = 0; i < pos.length; i += 3) {
-    x0 = Math.min(x0, pos[i]); x1 = Math.max(x1, pos[i]);
-    y0 = Math.min(y0, pos[i + 1]); y1 = Math.max(y1, pos[i + 1]);
-    z0 = Math.min(z0, pos[i + 2]); z1 = Math.max(z1, pos[i + 2]);
-  }
-  const spacing = SCAN_LIGHT.gridSpacing * charH;
-  x0 -= charH; x1 += charH; z0 -= charH; z1 += charH; y0 += charH * 0.25; y1 += charH * 3;
-  const count = (a: number, b: number) => Math.max(2, Math.ceil((b - a) / spacing) + 1);
-  const grid = new LightProbeGrid(x1 - x0, y1 - y0, z1 - z0, count(x0, x1), count(y0, y1), count(z0, z1));
-  grid.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
-  grid.visible = false;
-  scene.add(grid);
-  grid.updateMatrixWorld(true);
-  scanGrid = grid; scanGridKey = key;
-  const r = grid.resolution;
-  scanGridBake = { next: 0, total: r.x * r.y * r.z, t0: performance.now(), busy: 0 };
-  console.log(`SCANGRID ${r.x}x${r.y}x${r.z} = ${scanGridBake.total} probes, spacing ${spacing.toFixed(2)} — baking…`);
-}
-
-/** Bake a few more probes of the pending grid — spread over frames, a few
- *  milliseconds at a time, so loading a scan doesn't freeze the page. */
-const SCAN_GRID_BATCH = 2;      // probes per bake call
-const SCAN_GRID_BUDGET_MS = 6;  // main-thread time to spend baking per frame
-let scanGridBake: { next: number; total: number; t0: number; busy: number } | null = null;
-function stepScanGridBake(): void {
-  const job = scanGridBake, grid = scanGrid;
-  if (!job || !grid) return;
-  const hidden: THREE.Object3D[] = [];
-  for (const o of [player, collisionDebug, platformDebug]) if (o && o.visible) { o.visible = false; hidden.push(o); }
-  const env = scene.environment, bg = scene.background;
-  scene.environment = null; scene.background = BACKDROP;
-  const t = performance.now();
-  do {
-    const count = Math.min(SCAN_GRID_BATCH, job.total - job.next);
-    grid.bake(renderer as never, scene, { cubemapSize: 8, near: charH * 0.05, far: TARGET_RADIUS * 20, start: job.next, count });
-    job.next += count;
-  } while (job.next < job.total && performance.now() - t < SCAN_GRID_BUDGET_MS);
-  job.busy += performance.now() - t;
-  scene.environment = env; scene.background = bg;
-  for (const o of hidden) o.visible = true;
-  if (job.next >= job.total) {
-    console.log(`SCANGRID baked ${job.total} probes in ${((performance.now() - job.t0) / 1000).toFixed(1)}s (${job.busy.toFixed(0)}ms of main-thread time)`);
-    scanGridBake = null;
-    applyScanLight();
-  }
+  hemi.visible = !on;
 }
 
 /** Per frame: run a pending capture; in follow mode, re-capture once the figurine has
  *  moved a body-height from the probe (at most twice a second). */
 function updateScanLight(): void {
-  stepScanGridBake();
-  if (scanLightDue > 0 && --scanLightDue === 0) { captureScanLight(); if (SCAN_LIGHT.grid) bakeScanGrid(); return; }
-  if (!SCAN_LIGHT.on || SCAN_LIGHT.grid || !SCAN_LIGHT.follow || !scanLightEnv) return;
+  if (scanLightDue > 0 && --scanLightDue === 0) { captureScanLight(); return; }
+  if (!SCAN_LIGHT.on || !SCAN_LIGHT.follow || !scanLightEnv) return;
   const p = player.position;
   const moved = Math.hypot(p.x - scanLightAt.x, p.y + charH * CAM_PIVOT - scanLightAt.y, p.z - scanLightAt.z);
   if (moved > charH && performance.now() - scanLightLast > 500) captureScanLight();
@@ -1375,10 +1309,6 @@ function setupDebugMenu(): void {
     'Light the figurine from the scan itself (a cubemap of the splats, captured at the figurine) instead of the fixed ambient fill.');
   addToggle('Scan light: follow figurine', SCAN_LIGHT.follow, (on) => { SCAN_LIGHT.follow = on; if (on) requestScanLight(1); },
     'Re-capture the light as the figurine moves, so it changes from place to place. Off = captured once at the spawn point.');
-  addToggle('Scan light: use probe grid', SCAN_LIGHT.grid, (on) => { SCAN_LIGHT.grid = on; if (on) bakeScanGrid(); applyScanLight(); },
-    'Light from a 3D grid of probes baked once over the walkable space, blended by position, instead of one probe at the figurine.');
-  addSlider('Scan grid: spacing', SCAN_LIGHT.gridSpacing, 1, 6, 0.5, (v) => { SCAN_LIGHT.gridSpacing = v; if (SCAN_LIGHT.grid) { bakeScanGrid(); applyScanLight(); } },
-    'Distance between grid probes, in figurine heights. Smaller = finer lighting changes, but a slower bake.');
   addSlider('Scan light: strength', SCAN_LIGHT.intensity, 0, 3, 0.05, (v) => { SCAN_LIGHT.intensity = v; applyScanLight(); });
   addSlider('Sun strength', sun.intensity, 0, 4, 0.1, (v) => { sun.intensity = v; },
     'The fixed directional light. Lower it to see the scan lighting on its own.');
