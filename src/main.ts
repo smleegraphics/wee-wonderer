@@ -446,7 +446,7 @@ function rebuildCollision(): void {
 // is, prefilter it, and use that as the scene's environment light in place of the
 // fixed hemisphere fill. One probe, captured at the figurine — `follow` re-captures as
 // it moves, which is the cheapest possible "dynamic" probe.
-const SCAN_LIGHT = { on: true, intensity: 1, follow: false, show: false };
+const SCAN_LIGHT = { on: true, intensity: 1, follow: false };
 let scanLightPmrem: THREE.PMREMGenerator | null = null;
 let scanLightEnv: THREE.WebGLRenderTarget | null = null;
 const scanLightAt = new THREE.Vector3();   // where the current probe was captured
@@ -479,7 +479,6 @@ function applyScanLight(): void {
   scene.environment = on ? scanLightEnv!.texture : null;
   scene.environmentIntensity = SCAN_LIGHT.intensity;
   hemi.visible = !on;
-  scene.background = on && SCAN_LIGHT.show ? scanLightEnv!.texture : BACKDROP; // debug: see what the probe saw
 }
 
 /** Per frame: run a pending capture; in follow mode, re-capture once the figurine has
@@ -1310,8 +1309,6 @@ function setupDebugMenu(): void {
     'Light the figurine from the scan itself (a cubemap of the splats, captured at the figurine) instead of the fixed ambient fill.');
   addToggle('Scan light: follow figurine', SCAN_LIGHT.follow, (on) => { SCAN_LIGHT.follow = on; if (on) requestScanLight(1); },
     'Re-capture the light as the figurine moves, so it changes from place to place. Off = captured once at the spawn point.');
-  addToggle('Scan light: show capture', SCAN_LIGHT.show, (on) => { SCAN_LIGHT.show = on; applyScanLight(); },
-    'Debug: show what the light probe captured as the backdrop.');
   addSlider('Scan light: strength', SCAN_LIGHT.intensity, 0, 3, 0.05, (v) => { SCAN_LIGHT.intensity = v; applyScanLight(); });
   addSlider('Sun strength', sun.intensity, 0, 4, 0.1, (v) => { sun.intensity = v; },
     'The fixed directional light. Lower it to see the scan lighting on its own.');
