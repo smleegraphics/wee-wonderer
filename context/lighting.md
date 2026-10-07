@@ -18,12 +18,19 @@ One light probe, captured at the figurine.
 1. Hide the figurine and debug overlays; set the backdrop to the plain colour.
 2. `PMREMGenerator.fromScene(scene, …, { position })` renders the splats into a
    cubemap from the figurine's head height and prefilters it (64 px).
-3. The result is `scene.environment`. The hemisphere fill is switched off while it
-   is in use. The fixed sun is still on.
+3. The result becomes the scene's environment light. While it is in use, both fixed
+   lights (the hemisphere fill and the sun) are switched off; they remain as the
+   fallback when scan lighting is off, and for the `?meshonly=1` view.
 
 It is captured a few frames after a scan loads and the figurine is placed. With
 "Scan light: follow figurine" on, it is re-captured when the figurine has moved one
 body-height from the last capture point, at most twice a second.
+
+**Cross-fade.** There are two captures, not one. A new capture is rendered into
+whichever is not showing, and `scanLightMix` fades over to it ("Scan light: blend",
+0.4 s by default). The environment is a node, `mix(pmremTexture(a), pmremTexture(b),
+scanLightMix)`, set as `scene.environmentNode`, so the fade is one uniform and never
+rebuilds a shader. A new capture waits until the current fade has finished.
 
 ## What is known
 
@@ -35,6 +42,12 @@ body-height from the last capture point, at most twice a second.
   wall can read as equally bright; strong sources are underestimated.
 - **Where the scan has no splats the probe sees the dark backdrop**, so the figurine
   is under-lit near holes or in scans with no ceiling.
+- **The cross-fade removes the pop.** On a fixed 4 s walk on Counter with two
+  re-captures, the figurine's on-screen brightness jumped by 22.8 and 12.8 (of 255)
+  in single frames without blending, and those two jumps were gone with it. Repeated
+  twice with the same numbers.
+- **Without the sun the figurine is darker and flatter** than under the fixed lights,
+  because the scan's light is low dynamic range. "Scan light: strength" is still 1.
 - Only tested on Counter.
 
 ## Tried and rejected: a probe grid
@@ -63,11 +76,11 @@ need lighting, or if probes can be computed from splat colours without rendering
 
 ## Open
 
-- **Re-captures swap instantly.** If follow mode pops, cross-fade between the old
-  and new capture.
 - **The thresholds are first guesses** (one body-height, half a second).
-- **The fixed sun points the same way in every scan** and probably fights the scan
-  lighting. There is a "Sun strength" slider to judge it.
+- **Brightness.** With the sun off the figurine may read as too dark; the default
+  strength has not been tuned.
+- **No directional key light.** The environment gives soft light only, so the
+  figurine has less shape than it did under the sun.
 - **A possible one-frame flash on capture**, from the splats being re-sorted for the
   probe's views. A headless measurement on Counter was at noise level, and
   re-sorting for the main camera straight after the capture made no clear

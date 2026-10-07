@@ -18,6 +18,7 @@ import { voxelCacheKey, voxelCacheGet, voxelCachePut } from './voxel-cache';
 import type { VoxelSurface, VoxelOptions } from './voxelize';
 import type { CleanOptions } from './clean-scan-core';
 import { buildClimbSideClip } from './climb-side-anim';
+import { mix, pmremTexture, uniform } from 'three/tsl';
 
 const q = new URLSearchParams(location.search);
 const TEL = q.get('tel') === '1'; // debug telemetry: CLIMB-* console events + window.__dbg
@@ -114,9 +115,9 @@ orbit.addEventListener('start', () => { camHandsOff = false; camSwinging = false
 orbit.enablePan = false; // pivot tracks the figurine; panning it away would fight that
 orbit.maxPolarAngle = Math.PI * 0.49; // don't drop below the floor
 
-const hemi = new THREE.HemisphereLight(0x8899bb, 0x22201c, 0.9); // fixed ambient fill (replaced by the scan's own light when SCAN_LIGHT is on)
+const hemi = new THREE.HemisphereLight(0x8899bb, 0x22201c, 0.9); // fixed ambient fill...
 scene.add(hemi);
-const sun = new THREE.DirectionalLight(0xfff4e0, 2.4);
+const sun = new THREE.DirectionalLight(0xfff4e0, 2.4);            // ...and fixed key light. Both are the fallback: off while the scan lights the figurine (applyScanLight)
 sun.position.set(3, 6, 4);
 scene.add(sun);
 
@@ -444,12 +445,18 @@ function rebuildCollision(): void {
 // The scan's lighting is baked into its splat colours, so the figurine can only match
 // it by looking at the scan: render the splats into a cubemap from where the figurine
 // is, prefilter it, and use that as the scene's environment light in place of the
-// fixed hemisphere fill. One probe, captured at the figurine — `follow` re-captures as
-// it moves, which is the cheapest possible "dynamic" probe.
-const SCAN_LIGHT = { on: true, intensity: 1, follow: false };
+// fixed lights. One probe, captured at the figurine — `follow` re-captures as it
+// moves, which is the cheapest possible "dynamic" probe.
+//   There are two captures, not one: a new capture goes into whichever isn't showing,
+// and the light cross-fades over to it, so a re-capture never swaps in a single frame.
+const SCAN_LIGHT = { on: true, intensity: 1, follow: false, blend: 0.4 }; // blend: seconds to cross-fade to a new capture
+const FOLLOW_INTERVAL_MS = 500;            // follow mode re-captures at most this often
 let scanLightPmrem: THREE.PMREMGenerator | null = null;
-let scanLightEnv: THREE.WebGLRenderTarget | null = null;
-const scanLightAt = new THREE.Vector3();   // where the current probe was captured
+const scanLightEnv: Array<THREE.WebGLRenderTarget | null> = [null, null];
+const scanLightMix = uniform(0);           // which capture is lighting the scene: 0 = the first, 1 = the second, between = mid-fade
+let scanLightShown = 0;                    // the capture being shown, or faded toward
+let scanLightNode: unknown = null;         // the environment: the two captures mixed by scanLightMix
+const scanLightAt = new THREE.Vector3();   // where the newest probe was captured
 let scanLightDue = 0;                      // frames until a pending capture runs (0 = none pending)
 let scanLightLast = -Infinity;             // when the last capture ran (performance.now)
 
@@ -458,37 +465,59 @@ function requestScanLight(inFrames = 5): void { scanLightDue = inFrames; }
 
 function captureScanLight(): void {
   if (!currentSplat || !charLoaded) return;
-  scanLightPmrem ??= new THREE.PMREMGenerator(renderer as unknown as THREE.WebGLRenderer);
+  const pmrem = (scanLightPmrem ??= new THREE.PMREMGenerator(renderer as unknown as THREE.WebGLRenderer));
   // only the scan lights the probe: hide the figurine and the debug overlays
   const hidden: THREE.Object3D[] = [];
   for (const o of [player, collisionDebug, platformDebug]) if (o && o.visible) { o.visible = false; hidden.push(o); }
-  const env = scene.environment, bg = scene.background;
-  scene.environment = null; scene.background = BACKDROP;
+  const lit = scene as unknown as { environmentNode: unknown };
+  const envNode = lit.environmentNode, bg = scene.background;
+  lit.environmentNode = null; scene.background = BACKDROP;
   scanLightAt.set(player.position.x, player.position.y + charH * CAM_PIVOT, player.position.z);
   const t0 = performance.now();
-  scanLightEnv = scanLightPmrem.fromScene(scene, 0, charH * 0.05, TARGET_RADIUS * 20, { size: 64, position: scanLightAt, renderTarget: scanLightEnv ?? undefined } as never);
-  scene.environment = env; scene.background = bg;
+  const shoot = (i: number) => {
+    scanLightEnv[i] = pmrem.fromScene(scene, 0, charH * 0.05, TARGET_RADIUS * 20, { size: 64, position: scanLightAt, renderTarget: scanLightEnv[i] ?? undefined } as never);
+  };
+  if (!scanLightNode) {
+    // first time: fill both, so the mix has two valid captures to read from
+    shoot(0); shoot(1);
+    scanLightNode = mix(pmremTexture(scanLightEnv[0]!.texture), pmremTexture(scanLightEnv[1]!.texture), scanLightMix);
+    scanLightShown = 0; scanLightMix.value = 0;
+  } else {
+    scanLightShown = 1 - scanLightShown; // into the one that isn't showing, then fade over to it
+    shoot(scanLightShown);
+    if (SCAN_LIGHT.blend <= 0) scanLightMix.value = scanLightShown;
+  }
+  lit.environmentNode = envNode; scene.background = bg;
   for (const o of hidden) o.visible = true;
   scanLightLast = performance.now();
   if (TEL) console.log(`SCANLIGHT captured at ${scanLightAt.x.toFixed(2)},${scanLightAt.y.toFixed(2)},${scanLightAt.z.toFixed(2)} in ${(scanLightLast - t0).toFixed(1)}ms`);
   applyScanLight();
 }
 
+/** Scan lighting replaces both fixed lights; with it off (or before the first
+ *  capture) the fixed fill and sun light the figurine as before. */
 function applyScanLight(): void {
-  const on = SCAN_LIGHT.on && !!scanLightEnv;
-  scene.environment = on ? scanLightEnv!.texture : null;
+  const on = SCAN_LIGHT.on && !!scanLightNode;
+  (scene as unknown as { environmentNode: unknown }).environmentNode = on ? scanLightNode : null;
   scene.environmentIntensity = SCAN_LIGHT.intensity;
-  hemi.visible = !on;
+  hemi.visible = sun.visible = !on;
 }
 
-/** Per frame: run a pending capture; in follow mode, re-capture once the figurine has
- *  moved a body-height from the probe (at most twice a second). */
-function updateScanLight(): void {
+/** Per frame: run a pending capture, advance the cross-fade, and in follow mode
+ *  re-capture once the figurine has moved a body-height from the probe. */
+function updateScanLight(dt: number): void {
   if (scanLightDue > 0 && --scanLightDue === 0) { captureScanLight(); return; }
-  if (!SCAN_LIGHT.on || !SCAN_LIGHT.follow || !scanLightEnv) return;
+  if (!scanLightNode) return;
+  const fading = scanLightMix.value !== scanLightShown;
+  if (fading) {
+    const step = SCAN_LIGHT.blend > 0 ? dt / SCAN_LIGHT.blend : 1;
+    scanLightMix.value = scanLightShown ? Math.min(1, scanLightMix.value + step) : Math.max(0, scanLightMix.value - step);
+    return; // one fade at a time: the next capture waits until this one has arrived
+  }
+  if (!SCAN_LIGHT.on || !SCAN_LIGHT.follow) return;
   const p = player.position;
   const moved = Math.hypot(p.x - scanLightAt.x, p.y + charH * CAM_PIVOT - scanLightAt.y, p.z - scanLightAt.z);
-  if (moved > charH && performance.now() - scanLightLast > 500) captureScanLight();
+  if (moved > charH && performance.now() - scanLightLast > FOLLOW_INTERVAL_MS) captureScanLight();
 }
 
 // --- controller update ------------------------------------------------------
@@ -1130,7 +1159,7 @@ async function main(): Promise<void> {
     const dt = Math.min(clock.getDelta(), 0.05);
     if (charLoaded) { updateController(dt); if (FREECAM) updateFreeCam(); else updateCamera(dt); }
     mixer?.update(dt);
-    if (charLoaded) updateScanLight();
+    if (charLoaded) updateScanLight(dt);
     if (TEL) publishDebugState();
     void renderer.renderAsync(scene, camera).then(() => {
       if (charLoaded && ++frames === 3) (window as unknown as { __wwReady?: boolean }).__wwReady = true;
@@ -1309,8 +1338,8 @@ function setupDebugMenu(): void {
   addToggle('Scan light: follow figurine', SCAN_LIGHT.follow, (on) => { SCAN_LIGHT.follow = on; if (on) requestScanLight(1); },
     'Re-capture the light as the figurine moves, so it changes from place to place. Off = captured once at the spawn point.');
   addSlider('Scan light: strength', SCAN_LIGHT.intensity, 0, 3, 0.05, (v) => { SCAN_LIGHT.intensity = v; applyScanLight(); });
-  addSlider('Sun strength', sun.intensity, 0, 4, 0.1, (v) => { sun.intensity = v; },
-    'The fixed directional light. Lower it to see the scan lighting on its own.');
+  addSlider('Scan light: blend (s)', SCAN_LIGHT.blend, 0, 2, 0.1, (v) => { SCAN_LIGHT.blend = v; },
+    'Seconds to cross-fade from one light capture to the next in follow mode. 0 = swap instantly.');
   addToggle('Reliable ground (nav)', useNavGround, (on) => { useNavGround = on; },
     'Spike 2: stand on / confine to the hole-filled NavGrid so the figurine can\'t ' +
     'fall through gaps or walk off platform edges. Off = raw mesh collision only.');
