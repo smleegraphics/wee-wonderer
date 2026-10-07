@@ -19,6 +19,7 @@ import type { VoxelSurface, VoxelOptions } from './voxelize';
 import type { CleanOptions } from './clean-scan-core';
 import { buildClimbSideClip } from './climb-side-anim';
 import { LightProbeGrid } from 'three/addons/lighting/LightProbeGrid.js';
+import { LightProbeGridHelper } from 'three/addons/helpers/LightProbeGridHelper.js';
 
 const q = new URLSearchParams(location.search);
 const TEL = q.get('tel') === '1'; // debug telemetry: CLIMB-* console events + window.__dbg
@@ -447,7 +448,7 @@ function rebuildCollision(): void {
 // is, prefilter it, and use that as the scene's environment light in place of the
 // fixed hemisphere fill. One probe, captured at the figurine — `follow` re-captures as
 // it moves, which is the cheapest possible "dynamic" probe.
-const SCAN_LIGHT = { on: true, intensity: 1, follow: false, grid: false, gridSpacing: 4 }; // gridSpacing in body heights (2 took over a minute to bake on Counter)
+const SCAN_LIGHT = { on: true, intensity: 1, follow: false, grid: false, gridSpacing: 4, showProbes: false }; // gridSpacing in body heights (2 took over a minute to bake on Counter)
 let scanLightPmrem: THREE.PMREMGenerator | null = null;
 let scanLightEnv: THREE.WebGLRenderTarget | null = null;
 const scanLightAt = new THREE.Vector3();   // where the current probe was captured
@@ -462,7 +463,7 @@ function captureScanLight(): void {
   scanLightPmrem ??= new THREE.PMREMGenerator(renderer as unknown as THREE.WebGLRenderer);
   // only the scan lights the probe: hide the figurine and the debug overlays
   const hidden: THREE.Object3D[] = [];
-  for (const o of [player, collisionDebug, platformDebug]) if (o && o.visible) { o.visible = false; hidden.push(o); }
+  for (const o of [player, collisionDebug, platformDebug, scanGridHelper]) if (o && o.visible) { o.visible = false; hidden.push(o); }
   const env = scene.environment, bg = scene.background;
   scene.environment = null; scene.background = BACKDROP;
   scanLightAt.set(player.position.x, player.position.y + charH * CAM_PIVOT, player.position.z);
@@ -481,6 +482,7 @@ function applyScanLight(): void {
   scene.environmentIntensity = SCAN_LIGHT.intensity;
   if (scanGrid) { scanGrid.visible = grid; scanGrid.intensity = SCAN_LIGHT.intensity; }
   hemi.visible = !grid && !probe;
+  if (scanGridHelper) scanGridHelper.visible = SCAN_LIGHT.showProbes && !!scanGrid && !scanGridBake;
 }
 
 // The grid alternative: instead of one probe that follows the figurine, bake a 3D
@@ -489,11 +491,13 @@ function applyScanLight(): void {
 // ones per pixel. three's LightProbeGrid does the capture, packing and sampling.
 let scanGrid: LightProbeGrid | null = null;
 let scanGridKey = ''; // which scan + spacing the current grid was baked for
+let scanGridHelper: LightProbeGridHelper | null = null; // debug: a sphere at every probe, shaded by what it captured
 
 function bakeScanGrid(): void {
   if (!currentSplat || !navGrid || !charLoaded) return;
   const key = `${currentFile}|${SCAN_LIGHT.gridSpacing}`;
   if (scanGrid && scanGridKey === key) return;
+  if (scanGridHelper) { scene.remove(scanGridHelper); scanGridHelper.dispose(); scanGridHelper = null; }
   if (scanGrid) { scene.remove(scanGrid); scanGrid.dispose(); scanGrid = null; }
   // the volume: everywhere the figurine can stand, plus room above to climb and jump
   const pos = navGrid.toField().positions;
@@ -513,6 +517,9 @@ function bakeScanGrid(): void {
   scene.add(grid);
   grid.updateMatrixWorld(true);
   scanGrid = grid; scanGridKey = key;
+  scanGridHelper = new LightProbeGridHelper(grid, charH * 0.15);
+  scanGridHelper.visible = false;
+  scene.add(scanGridHelper);
   const r = grid.resolution;
   scanGridBake = { next: 0, total: r.x * r.y * r.z, t0: performance.now(), busy: 0 };
   console.log(`SCANGRID ${r.x}x${r.y}x${r.z} = ${scanGridBake.total} probes, spacing ${spacing.toFixed(2)} — baking…`);
@@ -527,7 +534,7 @@ function stepScanGridBake(): void {
   const job = scanGridBake, grid = scanGrid;
   if (!job || !grid) return;
   const hidden: THREE.Object3D[] = [];
-  for (const o of [player, collisionDebug, platformDebug]) if (o && o.visible) { o.visible = false; hidden.push(o); }
+  for (const o of [player, collisionDebug, platformDebug, scanGridHelper]) if (o && o.visible) { o.visible = false; hidden.push(o); }
   const env = scene.environment, bg = scene.background;
   scene.environment = null; scene.background = BACKDROP;
   const t = performance.now();
@@ -542,6 +549,7 @@ function stepScanGridBake(): void {
   if (job.next >= job.total) {
     console.log(`SCANGRID baked ${job.total} probes in ${((performance.now() - job.t0) / 1000).toFixed(1)}s (${job.busy.toFixed(0)}ms of main-thread time)`);
     scanGridBake = null;
+    scanGridHelper?.update();
     applyScanLight();
   }
 }
@@ -1379,6 +1387,8 @@ function setupDebugMenu(): void {
     'Light from a 3D grid of probes baked once over the walkable space, blended by position, instead of one probe at the figurine.');
   addSlider('Scan grid: spacing', SCAN_LIGHT.gridSpacing, 1, 6, 0.5, (v) => { SCAN_LIGHT.gridSpacing = v; if (SCAN_LIGHT.grid) { bakeScanGrid(); applyScanLight(); } },
     'Distance between grid probes, in figurine heights. Smaller = finer lighting changes, but a slower bake.');
+  addToggle('Scan grid: show probes', SCAN_LIGHT.showProbes, (on) => { SCAN_LIGHT.showProbes = on; if (on && !scanGrid) bakeScanGrid(); applyScanLight(); },
+    'Debug: draw a sphere at every grid probe, shaded with the light it captured. Bakes the grid if it has not been baked yet.');
   addSlider('Scan light: strength', SCAN_LIGHT.intensity, 0, 3, 0.05, (v) => { SCAN_LIGHT.intensity = v; applyScanLight(); });
   addSlider('Sun strength', sun.intensity, 0, 4, 0.1, (v) => { sun.intensity = v; },
     'The fixed directional light. Lower it to see the scan lighting on its own.');
