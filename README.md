@@ -10,10 +10,13 @@ orients itself.
 
 **Project context lives in [`context/`](./context/)** — start with
 `project-charter.md` (vision) and `magic-test-plan.md` (build log & decisions).
+Working notes for agents are in [`CLAUDE.md`](./CLAUDE.md), with `context/collision.md`
+and `context/climb.md` for the movement systems.
 
 ## Controls
 
-- **WASD** move · **Shift** run · **Space** jump · **C** climb (near a wall)
+- **WASD** move · **Shift** run · **Space** jump
+- **Climb:** walk (or jump) into a wall. **W/S** up/down, **A/D** sideways, **Space** jumps off
 - **Mouse drag** orbit the camera · **scroll** zoom (camera follows the figurine)
 
 ## Develop
