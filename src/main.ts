@@ -544,6 +544,7 @@ let climbV = 0, climbH = 0;             // this frame's climb input after latche
 let climbSideMix = 0;                   // animation blend: -1 = shimmy left, 0 = up/down climb, +1 = shimmy right
 let climbAtEdge = false;                // sideways shuffle is stopped at the wall's edge (telemetry de-dupe)
 let climbCling = false;                 // topped out with nowhere to stand → hanging
+let climbBlocked = false;               // the body is being pushed out of something (telemetry de-dupe)
 
 /** Climb geometry. Heights and reaches are fractions of the figurine's height; `gap`
  *  and `mantleOver` are in capsule radii. */
@@ -562,6 +563,7 @@ const CLIMB = {
   mantleNear: 0.4,  // ...onto a surface within this of the feet...
   mantleUp: 0.3,    // ...and no more than this above them
   landTol: 0.1,     // descending: step off once the feet are this close to the ground
+  skin: 0.05,       // radii: the body resting this far into a surface is touching it, not inside it
 };
 
 /** Walk it or climb it — one cutoff, the "Climb threshold" slider: a surface steeper
@@ -815,15 +817,30 @@ function climbUpdate(dt: number): boolean {
       climbDir.z += (-wall.nz / hn - climbDir.z) * t;
       climbDir.normalize();
     }
-    return false;
-  }
-
-  // no wall at this height. Going up → topped out: mantle onto a surface, else cling.
-  if (v > 0) {
+  } else if (v > 0) {
+    // no wall at this height. Going up → topped out: mantle onto a surface, else cling.
     if (tryMantle()) return true;
     climbCling = true; // nothing up there → cling at the top
     if (TEL) console.log(`CLIMB-CLING y=${p.y.toFixed(2)}`);
   }
+
+  // --- the whole body has to fit, not just the grip ---
+  // The face is followed at one point near the feet, so the rest of the body can be
+  // carried into whatever is beside or above it. Push the body out of anything this
+  // move put it in — the same collide-and-slide walking uses, in all three axes here.
+  // An object in the way pushes straight back, so the move makes no headway; a lump
+  // of the wall itself pushes outward, and the climber rides over it.
+  //   Only while the overlap is shallower than the body's radius, though: that is as
+  // deep as one frame's move can take it, and as deep as "which way is out" has a
+  // single answer. Deeper means the body was already inside something when the move
+  // began (a grab that started that way) — pushing then can eject it through the far
+  // side of a thin shell, so it is left alone.
+  const sunk = bodyOverlap(p.x, p.y, p.z, radius);
+  if (sunk > radius * CLIMB.skin && sunk <= radius) {
+    if (TEL && !climbBlocked) console.log(`CLIMB-PUSHED y=${p.y.toFixed(2)} by=${(sunk / radius).toFixed(2)}r`);
+    p.set(wallFeet.x, wallFeet.y - charH * WALL_LIFT, wallFeet.z);
+    climbBlocked = true;
+  } else climbBlocked = false;
   return false;
 }
 
@@ -831,7 +848,7 @@ function climbUpdate(dt: number): boolean {
 const hVel = new THREE.Vector3(), disp = new THREE.Vector3(), correction = new THREE.Vector3(), slideN = new THREE.Vector3();
 const navRecover = new THREE.Vector3();
 const wallFeet = new THREE.Vector3(), zeroDisp = new THREE.Vector3(), wallCorr = new THREE.Vector3();
-const WALL_LIFT = 0.25; // wall push-out ignores the body below this fraction of its height (see pushOutOfWalls)
+const WALL_LIFT = 0.25; // body-vs-wall tests ignore the body below this fraction of its height (see bodyOverlap)
 
 function updateController(dt: number): void {
   // Movement is camera-relative — but an automatic camera move must not re-aim a key
@@ -884,15 +901,24 @@ function updateController(dt: number): void {
   updateLocomotion(grounded, moving); // early-returns while climbing
 }
 
-/** Push the body out of solid walls sideways, feet at `feetY`. Only the body ABOVE a
- *  quarter of its height is tested — floor lumps below that are the nav's business
- *  (standing, landing), and letting them push is what used to wedge the figurine.
- *  Moves the player and returns how far; the push direction is left in `wallCorr`. */
-function pushOutOfWalls(feetY: number, radius: number): number {
+/** How deep the body, feet at (x,y,z), is sunk into the collision mesh — 0 when it
+ *  fits. Only the body ABOVE a quarter of its height is tested: floor lumps below that
+ *  are the nav's business (standing, landing), and letting them push is what used to
+ *  wedge the figurine. The way out is left in `wallCorr`, the freed position in
+ *  `wallFeet` (lifted). */
+function bodyOverlap(x: number, y: number, z: number, radius: number): number {
   if (!collision) return 0;
-  const p = player.position, lift = charH * WALL_LIFT;
-  wallFeet.set(p.x, feetY + lift, p.z);
+  const lift = charH * WALL_LIFT;
+  wallFeet.set(x, y + lift, z);
   collision.moveCapsule(wallFeet, radius, Math.max(0.02, charH - lift - 2 * radius), zeroDisp, wallCorr);
+  return wallCorr.length();
+}
+
+/** Push the body out of solid walls sideways, feet at `feetY`. Moves the player and
+ *  returns how far; the push direction is left in `wallCorr`. */
+function pushOutOfWalls(feetY: number, radius: number): number {
+  const p = player.position;
+  if (bodyOverlap(p.x, feetY, p.z, radius) === 0) return 0;
   p.x = wallFeet.x; p.z = wallFeet.z;
   return Math.hypot(wallCorr.x, wallCorr.z);
 }
@@ -1013,19 +1039,21 @@ function updateLocomotion(grounded: boolean, moving: boolean): void {
  *  tests. While climbing, `probe` is the nearest surface ahead of / behind / above /
  *  below the chest, tagged F or B for the side it was seen from. A B ahead, behind or
  *  above means the climber is inside something solid, which must never happen. (Below
- *  is informational: the flattened floor's top and underside coincide.) */
+ *  is informational: the flattened floor's top and underside coincide.) `sunk` is how
+ *  deep the climber's body is in the mesh, in capsule radii. */
 const dbgAt = new THREE.Vector3(), dbgDir = new THREE.Vector3();
 function publishDebugState(): void {
   const P = player.position, ca = actions['climb'];
-  let probe: unknown = null;
+  let probe: unknown = null, sunk: number | null = null; // sunk: how deep the body is in the mesh, in capsule radii
   if (collision && state === 'climb') {
     const c = collision;
     dbgAt.set(P.x, P.y + charH * CLIMB.chest, P.z);
     const see = (dir: THREE.Vector3, max: number) => { const w = c.wallAhead(dbgAt, dir, max); return w ? `${w.distance.toFixed(2)}${w.front ? 'F' : 'B'}` : '-'; };
     probe = { ahead: see(climbDir, charH * 2), behind: see(dbgDir.copy(climbDir).negate(), charH * 2), above: see(WORLD_UP, charH * 20), below: see(WORLD_DOWN, charH * 20) };
+    sunk = +(bodyOverlap(P.x, P.y, P.z, CAPSULE_RADIUS * charH) / (CAPSULE_RADIUS * charH)).toFixed(2);
   }
   (window as unknown as { __dbg?: unknown }).__dbg = {
-    state, cling: climbCling, probe,
+    state, cling: climbCling, probe, sunk,
     px: +P.x.toFixed(3), py: +P.y.toFixed(3), pz: +P.z.toFixed(3),
     climbYaw: +THREE.MathUtils.radToDeg(Math.atan2(climbDir.x, climbDir.z)).toFixed(1),
     camDist: +camera.position.distanceTo(orbit.target).toFixed(2), camWant: +camWant.toFixed(2), camSwinging,
