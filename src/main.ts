@@ -450,14 +450,29 @@ function rebuildCollision(): void {
 // moves, which is the cheapest possible "dynamic" probe.
 //   There are two captures, not one: a new capture goes into whichever isn't showing,
 // and the light cross-fades over to it, so a re-capture never swaps in a single frame.
-const SCAN_LIGHT = { on: true, intensity: 1, follow: false, blend: 0.4, fill: true, debug: false }; // blend: seconds to cross-fade to a new capture; fill: see scanFill
+const SCAN_LIGHT = { on: true, intensity: 1.5, follow: false, blend: 0.4, fill: true, debug: false }; // blend: seconds to cross-fade to a new capture; fill: see scanFill
+const SCAN_PROBE_FAR = TARGET_RADIUS * 20; // the probe camera's far plane: well past any scan (they are all scaled to TARGET_RADIUS)
 const FOLLOW_INTERVAL_MS = 500;            // follow mode re-captures at most this often
+// (intensity 1.5: at 1 the figurine is lit like its surroundings, which reads as dull on a
+// dark-green character; 2 washes it out in a bright scan like Playroom — context/lighting.md.)
 // What the probe sees where the scan has nothing — typically the ceiling, which phone
 // scans rarely capture, and the empty space around a tabletop scan. Left as the dark
 // backdrop those directions read as "no light from there" and the figurine goes dark
 // on top. The scan can't say what was really there, so this is an estimate: the
 // average colour of the upper half of the scan (see estimateScanFill).
 const scanFill = new THREE.Color();
+// The probe's backdrop is our own dome, centred on the probe. (PMREMGenerator can paint
+// a solid colour itself, but it does so with a unit box at the world origin, drawn from
+// wherever its camera was left by the PREVIOUS capture — so once a capture has been
+// taken more than half a unit from the origin, the next one's gaps come out black.)
+const scanFillDome = new THREE.Mesh(
+  new THREE.SphereGeometry(1, 24, 12),
+  new THREE.MeshBasicMaterial({ side: THREE.BackSide, depthTest: false, depthWrite: false, toneMapped: false, fog: false }),
+);
+scanFillDome.renderOrder = -1e6; // behind everything
+scanFillDome.frustumCulled = false;
+scanFillDome.visible = false;
+scene.add(scanFillDome);
 let scanLightPmrem: THREE.PMREMGenerator | null = null;
 const scanLightEnv: Array<THREE.WebGLRenderTarget | null> = [null, null];
 const scanLightMix = uniform(0);           // which capture is lighting the scene: 0 = the first, 1 = the second, between = mid-fade
@@ -478,11 +493,15 @@ function captureScanLight(): void {
   for (const o of [player, collisionDebug, platformDebug, scanDebugBalls, scanDebugThumb]) if (o && o.visible) { o.visible = false; hidden.push(o); }
   const lit = scene as unknown as { environmentNode: unknown };
   const envNode = lit.environmentNode, bg = scene.background;
-  lit.environmentNode = null; scene.background = SCAN_LIGHT.fill ? scanFill : BACKDROP;
   scanLightAt.set(player.position.x, player.position.y + charH * CAM_PIVOT, player.position.z);
+  lit.environmentNode = null; scene.background = null;
+  scanFillDome.material.color.copy(SCAN_LIGHT.fill ? scanFill : BACKDROP);
+  scanFillDome.position.copy(scanLightAt);
+  scanFillDome.scale.setScalar(SCAN_PROBE_FAR * 0.5);
+  scanFillDome.visible = true;
   const t0 = performance.now();
   const shoot = (i: number) => {
-    scanLightEnv[i] = pmrem.fromScene(scene, 0, charH * 0.05, TARGET_RADIUS * 20, { size: 64, position: scanLightAt, renderTarget: scanLightEnv[i] ?? undefined } as never);
+    scanLightEnv[i] = pmrem.fromScene(scene, 0, charH * 0.05, SCAN_PROBE_FAR, { size: 64, position: scanLightAt, renderTarget: scanLightEnv[i] ?? undefined } as never);
   };
   if (!scanLightNode) {
     // first time: fill both, so the mix has two valid captures to read from
@@ -495,6 +514,7 @@ function captureScanLight(): void {
     shoot(scanLightShown);
     if (SCAN_LIGHT.blend <= 0) scanLightMix.value = scanLightShown;
   }
+  scanFillDome.visible = false;
   lit.environmentNode = envNode; scene.background = bg;
   for (const o of hidden) o.visible = true;
   scanLightLast = performance.now();

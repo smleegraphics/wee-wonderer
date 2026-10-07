@@ -70,16 +70,28 @@ rebuilds a shader. A new capture waits until the current fade has finished.
   - *Kitchen and Counter* (tabletop scans surrounded by empty space): the figurine
     is dark, because most directions see the black backdrop.
   - *Living Room:* dark and flat.
-- **The gap fill**, figurine brightness at spawn (0–255), fill off → on: Living Room
-  52 → 86, Kitchen 43 → 48, Counter 63 → 65, Playroom 129 → 129. That patch is the
-  centre of the face, which looks sideways, so it under-reports what happens to the
-  top of the head. Use the debug view to judge the top.
-- **Counter's probe is about half gap.** The debug panorama shows the whole upper
-  half as fill colour. An earlier note here said Counter and Kitchen were almost
-  fully covered by splats; that was wrong.
-- **The fill is dim.** It is an average, around 0.4 grey on most scans, so the top of
-  the figurine is lit like a mid-grey ceiling, not a bright one. Under the old fixed
-  lights the face patch read about 150 on every scan.
+- **Do not let `PMREMGenerator` paint the backdrop.** Given a solid-colour
+  `scene.background` it draws a unit box at the world origin, once, from wherever its
+  cube camera was left by the *previous* capture. So the first two captures look
+  right, and any capture after one taken more than half a unit from the origin gets
+  black gaps. On Counter (spawn at y = 1.4) 38–47% of the panorama was near-black
+  with the fill switched on. The probe now uses its own dome (`scanFillDome`),
+  centred on the probe, with `scene.background` null; near-black dropped to 0–1%.
+  Earlier brightness numbers for Counter and Kitchen were taken with this bug and
+  are not repeated here.
+- **Strength.** Face brightness at spawn (0–255) by "Scan light: strength", with the
+  fill on:
+
+  | Scan | 1 | 1.5 | 2 | 2.5 | 3 | Old fixed lights |
+  |---|---|---|---|---|---|---|
+  | Counter | 103 | 125 | 143 | 159 | 172 | 148 |
+  | Kitchen | 111 | 134 | 153 | 169 | 184 | 144 |
+  | Living Room | 86 | 105 | 119 | 132 | 143 | 137 |
+  | Playroom | 131 | 157 | 177 | 196 | 212 | 150 |
+
+  The default is 1.5. At 2 the figurine is washed out and pale on Playroom; at 1 it
+  is dull on the other three. Living Room stays the dimmest: its scan is dim and has
+  the most gaps, so it leans hardest on the fill estimate.
 - **Follow mode hitches on Playroom.** The 5 ms figure is only the time to submit a
   capture. On Playroom (30 ms a frame to begin with) the worst frame during a walk
   went from 60 ms to 128 ms with follow on, and the mean from 30.6 to 33.6 ms. On
@@ -116,9 +128,11 @@ need lighting, or if probes can be computed from splat colours without rendering
 ## Open
 
 - **The thresholds are first guesses** (one body-height, half a second).
-- **Brightness.** With the sun off the figurine reads as too dark on three of the
-  four scans; the default strength (1) has not been tuned. Around 2 would match the
-  old look.
+- **One strength for every scan is a compromise.** Scaling it per scan to a target
+  brightness would even the scans out, at the cost of the figurine no longer getting
+  dimmer in a dim room.
+- **The fill colour is a plain average**, so it is dimmer than a real ceiling usually
+  is. A brighter estimate would help gap-heavy scans such as Living Room.
 - **The fill is one colour per scan.** A per-capture fill, from what each probe
   actually sees around the gap, would adapt to bright and dark parts of a room.
 - **No directional key light.** The environment gives soft light only, so the
