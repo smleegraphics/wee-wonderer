@@ -6,7 +6,7 @@
 // floor-plane fit in the room inspector; baked as constants here.
 
 import * as THREE from 'three';
-import { WebGPURenderer, MeshBasicNodeMaterial } from 'three/webgpu';
+import { WebGPURenderer, MeshBasicNodeMaterial, StorageBufferAttribute } from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import { GaussianSplat } from 'three/addons/objects/GaussianSplat.js';
@@ -18,7 +18,7 @@ import { voxelCacheKey, voxelCacheGet, voxelCachePut } from './voxel-cache';
 import type { VoxelSurface, VoxelOptions } from './voxelize';
 import type { CleanOptions } from './clean-scan-core';
 import { buildClimbSideClip } from './climb-side-anim';
-import { cos, float, mix, PI, pmremTexture, sin, uniform, uv, vec3 } from 'three/tsl';
+import { cameraPosition, cameraProjectionMatrixInverse, cameraWorldMatrix, cos, float, Fn, If, instanceIndex, mix, modelWorldMatrix, PI, pmremTexture, sin, smoothstep, storage, uniform, uv, varying, vec3, vec4, viewportUV } from 'three/tsl';
 
 const q = new URLSearchParams(location.search);
 const TEL = q.get('tel') === '1'; // debug telemetry: CLIMB-* console events + window.__dbg
@@ -188,6 +188,7 @@ function loadFromURL(url: string, id: string): void {
       const covAttr = geometry.getAttribute('covariance') as THREE.BufferAttribute | undefined;
       const cov = covAttr && covAttr.itemSize === 6 ? (covAttr.array as Float32Array) : null;
       const splat = new GaussianSplat(geometry);
+      installContactShadow(splat, centers);
       splat.position.copy(o.center).multiplyScalar(-1); // recenter to origin
       splat.visible = !MESHONLY; // mesh-only debug view hides the splat
       room.add(splat);
@@ -499,6 +500,7 @@ function captureScanLight(): void {
   scanFillDome.position.copy(scanLightAt);
   scanFillDome.scale.setScalar(SCAN_PROBE_FAR * 0.5);
   scanFillDome.visible = true;
+  const dark = shadowDark.value; shadowDark.value = 0; // the probe measures the scan's light, not the figurine's own shadow
   const t0 = performance.now();
   const shoot = (i: number) => {
     scanLightEnv[i] = pmrem.fromScene(scene, 0, charH * 0.05, SCAN_PROBE_FAR, { size: 64, position: scanLightAt, renderTarget: scanLightEnv[i] ?? undefined } as never);
@@ -515,6 +517,7 @@ function captureScanLight(): void {
     if (SCAN_LIGHT.blend <= 0) scanLightMix.value = scanLightShown;
   }
   scanFillDome.visible = false;
+  shadowDark.value = dark;
   lit.environmentNode = envNode; scene.background = bg;
   for (const o of hidden) o.visible = true;
   scanLightLast = performance.now();
@@ -628,6 +631,99 @@ function updateScanLight(dt: number): void {
   const p = player.position;
   const moved = Math.hypot(p.x - scanLightAt.x, p.y + charH * CAM_PIVOT - scanLightAt.y, p.z - scanLightAt.z);
   if (moved > charH && performance.now() - scanLightLast > FOLLOW_INTERVAL_MS) captureScanLight();
+}
+
+// --- contact shadow (see context/lighting.md) --------------------------------
+// The scan is not a surface a shadow can be cast onto: its splats are transparent
+// blobs with no depth, so anything drawn as a separate layer is either hidden under
+// them or shows through whatever stands in front. So the shadow is put INTO the
+// splats: a splat lying at the surface the figurine touches is darkened where it falls
+// inside a soft disc around the contact point (the same idea as Spark's SplatEdit). The
+// shadow then sits exactly on the visible surface and is hidden by whatever is in front.
+const CONTACT_SHADOW = { on: true, darkness: 0.55, size: 0.6 }; // size: radius in body heights
+const SHADOW_THICKNESS = 0.5;  // body heights: how far above/below the feet still counts as the surface. Generous, because the
+                               // visible floor is not where the feet are: measured medians of +0.18 (Playroom), -0.17 (Living Room), -0.25 (Counter)
+const SHADOW_FADE_HEIGHT = 2;  // body heights off the surface at which the shadow has faded out
+const shadowCentre = uniform(new THREE.Vector3());          // where the figurine touches (or hangs over) a surface
+const shadowNormal = uniform(new THREE.Vector3(0, 1, 0));   // that surface's facing: up on the ground, out of the wall when climbing
+const shadowRadius = uniform(1), shadowThick = uniform(1), shadowDark = uniform(0);
+
+/** Make a splat object darken itself inside the contact-shadow region. Two questions,
+ *  answered at different rates:
+ *    - Is this splat at the contact surface? Once per splat, from its centre: how far
+ *      it is off the surface (`lift`). Everything further than the shadow's thickness
+ *      is left alone — that is nearly every splat, and what keeps this cheap.
+ *    - Which of its pixels are in the disc? Per pixel: where the view ray through the
+ *      pixel meets the plane the figurine stands on. Floors are often a few very
+ *      large, flat splats (a rug in Playroom is ~500 splats per body-width), so
+ *      darkening whole splats by their centre gives a faint smudge in the wrong place.
+ *      It is the figurine's plane, not the splat's own level: the figurine is drawn
+ *      where its feet are, which is not quite where the scan's floor is, and a disc
+ *      placed at each splat's height lands visibly in front of it.
+ *  GaussianSplat keeps its centres to itself, so this holds its own copy (16 bytes a
+ *  splat); the one thing it needs from the splat's internals is the draw order
+ *  (`_sort.orderRead`), which says which splat each drawn instance is. */
+function installContactShadow(splat: GaussianSplat, centres: THREE.BufferAttribute): void {
+  // (typed loosely: three's types describe neither the material's colour hook nor the sorter)
+  const material = splat.material as unknown as { colorNode: any; needsUpdate: boolean };
+  const order = (splat as unknown as { _sort?: { orderRead?: any } })._sort?.orderRead;
+  if (!order || !material.colorNode) { console.warn('contact shadow: this GaussianSplat has no accessible draw order — shadow disabled'); return; }
+  const n = centres.count, data = new Float32Array(n * 4);
+  for (let i = 0; i < n; i++) { data[i * 4] = centres.getX(i); data[i * 4 + 1] = centres.getY(i); data[i * 4 + 2] = centres.getZ(i); }
+  const centreRead = storage(new StorageBufferAttribute(data, 4), 'vec4', n).toReadOnly();
+  // per splat: how far its centre is off the contact surface, along the surface's normal
+  const lift = varying(Fn(() => {
+    const centre = centreRead.element(order.element(instanceIndex)).xyz;
+    return modelWorldMatrix.mul(vec4(centre, 1)).xyz.sub(shadowCentre).dot(shadowNormal);
+  })());
+  const base = material.colorNode; // vec4: the splat's colour and coverage
+  material.colorNode = Fn(() => {
+    const c = vec4(base).toVar();
+    If(lift.abs().lessThan(shadowThick).and(shadowDark.greaterThan(0)), () => {
+      // per pixel: the view ray through this pixel, met with the plane the figurine stands on
+      const ndc = vec4(viewportUV.x.mul(2).sub(1), viewportUV.y.oneMinus().mul(2).sub(1), 1, 1);
+      const far = cameraProjectionMatrixInverse.mul(ndc);
+      const ray = cameraWorldMatrix.mul(vec4(far.xyz.div(far.w), 0)).xyz;       // direction, not normalised
+      const from = cameraPosition.sub(shadowCentre);
+      const t = from.dot(shadowNormal).negate().div(ray.dot(shadowNormal));
+      const along = from.add(ray.mul(t));                                        // offset from the contact point, in that plane
+      const inside = smoothstep(shadowRadius, shadowRadius.mul(0.15), along.length())
+        .mul(smoothstep(shadowThick, shadowThick.mul(0.6), lift.abs()));
+      c.rgb.mulAssign(inside.mul(shadowDark).oneMinus());
+    });
+    return c;
+  })();
+  material.needsUpdate = true;
+}
+
+/** Per frame: where the shadow falls, and how strong it is. */
+const shadowAt = new THREE.Vector3(), shadowFacing = new THREE.Vector3();
+function updateContactShadow(dt: number): void {
+  const p = player.position, radius = CAPSULE_RADIUS * charH;
+  let height = 0; // how far the figurine is off the surface it would shadow
+  if (state === 'climb') {
+    // on a wall: the shadow is on the face it's hanging from, behind its body
+    shadowAt.set(p.x, p.y + charH * CLIMB.chest, p.z).addScaledVector(climbDir, radius * CLIMB.gap);
+    shadowFacing.copy(climbDir).negate();
+  } else if (state === 'air') {
+    // in the air: onto the ground it would land on, straight below
+    const ground = navGrid ? navGrid.surfaceBelow(p.x, p.z, p.y + radius * 0.5) : null;
+    height = ground === null ? Infinity : Math.max(0, p.y - ground);
+    shadowAt.set(p.x, ground ?? p.y, p.z);
+    shadowFacing.copy(WORLD_UP);
+  } else {
+    // standing: right where the feet are
+    shadowAt.copy(p);
+    shadowFacing.copy(WORLD_UP);
+  }
+  // ease, so stepping onto a wall or off a ledge moves the shadow instead of jumping it
+  const t = Math.min(1, 20 * dt);
+  shadowCentre.value.lerp(shadowAt, t);
+  shadowNormal.value.lerp(shadowFacing, t).normalize();
+  const fade = 1 - Math.min(1, height / (charH * SHADOW_FADE_HEIGHT)); // higher → fainter and wider
+  shadowRadius.value = charH * CONTACT_SHADOW.size * (2 - fade);
+  shadowThick.value = charH * SHADOW_THICKNESS;
+  shadowDark.value = CONTACT_SHADOW.on ? CONTACT_SHADOW.darkness * fade : 0;
 }
 
 // --- controller update ------------------------------------------------------
@@ -1269,7 +1365,7 @@ async function main(): Promise<void> {
     const dt = Math.min(clock.getDelta(), 0.05);
     if (charLoaded) { updateController(dt); if (FREECAM) updateFreeCam(); else updateCamera(dt); }
     mixer?.update(dt);
-    if (charLoaded) { updateScanLight(dt); updateScanDebug(); }
+    if (charLoaded) { updateContactShadow(dt); updateScanLight(dt); updateScanDebug(); }
     if (TEL) publishDebugState();
     void renderer.renderAsync(scene, camera).then(() => {
       if (charLoaded && ++frames === 3) (window as unknown as { __wwReady?: boolean }).__wwReady = true;
@@ -1443,6 +1539,11 @@ function setupDebugMenu(): void {
   platformCheckbox = addToggle('Platforms (P)', showPlatforms, setPlatformOverlay,
     'Spike 1: color the walkable surfaces the collision decomposes into — floor, ' +
     'couch, counter. Distinct colors = distinct platforms (reached by climbing/jumping).');
+  addToggle('Contact shadow', CONTACT_SHADOW.on, (on) => { CONTACT_SHADOW.on = on; },
+    'Darken the scan in a soft patch where the figurine touches it (the floor under its feet, or the wall it is climbing).');
+  addSlider('Contact shadow: darkness', CONTACT_SHADOW.darkness, 0, 1, 0.05, (v) => { CONTACT_SHADOW.darkness = v; });
+  addSlider('Contact shadow: size', CONTACT_SHADOW.size, 0.2, 1.5, 0.05, (v) => { CONTACT_SHADOW.size = v; },
+    'Radius of the shadow, in figurine heights.');
   addToggle('Scan lighting', SCAN_LIGHT.on, (on) => { SCAN_LIGHT.on = on; applyScanLight(); },
     'Light the figurine from the scan itself (a cubemap of the splats, captured at the figurine) instead of the fixed ambient fill.');
   addToggle('Scan light: follow figurine', SCAN_LIGHT.follow, (on) => { SCAN_LIGHT.follow = on; if (on) requestScanLight(1); },

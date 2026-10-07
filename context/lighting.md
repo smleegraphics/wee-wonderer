@@ -142,3 +142,60 @@ need lighting, or if probes can be computed from splat colours without rendering
   re-sorting for the main camera straight after the capture made no clear
   difference, so nothing was changed.
 - No contact shadow. The collision mesh could act as a shadow receiver.
+
+## Contact shadow
+
+Code: `CONTACT_SHADOW`, `installContactShadow`, `updateContactShadow` in `src/main.ts`.
+
+**Why it is done in the splat shader.** The splats are transparent and write no
+depth, so a shadow drawn as its own layer (a decal, or a shadow-catcher mesh, which
+is what PlayCanvas documents) is either hidden under the floor splats or shows
+through whatever stands in front of it. So each scan's splat material is extended to
+darken itself, the same idea as Spark's `SplatEdit`.
+
+**How.** Two tests at different rates:
+
+- *Per splat* (vertex stage): how far the splat's centre is off the contact plane
+  (`lift`). Splats further than `SHADOW_THICKNESS` are left alone.
+- *Per pixel*, only inside those splats: where the view ray through the pixel meets
+  the plane the figurine stands on, and how far that is from the contact point.
+
+The contact point is the feet when standing, the walkable ground below when
+airborne (fainter and wider with height, gone by two body-heights), and the wall
+behind the chest when climbing. The light probe's capture skips the shadow.
+
+**Things learned, each the hard way**
+
+- **Three's `GaussianSplat` does not expose its centres.** The shadow keeps its own
+  copy in a storage buffer (16 bytes a splat) and reads the draw order from the
+  private `_sort.orderRead`. If that field goes away the shadow turns itself off
+  with a console warning.
+- **Darkening whole splats by their centre does not work.** Floors are often a few
+  very large flat splats (about 500 per body-width on Playroom's rug), so it gives a
+  faint smudge in the wrong place.
+- **Reconstructing position per pixel from depth does not work either.** A splat's
+  pixels all carry its centre's depth, so the reconstruction lies on a camera-facing
+  plane, not the floor.
+- **Project onto the figurine's plane, not the splat's own height.** The visible
+  floor is not where the feet are: median splat height relative to the feet was
+  +0.18 body-heights on Playroom, −0.17 on Living Room, −0.25 on Counter. A disc
+  placed at each splat's height lands visibly in front of the figurine; on the feet
+  plane it lands under it. This is also why `SHADOW_THICKNESS` is as wide as 0.5.
+- **Do not ray-cast for the ground when standing.** A down-ray from the feet could
+  start beneath the collision surface and hit something far below, which faded and
+  misplaced the shadow.
+
+**Cost.** On Playroom, 20.6 → 26.8 ms a frame at rest (alternating runs). Not
+measurable on the lighter scans, which sit at the display's refresh rate.
+
+**Not verified / open**
+
+- The climbing shadow: in the one test view it was hidden behind the figurine, so
+  on and off looked the same.
+- On Counter and Living Room the default shadow was not clearly visible in
+  screenshots (clutter under the feet; camera too close).
+- Low objects within half a body-height of the feet's level get darkened too.
+- `GaussianSplat` has no `dispose`, so the extra buffer is not freed on a scan
+  switch, the same as the splat's own buffers.
+- It is a blob, not the figurine's shape. A shaped shadow needs a light direction,
+  which the scan does not give.
