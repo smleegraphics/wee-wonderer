@@ -1,7 +1,11 @@
-// The parts of three's GaussianSplat this app reaches into that it does not make
-// public. All of them are named here, so a three.js upgrade has one place to check.
+// The parts of three.js this app reaches into that it does not make public. All of
+// them are named here, so a three.js upgrade has one place to check.
 
+import type { Material } from 'three';
+import type { WebGPURenderer } from 'three/webgpu';
 import type { GaussianSplat } from 'three/addons/objects/GaussianSplat.js';
+
+// --- GaussianSplat
 
 /**   _buffers.centerRead — the splats' centres, as a GPU storage buffer
  *    _sort.orderRead     — the draw order: which splat each drawn instance is
@@ -18,3 +22,10 @@ export type SplatInternals = {
   _sphericalHarmonicsVertexNode: any;
 };
 export function splatInternals(splat: GaussianSplat): SplatInternals { return splat as unknown as SplatInternals; }
+
+// --- WebGPURenderer
+/** The node material the renderer would itself make from a classic `material` the first
+ *  time it drew it (renderer.library.fromMaterial), or null if it has none for that kind. */
+export function nodeMaterialFor(renderer: WebGPURenderer, material: Material): Material | null {
+  return (renderer as unknown as { library: { fromMaterial(m: Material): Material | null } }).library.fromMaterial(material);
+}

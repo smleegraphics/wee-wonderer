@@ -191,7 +191,7 @@ export function createHud(opts: HudOptions): Hud {
   title.appendChild(begin.holder);
   begin.holder.onclick = () => {
     title.hidden = true;
-    begin.holder.blur();
+    begin.holder.blur(); // showTitle gave it the focus, and a Begin pressed with Enter is not a mouse click, so the root's handler below does not take it back
     try { localStorage.setItem(TITLE_SEEN_KEY, '1'); } catch { /* no storage: it shows again next visit */ }
   };
   function showTitle(): void {

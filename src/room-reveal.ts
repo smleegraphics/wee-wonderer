@@ -2,26 +2,32 @@
 // figurine was waiting on, instead of switching on. It is part of how the scan draws
 // itself: each splat is drawn as a dot on the sheet until it lifts off and travels to
 // its place, the ones nearest the figurine first. Once the reveal is over every splat is
-// drawn exactly as it would be without this file. See context/ui.md.
+// drawn exactly as it would be without this file. When another room is picked the
+// same journey runs backwards. See context/ui.md.
 
 import * as THREE from 'three';
 import type { GaussianSplat } from 'three/addons/objects/GaussianSplat.js';
 import { cameraProjectionMatrix, cameraViewMatrix, Fn, hash, If, instanceIndex, mix, modelWorldMatrix, positionGeometry, screenSize, smoothstep, uniform, varyingProperty, vec3, vec4 } from 'three/tsl';
-import { splatInternals } from './splat-internals';
+import { splatInternals } from './three-internals';
 import { BITS, SHEET_CELL, dotShape, rimFade, sheetHeight } from './paper-bits';
 
-export const REVEAL = { seconds: 3.6 };
+export const REVEAL = {
+  seconds: 3.6,  // how long a room takes to arrive
+  leave: 1.2,    // how long it takes to go back into the sheet when another room is picked: the same journey backwards, quicker, since it is in the way of what was asked for
+};
 
 /** The part of the reveal over which the waiting dots give way to the scan's own. */
 export const HANDOVER = 0.15;
 
 const RISE = {
   spread: 0.6,  // the part of the journey's time by which the farthest dot sets off after the nearest
+  splat: [0.55, 1],     // the part of its way over which a dot grows into the splat it is: the second half, so it leaves the sheet as a dot
+  itself: [0.5, 0.95],  // the part over which it takes its own colour (and, if it was not a dot from the start, appears): done just before it lands
   dense: 8,     // how many of the scan's points start as dots, per waiting dot: many share each place on the sheet, and it takes this many to fill it as they part
 };
 
 const centre = uniform(new THREE.Vector3());   // where the figurine stood when the reveal began
-const progress = uniform(1);                   // 0 → 1 over the whole reveal
+const progress = uniform(0);                   // 0 = all of the room is dots on the sheet (and unseen, before its arrival), 1 = all of it is in place
 const reach = uniform(1);                      // how far from `centre` the room extends
 const bodyHeight = uniform(1);
 const dotShare = uniform(1);                   // the part of the scan's splats that are dots from the start
@@ -53,13 +59,13 @@ export function installReveal(splat: GaussianSplat, count: number): void {
     const setOff = place.xz.length().div(reach).min(1).mul(RISE.spread);
     const leg = progress.sub(HANDOVER).div(1 - HANDOVER).sub(setOff).div(1 - RISE.spread).clamp(0, 1);
     const home = smoothstep(0, 1, leg).toVar(); // 0 waiting, 1 in place
-    const size = smoothstep(0.55, 1, home).toVar(); // 0 = a paper dot, 1 = the splat itself
-    const nearlyHome = smoothstep(0.5, 0.95, home).toVar();
+    const size = smoothstep(RISE.splat[0], RISE.splat[1], home).toVar(); // 0 = a paper dot, 1 = the splat itself
+    const nearlyHome = smoothstep(RISE.itself[0], RISE.itself[1], home).toVar();
     // Some of the splats are dots from the start. All of them would be a solid mass, so
     // the rest stay unseen until they are nearly home.
     const fromStart = smoothstep(0, HANDOVER, progress).mul(mix(rimFade(waiting, bodyHeight), 1, home));
     shown.assign(hash(index).lessThan(dotShare).select(mix(fromStart, 1, nearlyHome), nearlyHome));
-    settled.assign(nearlyHome); // paper for the first half of the way
+    settled.assign(nearlyHome);
     asDot.assign(size.oneMinus());
     // moving a splat in the world moves its clip-space position by the same offset, projected
     const toClip = cameraProjectionMatrix.mul(cameraViewMatrix);
@@ -87,7 +93,7 @@ export function installReveal(splat: GaussianSplat, count: number): void {
   material.needsUpdate = true;
 }
 
-let elapsed = -1;  // seconds into the reveal; negative when none is running
+let run: { to: 0 | 1; seconds: number } | null = null; // the arrival or the leaving under way, if one is
 
 /** Start the room arriving around `from`. `roomReach`: how far the room extends from there. */
 export function startReveal(from: THREE.Vector3, roomReach: number, charH: number, paperColour: string): void {
@@ -95,18 +101,27 @@ export function startReveal(from: THREE.Vector3, roomReach: number, charH: numbe
   bodyHeight.value = charH;
   reach.value = roomReach;
   paper.value.set(paperColour);
-  elapsed = 0;
   progress.value = 0;
+  run = { to: 1, seconds: REVEAL.seconds };
 }
 
-/** Advance the reveal. Returns how far along it is: 0 at the start, 1 when there is none running. */
+/** Send the room back into the sheet: its arrival backwards, from however far that had got.
+ *  Returns the point it goes back around, which is where the sheet has to be. */
+export function startLeave(from: THREE.Vector3, roomReach: number): THREE.Vector3 {
+  // a room that is all in place can go back around wherever the figurine is now; one still arriving goes back the way it was coming
+  if (progress.value === 1) { centre.value.copy(from); reach.value = roomReach; }
+  run = { to: 0, seconds: REVEAL.leave };
+  return centre.value;
+}
+
+/** Advance whichever is under way. Returns how much of the room is in place: 0 none (waiting), 1 all of it. */
 export function updateReveal(dt: number): number {
-  if (elapsed < 0) return 1;
-  elapsed += dt;
-  const t = Math.min(1, elapsed / REVEAL.seconds);
-  if (t >= 1) elapsed = -1;
-  progress.value = t;
-  return t;
+  if (run) {
+    const step = dt / run.seconds;
+    progress.value = run.to ? Math.min(1, progress.value + step) : Math.max(0, progress.value - step);
+    if (progress.value === run.to) run = null;
+  }
+  return progress.value;
 }
 
 /** Draw the room complete, whatever the reveal is doing: for anything that must see the

@@ -1,7 +1,9 @@
 // Web Worker: fetch and parse a scan's .ply off the main thread. Parsing a large
 // scan takes seconds (the Playroom is 453 MB), and on the main thread that froze
 // the page: no clicks, no animation. The file is fetched here too, so its bytes
-// never cross threads; only the parsed arrays are transferred back, zero-copy.
+// never cross threads; only the parsed arrays are transferred back, zero-copy. A load
+// that is no longer wanted can be cancelled while it is fetching (not once unpacking
+// has begun: that is one call into three.js).
 
 import type { BufferAttribute } from 'three';
 import { GaussianSplatPLYLoader } from 'three/addons/loaders/GaussianSplatPLYLoader.js';
@@ -18,6 +20,9 @@ export interface ParsedScan {
 export type ScanLoadProgress = { step: 'fetch'; fetched: number } | { step: 'unpack' };
 
 interface Req { id: number; url: string }
+interface Cancel { id: number; cancel: true }
+
+const fetching = new Map<number, AbortController>(); // the loads that can still be cancelled, by request id
 
 const REPORT_EVERY = 0.01; // say so each time this much more of the file has arrived
 
@@ -41,13 +46,18 @@ async function readBody(response: Response, onFetched: (part: number) => void): 
   return bytes.buffer;
 }
 
-self.onmessage = async (e: MessageEvent<Req>) => {
+self.onmessage = async (e: MessageEvent<Req | Cancel>) => {
+  if ('cancel' in e.data) { fetching.get(e.data.id)?.abort(); return; }
   const { id, url } = e.data;
+  const abort = new AbortController();
+  fetching.set(id, abort);
   try {
-    const response = await fetch(url);
+    const response = await fetch(url, { signal: abort.signal });
     if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
     const say = (progress: ScanLoadProgress) => (self as unknown as Worker).postMessage({ id, progress });
     const body = await readBody(response, (fetched) => say({ step: 'fetch', fetched }));
+    fetching.delete(id);
+    abort.signal.throwIfAborted(); // cancelled between the last bytes and here
     say({ step: 'unpack' });
     const geometry = new GaussianSplatPLYLoader().parse(body);
     const sphericalHarmonics: Record<string, Uint32Array> = {};
@@ -63,6 +73,7 @@ self.onmessage = async (e: MessageEvent<Req>) => {
     const buffers = [result.centers, result.covariances, result.colors, ...Object.values(sphericalHarmonics)].map((a) => a.buffer as ArrayBuffer);
     (self as unknown as Worker).postMessage({ id, result }, buffers);
   } catch (err) {
-    (self as unknown as Worker).postMessage({ id, error: err instanceof Error ? err.message : String(err) });
+    fetching.delete(id);
+    (self as unknown as Worker).postMessage({ id, error: err instanceof Error ? err.message : String(err) }); // (a cancelled load's caller has stopped listening)
   }
 };

@@ -21,8 +21,8 @@ import { buildClimbSideClip } from './climb-side-anim';
 import { createHud } from './ui/hud';
 import { workerCaller } from './worker-call';
 import type { ParsedScan, ScanLoadProgress } from './load-scan.worker';
-import { splatInternals } from './splat-internals';
-import { installReveal, startReveal, updateReveal, revealPaused, HANDOVER } from './room-reveal';
+import { splatInternals } from './three-internals';
+import { installReveal, startReveal, startLeave, updateReveal, revealPaused, HANDOVER } from './room-reveal';
 import { createLoadingScene, type LoadingScene } from './loading-scene';
 import { createPaperFigurine, type PaperFigurine } from './paper-figurine';
 import { cameraPosition, cameraProjectionMatrixInverse, cameraWorldMatrix, cos, float, Fn, If, instanceIndex, mix, modelWorldMatrix, PI, pmremTexture, sin, smoothstep, uniform, uv, varying, vec3, vec4, viewportUV } from 'three/tsl';
@@ -111,11 +111,15 @@ const hud = createHud({
 let scanLoading = false; // a scan is being fetched or its collision built
 // The loading view: there is no room yet, and the figurine waits, idle, on a rippling
 // sheet of paper dots (loading-scene.ts). When the view ends the room rises out of the
-// sheet around the figurine (room-reveal.ts).
+// sheet around the figurine (room-reveal.ts); when another room is picked, the one
+// there goes back into the sheet first.
 let loadingScene: LoadingScene | null = null; // made once the figurine's height is known
 let paperFigurine: PaperFigurine | null = null; // the figurine's paper look while it waits (paper-figurine.ts)
 let loadingShown = true;
-let revealProgress = 1; // the last value of updateReveal, for telemetry
+let revealProgress = 0; // how much of the room is in place (the last value of updateReveal): 0 none, 1 all of it
+let roomLeft: (() => void) | null = null;      // set while the old room is going back into the sheet: call it once it has gone
+let roomGone: Promise<void> = Promise.resolve(); // resolves when there is no old room in the way of a new one
+let loadAbort: AbortController | null = null;  // cancels the newest load's fetch, should another replace it
 
 /** True until there is a room to stand in and a figurine to stand in it. */
 function loadingViewOn(): boolean {
@@ -126,17 +130,34 @@ function loadingViewOn(): boolean {
 function updateLoading(): void {
   const on = loadingViewOn();
   hud.setLoading(on);
-  room.visible = !on;
-  if (on) loadingScene?.place(player.position);
-  else if (loadingShown) revealRoom(); // the view has just ended
+  if (!on && loadingShown) revealRoom(); // the view has just ended
   loadingShown = on;
+}
+
+/** How far the room reaches from the figurine: the scan is centred on the origin and scaled to TARGET_RADIUS. */
+function roomReach(): number {
+  return TARGET_RADIUS + Math.hypot(player.position.x, player.position.z);
 }
 
 /** Bring the room in around the figurine, from where it stands. */
 function revealRoom(): void {
   loadingScene?.place(player.position);
-  // the scan is centred on the origin and scaled to TARGET_RADIUS, so this reaches all of the room from wherever the figurine is
-  startReveal(player.position, TARGET_RADIUS + Math.hypot(player.position.x, player.position.z), charH, hud.token('--paper'));
+  startReveal(player.position, roomReach(), charH, hud.token('--paper'));
+}
+
+/** Take the room there is, and its collision, out of the scene. */
+function clearRoom(): void {
+  if (currentSplat) {
+    room.remove(currentSplat);
+    currentSplat.geometry.dispose();
+    (currentSplat.material as THREE.Material).dispose();
+    (currentSplat as unknown as { dispose?: () => void }).dispose?.();
+    currentSplat = null;
+  }
+  disposeCollision();
+  room.quaternion.identity();
+  room.position.set(0, 0, 0);
+  room.scale.setScalar(1);
 }
 
 const renderer = new WebGPURenderer({ antialias: true });
@@ -147,12 +168,14 @@ app.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 // What is seen around a scan. While the figurine waits it is the open air of the paper
 // world (the UI's --sky token; index.html paints it before the first frame). As the room
-// arrives it darkens to --beyond, which a scan's gaps and edges recede into; it changes
-// with the arrival, so it is never a cut.
-const SURROUND = { sky: new THREE.Color(hud.token('--sky')), beyond: new THREE.Color(hud.token('--beyond')), darken: [HANDOVER, 0.8] }; // darken: the part of the arrival it takes
+// arrives it darkens to --beyond, which a scan's gaps and edges recede into. It follows
+// how much of the room is in place, both ways, so it is never a cut.
+const SURROUND = {
+  sky: new THREE.Color(hud.token('--sky')), beyond: new THREE.Color(hud.token('--beyond')),
+  darken: [HANDOVER, 0.8], // the part of the arrival it takes: from when the dots lift off, to a little before the last land, so the arrival ends on the room alone
+};
 const surround = new THREE.Color().copy(SURROUND.sky);
 scene.background = surround;
-const UNLIT = new THREE.Color(0x1a1c22); // what the light probe sees where the scan has nothing and gaps are not filled: near-darkness
 
 const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.001, 200);
 
@@ -218,14 +241,22 @@ const LOAD_STEPS = {
   unpack: { says: 'Unpacking the scan', share: 0.3 },
   build: { says: 'Building the room', share: 0.2 },
 } as const;
-let loadStepSince = 0; // when the current step began (performance.now), for telemetry
+type LoadStep = keyof typeof LOAD_STEPS;
+let loadStepNow: { step: LoadStep; since: number } | null = null; // the step the newest load is on, and when it began (performance.now)
 
-/** Tell the player which step the newest load is on, and how far `through` it (0..1) it is. */
-function loadStep(token: number, step: keyof typeof LOAD_STEPS, through = 0): void {
+/** Tell the player which step the newest load is on and how far `through` it (0..1) it is, or that it is 'done'. */
+function loadStep(token: number, step: LoadStep | 'done', through = 0): void {
   if (token !== loadToken) return;
+  const was = loadStepNow;
+  if (TEL && was && was.step !== step) console.log(`LOAD ${was.step} took ${(performance.now() - was.since).toFixed(0)}ms`);
+  if (step === 'done') {
+    if (was) hud.loadProgress(LOAD_STEPS[was.step].says, 1);
+    loadStepNow = null;
+    return;
+  }
+  if (was?.step !== step) loadStepNow = { step, since: performance.now() };
   let before = 0;
   for (const [name, s] of Object.entries(LOAD_STEPS)) { if (name === step) break; before += s.share; }
-  if (TEL && through === 0) { console.log(`LOAD ${step} begins, ${(performance.now() - loadStepSince).toFixed(0)}ms after the step before`); loadStepSince = performance.now(); }
   hud.loadProgress(LOAD_STEPS[step].says, before + LOAD_STEPS[step].share * through);
 }
 
@@ -236,33 +267,35 @@ function loadFromURL(url: string, id: string): void {
   currentFile = id;
   hud.setCurrentRoom(id);
   scanLoading = true;
-  if (currentSplat) {
-    room.remove(currentSplat);
-    currentSplat.geometry.dispose();
-    (currentSplat.material as THREE.Material).dispose();
-    (currentSplat as unknown as { dispose?: () => void }).dispose?.();
-    currentSplat = null;
+  loadAbort?.abort(); // the load this one replaces, if it is still fetching
+  const abort = loadAbort = new AbortController();
+  // The figurine waits where it stands (the controller is off while loading), and the
+  // room there is goes back into the sheet around it before it is taken away. One
+  // already on its way out carries on.
+  if (charLoaded) play('idle');
+  if (!roomLeft) {
+    if (currentSplat) {
+      loadingScene?.place(startLeave(player.position, roomReach()));
+      roomGone = new Promise((gone) => { roomLeft = gone; });
+    } else clearRoom(); // nothing to see leave (the first load, or after one that failed)
   }
-  disposeCollision();
-  room.quaternion.identity();
-  room.position.set(0, 0, 0);
-  room.scale.setScalar(1);
-  if (charLoaded) { resetToSpawn(); play('idle'); } // with no room, that is the origin: wait there
   updateLoading();
   loadStep(token, 'fetch');
   // only the newest load may end the loading screen or report on itself
   const finish = (error?: unknown) => {
     if (token !== loadToken) return;
+    if (error === undefined) loadStep(token, 'done');
     scanLoading = false;
     updateLoading();
     if (error !== undefined) hud.status(`${id}: ${error instanceof Error ? error.message : String(error)}`, 'error');
   };
-  showScan(new URL(url, location.href).href, id, token).then(() => finish(), finish); // absolute: a worker resolves URLs against its own script
+  showScan(new URL(url, location.href).href, id, token, abort.signal).then(() => finish(), finish); // absolute: a worker resolves URLs against its own script
 }
 
 /** Fetch and parse the scan, put it in the room levelled and scaled, and build its collision. */
-async function showScan(url: string, id: string, token: number): Promise<void> {
-  const parsed = await parseScan({ url }, [], (p) => loadStep(token, p.step, p.step === 'fetch' ? p.fetched : 0));
+async function showScan(url: string, id: string, token: number, cancelled: AbortSignal): Promise<void> {
+  const parsed = await parseScan({ url }, [], { signal: cancelled, onProgress: (p) => loadStep(token, p.step, p.step === 'fetch' ? p.fetched : 0) });
+  await roomGone; // the old room has to be out of the way first; it usually is long before this
   if (token !== loadToken) return; // superseded while loading
   loadStep(token, 'build');
   const geometry = createGaussianSplatGeometry(parsed.centers, parsed.covariances, parsed.colors, parsed.sphericalHarmonics);
@@ -295,7 +328,6 @@ async function showScan(url: string, id: string, token: number): Promise<void> {
   estimateScanFill(centers, color, cov, splat.matrixWorld, scanFill);
   console.log(`loaded ${id}: radius ${o.radius.toFixed(2)} → scaled ${k.toFixed(2)}x`);
   await buildCollision(id, token, centers, opacity, cov, splat.matrixWorld);
-  if (TEL && token === loadToken) console.log(`LOAD ends, ${(performance.now() - loadStepSince).toFixed(0)}ms after the step before`);
   if (token === loadToken && charLoaded) { resetToSpawn(); requestScanLight(); }
 }
 
@@ -352,9 +384,9 @@ function onLoaded(gltf: GLTF): void {
   loadingScene = createLoadingScene(charH, hud.token('--paper'));
   paperFigurine = createPaperFigurine(model, renderer, hud.token('--paper'));
   scene.add(loadingScene.object);
-  updateLoading();
   if (collision) rebuildPlatformOverlay(); // rebuild the NavGrid now charH (headroom/step) is real
   resetToSpawn();
+  updateLoading(); // after the figurine is in its place: if the room was only waiting for it, this starts the room arriving around it
   requestScanLight();
   console.log(`character: ${charH.toFixed(3)} tall, ${gltf.animations.length} clips`);
 }
@@ -443,9 +475,15 @@ function onActionFinished(e: { action: THREE.AnimationAction }): void {
 }
 
 function keyEvent(e: KeyboardEvent, v: 0 | 1): void {
-  // A key pressed on a UI control, or while the title screen or the loading view is
-  // up, is not for the figurine. Releases always get through, so a held key can never stick down.
-  if (v && (hud.titleOpen() || loadingViewOn() || hud.owns(e.target))) return;
+  // A key pressed on a UI control, or while the title screen is up, is not for the game.
+  // Releases always get through, so a held key can never stick down.
+  if (v && (hud.titleOpen() || hud.owns(e.target))) return;
+  if (v) switch (e.code) { // the app's own keys work whether or not there is a room
+    case 'KeyV': setVoxelOverlay(!showVoxels); return;
+    case 'KeyP': setPlatformOverlay(!showPlatforms); return;
+    case 'Backquote': hud.toggleDebug(); return;
+  }
+  if (v && loadingViewOn()) return; // the rest are the figurine's, which cannot move until there is a room
   if (v && !e.repeat && MOVE_KEYS.has(e.code)) camBasisHeld = false; // a fresh press is a fresh intent, in the current view
   switch (e.code) {
     case 'KeyW': move.f = v; break;
@@ -457,9 +495,6 @@ function keyEvent(e: KeyboardEvent, v: 0 | 1): void {
       if (v && state === 'ground') startJump();
       else if (v && state === 'climb') climbJumpOff();
       e.preventDefault(); break;
-    case 'KeyV': if (v) setVoxelOverlay(!showVoxels); break;
-    case 'KeyP': if (v) setPlatformOverlay(!showPlatforms); break;
-    case 'Backquote': if (v) hud.toggleDebug(); break;
   }
 }
 addEventListener('keydown', (e) => keyEvent(e, 1));
@@ -612,7 +647,7 @@ function captureScanLight(): void {
     lit.environmentNode = null; scene.background = null;
     shadowDark.value = 0; // ...and the figurine's own shadow
     scanProbePoint(scanLightAt);
-    scanFillDome.material.color.copy(SCAN_LIGHT.fill ? scanFill : UNLIT);
+    scanFillDome.material.color.copy(SCAN_LIGHT.fill ? scanFill : SURROUND.beyond); // unfilled, a gap is what is around the scan: near-darkness
     scanFillDome.position.copy(scanLightAt);
     scanFillDome.visible = true;
     const shoot = (i: number) => {
@@ -628,7 +663,8 @@ function captureScanLight(): void {
       const next = 1 - scanLightShown; // into the one that isn't showing, then fade over to it
       shoot(next);
       scanLightShown = next;
-      if (SCAN_LIGHT.blend <= 0) scanLightMix.value = next;
+      // no fade when it would not be seen anyway: none asked for, or the figurine is all paper (waiting for a room, or at the start of its arrival)
+      if (SCAN_LIGHT.blend <= 0 || paperFigurine?.allPaper()) scanLightMix.value = next;
     }
     if (TEL) console.log(`SCANLIGHT captured at ${scanLightAt.x.toFixed(2)},${scanLightAt.y.toFixed(2)},${scanLightAt.z.toFixed(2)} in ${(performance.now() - t0).toFixed(1)}ms`);
   } catch (err) {
@@ -678,7 +714,7 @@ function estimateScanFill(centers: THREE.BufferAttribute, color: THREE.BufferAtt
     const w = weight[i];
     r += color.getX(i) * w; g += color.getY(i) * w; b += color.getZ(i) * w; sum += w;
   }
-  if (sum > 0) out.setRGB(r / sum, g / sum, b / sum); else out.copy(UNLIT);
+  if (sum > 0) out.setRGB(r / sum, g / sum, b / sum); else out.copy(SURROUND.beyond);
   if (TEL) console.log(`SCANFILL rgb=${out.r.toFixed(2)},${out.g.toFixed(2)},${out.b.toFixed(2)} from splats above y=${median.toFixed(2)} (scan spans ${y0.toFixed(2)}..${y1.toFixed(2)})`);
 }
 
@@ -1495,7 +1531,7 @@ function publishDebugState(): void {
     camDist: +camera.position.distanceTo(orbit.target).toFixed(2), camWant: +camWant.toFixed(2), camSwinging,
     anim: activeAction ? activeAction.getClip().name : 'none',
     climbPaused: ca ? ca.paused : null,
-    reveal: +revealProgress.toFixed(3), // how far the room's arrival has got: 1 when it is not running
+    reveal: +revealProgress.toFixed(3), // how much of the room is in place: 0 while waiting, 1 once it has arrived
   };
 }
 
@@ -1510,16 +1546,18 @@ async function main(): Promise<void> {
 
   renderer.setAnimationLoop(() => {
     const dt = Math.min(clock.getDelta(), 0.05);
-    if (charLoaded) { updateController(dt); if (FREECAM) updateFreeCam(); else updateCamera(dt); }
+    const waiting = loadingViewOn();
+    if (charLoaded) { if (!waiting) updateController(dt); if (FREECAM) updateFreeCam(); else updateCamera(dt); }
     mixer?.update(dt);
     if (charLoaded) { updateContactShadow(dt); updateScanLight(dt); updateScanDebug(); }
-    const revealed = revealProgress = updateReveal(dt);
-    // the waiting dots are all there while waiting, and give way to the scan's own at the start of its arrival
-    const waiting = loadingViewOn();
-    loadingScene?.show(waiting ? 1 : 1 - Math.min(1, revealed / HANDOVER));
-    // the figurine waits as paper too, and becomes itself as the room arrives (which is also when the room's light reaches it)
-    paperFigurine?.show(waiting ? 0 : revealed);
-    surround.lerpColors(SURROUND.sky, SURROUND.beyond, waiting ? 0 : THREE.MathUtils.smoothstep(revealed, SURROUND.darken[0], SURROUND.darken[1]));
+    // Everything about waiting follows from one number, how much of the room is in place,
+    // so the way into the loading view is as gradual as the way out of it.
+    const arrived = revealProgress = updateReveal(dt);
+    if (roomLeft && arrived === 0) { clearRoom(); roomLeft(); roomLeft = null; } // the old room is back in the sheet: now it can go
+    room.visible = arrived > 0;
+    loadingScene?.show(1 - Math.min(1, arrived / HANDOVER)); // the stand-in dots give way to the scan's own at the start of its arrival
+    paperFigurine?.show(arrived);                             // the figurine is paper too, and itself once the room is in
+    surround.lerpColors(SURROUND.sky, SURROUND.beyond, THREE.MathUtils.smoothstep(arrived, SURROUND.darken[0], SURROUND.darken[1]));
     if (TEL) publishDebugState();
     void renderer.renderAsync(scene, camera).then(() => {
       if (charLoaded && ++frames === 3) (window as unknown as { __wwReady?: boolean }).__wwReady = true;

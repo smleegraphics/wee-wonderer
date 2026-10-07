@@ -35,7 +35,7 @@ the default is `room2.ply` (Playroom). Cleaned demo scans are `*-clean.ply`.
 | `src/collision.ts` | `MeshCollision` (three-mesh-bvh over the collision mesh) and `NavGrid` (walkable cells) |
 | `src/voxelize-core.ts` (+ `.worker.ts`, `voxelize.ts`) | Splat → density field → collision surface |
 | `src/room-reveal.ts`, `src/loading-scene.ts`, `src/paper-bits.ts`, `src/paper-figurine.ts` | How a room arrives after loading (the scan's points start as a sheet of paper dots and rise to their places, in the scan's shader), the stand-in dots before it has loaded, the formulas both share, and the figurine's paper look meanwhile |
-| `src/splat-internals.ts` | Every private field of three's `GaussianSplat` the app touches; check it on a three.js upgrade |
+| `src/three-internals.ts` | Every private part of three.js the app touches (`GaussianSplat`'s fields, the renderer's material conversion); check it on a three.js upgrade |
 | `src/load-scan.worker.ts` | Fetches and parses a scan's `.ply` off the main thread |
 | `src/worker-call.ts` | `workerCaller`: promise-based request/response for all three workers (a failed job rejects) |
 | `src/voxel-cache.ts` | IndexedDB cache of the built surface. **Bump `SCHEMA` when the surface algorithm changes.** |
@@ -55,9 +55,12 @@ Visual and behavioural checks run headless in real Chrome through Playwright.
   (`dist` in `TARGET_RADIUS` units). Without it the camera follows the figurine.
 - **Telemetry and internal state:** `?tel=1` logs `CLIMB-*` events to the console
   and publishes `window.__dbg` every frame (state, position, climb facing, camera
-  distances, `probe`, and `reveal`: how far the room's arrival has got, 1 when none
-  is running). Without `?tel=1` there is no `__dbg`. `window.__wwReady` is
+  distances, `probe`, and `reveal`: how much of the room is in place, 0 while
+  waiting and 1 once it has arrived). Without `?tel=1` there is no `__dbg`. `window.__wwReady` is
   always set once the first frames have rendered.
+- **UI regression check:** `node scripts/uicheck.mjs` runs 22 checks of the title,
+  keys, tiles, Debug card, loading view, room switch and a failed load, and exits
+  non-zero on a failure. Run it after any change under `src/ui/` or to loading.
 - **Climb regression check:** `node scripts/climbfuzz.mjs <scan> <seconds> <seed>`
   walks, jumps and climbs at random and reports any frame where the climber is
   inside a solid. Run a few seeds, at most three browsers at a time.

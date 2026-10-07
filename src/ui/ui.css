@@ -21,6 +21,9 @@
   --drop: drop-shadow(var(--lift) var(--lift) 0 var(--shade));
   --card-pad: 14px;
   --rule: color-mix(in srgb, var(--ink) 20%, transparent);
+  --on-scan: #fff;          /* text laid straight on the scan, with no paper under it (the controls hint)... */
+  --on-scan-shade: rgb(0 0 0 / 0.7); /* ...and the shadow that keeps it readable there */
+  --title-wash: #7fd0c4;    /* mixed into --mark for the title screen's backdrop */
   --sky: #b1d8ef;           /* the open air around a scan (--mark and --paper mixed 38:62). A plain value: the 3D scene reads it */
   --beyond: #1a1c22;        /* what is around a scan once it has arrived: near-dark, so its gaps and edges recede. Plain, for the same reason */
 
@@ -95,7 +98,7 @@ button.ww-piece[aria-expanded='true'] > .ww-face, .ww-primary > .ww-face { backg
 .ww-debug-help > [data-on] { visibility: visible; }
 
 /* ---- controls hint ---------------------------------------------------------- */
-.ww-hint { position: absolute; left: var(--edge); bottom: var(--edge); max-width: calc(100% - 3 * var(--edge) - var(--tile)); display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; color: #fff; text-shadow: 0 1px 3px rgb(0 0 0 / 0.7); pointer-events: none; }
+.ww-hint { position: absolute; left: var(--edge); bottom: var(--edge); max-width: calc(100% - 3 * var(--edge) - var(--tile)); display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; color: var(--on-scan); text-shadow: 0 1px 3px var(--on-scan-shade); pointer-events: none; }
 .ww-hint span { display: inline-flex; align-items: center; gap: 5px; }
 .ww-key { display: inline-grid; place-items: center; box-sizing: border-box; min-width: 26px; height: 26px; padding: 0 6px; background: var(--paper); color: var(--ink); font: 700 13px var(--font-display); text-shadow: none; filter: drop-shadow(2px 2px 0 var(--shade)); }
 
@@ -121,7 +124,7 @@ button.ww-piece[aria-expanded='true'] > .ww-face, .ww-primary > .ww-face { backg
   animation: ww-working 700ms linear infinite; }
 @keyframes ww-working { to { background-position-x: var(--stripe); } }
 .ww-progress output { min-width: 3.2ch; text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-soft); }
-.ww-title { z-index: 3; background: color-mix(in srgb, color-mix(in srgb, var(--mark) 55%, #7fd0c4) 84%, transparent); }
+.ww-title { z-index: 3; background: color-mix(in srgb, color-mix(in srgb, var(--mark) 55%, var(--title-wash)) 84%, transparent); }
 .ww-title h1 { display: grid; justify-items: center; gap: clamp(6px, 1.2vw, 14px); margin: 0; }
 .ww-title-word { display: flex; gap: clamp(4px, 0.9vw, 10px); }
 .ww-letter { width: clamp(30px, 6.6vw, 78px); height: clamp(36px, 8vw, 94px); }
