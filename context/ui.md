@@ -14,8 +14,8 @@ that unfold from them.
 - **Controls hint** (bottom-left), **status note** (top-centre).
 - **Loading view** while a scan is fetched and its collision built, and until the
   figurine has loaded. There is no room yet: the figurine stands idle on a rippling
-  sheet of hole-punch dots, itself drawn as paper dots, with a "Building the room…"
-  note.
+  sheet of hole-punch dots, itself drawn as paper dots, with a note that names
+  the current step and shows progress.
 - **Room reveal** when the loading view ends: the scan's own points start out as the
   sheet's dots and lift off to where they belong, in 3D, nearest the figurine first,
   while the figurine's dots close up and it takes its colours. It lasts
@@ -149,6 +149,14 @@ changing anything it reads.
 - **The help strip is as tall as the longest help text.** All help texts sit in one
   grid cell with one visible, so the strip never resizes or scrolls while the pointer
   moves. A very long help string makes the strip taller for every control.
+- **A load reports its steps.** `LOAD_STEPS` in `main.ts` lists them in order with
+  the note's text and each one's share of the indicator; `loadStep(token, step,
+  through)` tells the HUD (`hud.loadProgress`). A new step in the load path goes in
+  that table and calls `loadStep` when it begins. Workers report through
+  `workerCaller`'s `onProgress` (`{ id, progress }` messages). With `?tel=1` each
+  step's duration is logged (`LOAD …`), which is what the shares were set from.
+- **Fetch progress needs a `Content-Length`** and an uncompressed transfer. Without
+  them the scan still loads, and the indicator waits at 0 until fetching ends.
 - **The loading screen needs every load to finish or fail.** `loadFromURL` ends it
   through `finish`; the voxel worker now rejects on failure instead of going silent.
   A new async step in the load path must reject on failure too, or the cover stays up.
@@ -174,6 +182,8 @@ changing anything it reads.
 - **A native `<select>` in the Debug card.** See the focus rule above.
 - **Paper-blue around the scan during play.** Every gap in a scan and everything past
   its edges showed light blue, which is a lot of blue on the tabletop scans.
+- **A row of dots that fill in** as the progress indicator. The bar with a
+  percentage was preferred.
 - **Greying out Begin until loading finished.** It would have hidden the frozen page
   without unfreezing it.
 
@@ -199,6 +209,9 @@ changing anything it reads.
   camera moves during the fill-in.
 - Checked headless by stills only (the room arrives and the figurine fills in on
   Kitchen). Smoothness of the motion needs a person.
+- Only fetching reports how far through it is. Unpacking (three's PLY reader, one
+  opaque call: 7.6 s on Playroom) and building hold the indicator still until they
+  end. The bar's stripes keep sliding, which is what shows the load is alive.
 - There is no Debug control to hold the loading view or replay the reveal; reload, or
   switch rooms, to see them again.
 

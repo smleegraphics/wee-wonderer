@@ -30,6 +30,8 @@ export interface Hud {
   status(message: string, kind: StatusKind): void;
   /** Show or hide the loading note (the waiting scene itself is 3D: loading-scene.ts). */
   setLoading(on: boolean): void;
+  /** What the loading note says is happening, and how far the load has got (0..1). */
+  loadProgress(doing: string, done: number): void;
   /** The value of a style token (e.g. `--paper`), for 3D things that must match the UI. */
   token(name: string): string;
   toggleDebug(): void;
@@ -148,7 +150,22 @@ export function createHud(opts: HudOptions): Hud {
 
   // --- loading note ---
   const loading = el('div', 'ww-screen ww-loading');
-  loading.appendChild(el('p', 'ww-card', 'Building the room…'));
+  const note = loading.appendChild(el('div', 'ww-card'));
+  const doing = note.appendChild(el('p'));
+  const meter = note.appendChild(el('div', 'ww-progress'));
+  meter.setAttribute('role', 'progressbar');
+  meter.setAttribute('aria-valuemin', '0');
+  meter.setAttribute('aria-valuemax', '100');
+  meter.appendChild(el('i')); // the track; its fill is drawn from --done
+  const percent = meter.appendChild(el('output'));
+  function loadProgress(what: string, done: number): void {
+    const part = Math.min(1, Math.max(0, done));
+    doing.textContent = `${what}…`;
+    meter.setAttribute('aria-valuenow', String(Math.round(part * 100)));
+    meter.style.setProperty('--done', String(part));
+    percent.textContent = `${Math.round(part * 100)}%`;
+  }
+  loadProgress('Building the room', 0); // until the app names the first step
   function setLoading(on: boolean): void {
     loading.dataset.on = String(on);
     hint.hidden = on; // the keys it lists do nothing until there is a room
@@ -199,6 +216,7 @@ export function createHud(opts: HudOptions): Hud {
     setCurrentRoom,
     status,
     setLoading,
+    loadProgress,
     token: (name) => getComputedStyle(root).getPropertyValue(name).trim(),
     toggleDebug() { unfold(debug.el.hidden ? debug.el : null); },
     titleOpen: () => !title.hidden,

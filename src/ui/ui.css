@@ -109,7 +109,18 @@ button.ww-piece[aria-expanded='true'] > .ww-face, .ww-primary > .ww-face { backg
 .ww-drop .ww-card { font: 700 1.3em var(--font-display); }
 .ww-loading { z-index: 2; place-content: end center; padding-bottom: 12vh; pointer-events: none; transition: opacity 400ms, visibility 400ms; }
 .ww-loading[data-on='false'] { opacity: 0; visibility: hidden; }
-.ww-loading p { margin: 0; padding: 8px 18px; font-size: 1.15em; letter-spacing: 0.08em; }
+.ww-loading .ww-card { display: grid; justify-items: center; gap: 8px; padding: 10px 18px 12px; }
+.ww-loading p { margin: 0; font-size: 1.15em; letter-spacing: 0.08em; }
+/* progress: a bar whose fill is --done (0..1) of the track. Its stripes always slide, so
+   it is seen to be working through the steps that cannot say how far along they are. */
+.ww-progress { --stripe: 16px; display: flex; align-items: center; gap: 10px; }
+.ww-progress i { position: relative; width: 220px; height: 12px; background: var(--rule); }
+.ww-progress i::after { content: ''; position: absolute; inset: 0 auto 0 0; width: calc(var(--done, 0) * 100%); transition: width 200ms;
+  --pale: color-mix(in srgb, var(--accent) 55%, var(--paper));
+  background: linear-gradient(-45deg, var(--pale) 25%, var(--accent) 25% 50%, var(--pale) 50% 75%, var(--accent) 75%) 0 0 / var(--stripe) var(--stripe);
+  animation: ww-working 700ms linear infinite; }
+@keyframes ww-working { to { background-position-x: var(--stripe); } }
+.ww-progress output { min-width: 3.2ch; text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-soft); }
 .ww-title { z-index: 3; background: color-mix(in srgb, color-mix(in srgb, var(--mark) 55%, #7fd0c4) 84%, transparent); }
 .ww-title h1 { display: grid; justify-items: center; gap: clamp(6px, 1.2vw, 14px); margin: 0; }
 .ww-title-word { display: flex; gap: clamp(4px, 0.9vw, 10px); }
@@ -119,5 +130,6 @@ button.ww-piece[aria-expanded='true'] > .ww-face, .ww-primary > .ww-face { backg
 .ww-begin > .ww-face { height: var(--tile); padding: 0 34px; font: 700 1.5em var(--font-display); letter-spacing: 0.04em; }
 
 @media (prefers-reduced-motion: reduce) {
-  .ww-piece, .ww-loading { transition: none; }
+  .ww-piece, .ww-loading, .ww-progress i::after { transition: none; }
+  .ww-progress i::after { animation: none; }
 }

@@ -20,7 +20,7 @@ import type { CleanOptions } from './clean-scan-core';
 import { buildClimbSideClip } from './climb-side-anim';
 import { createHud } from './ui/hud';
 import { workerCaller } from './worker-call';
-import type { ParsedScan } from './load-scan.worker';
+import type { ParsedScan, ScanLoadProgress } from './load-scan.worker';
 import { splatInternals } from './splat-internals';
 import { installReveal, startReveal, updateReveal, revealPaused, HANDOVER } from './room-reveal';
 import { createLoadingScene, type LoadingScene } from './loading-scene';
@@ -205,8 +205,29 @@ function loadScan(file: string): void {
 
 // The .ply is fetched and parsed in a worker (load-scan.worker.ts): on the main
 // thread a large scan froze the page for seconds.
-const parseScan = workerCaller<{ url: string }, ParsedScan>(
+const parseScan = workerCaller<{ url: string }, ParsedScan, ScanLoadProgress>(
   new Worker(new URL('./load-scan.worker.ts', import.meta.url), { type: 'module' }), 'scan load');
+
+// The steps of a load, in order: what the loading note says during each, and its share
+// of the progress indicator. Only fetching can say how far through it is; the others
+// move the indicator on when they end. Fetching has half: over a network it is most of
+// the wait (scans are 30 to 475 MB). The rest is split as the time is on Playroom, the
+// largest scan (unpack 7.6 s, build 3.2 s, served locally; Kitchen is 0.6 s and 1.3 s).
+const LOAD_STEPS = {
+  fetch: { says: 'Fetching the scan', share: 0.5 },
+  unpack: { says: 'Unpacking the scan', share: 0.3 },
+  build: { says: 'Building the room', share: 0.2 },
+} as const;
+let loadStepSince = 0; // when the current step began (performance.now), for telemetry
+
+/** Tell the player which step the newest load is on, and how far `through` it (0..1) it is. */
+function loadStep(token: number, step: keyof typeof LOAD_STEPS, through = 0): void {
+  if (token !== loadToken) return;
+  let before = 0;
+  for (const [name, s] of Object.entries(LOAD_STEPS)) { if (name === step) break; before += s.share; }
+  if (TEL && through === 0) { console.log(`LOAD ${step} begins, ${(performance.now() - loadStepSince).toFixed(0)}ms after the step before`); loadStepSince = performance.now(); }
+  hud.loadProgress(LOAD_STEPS[step].says, before + LOAD_STEPS[step].share * through);
+}
 
 /** Load a scan from any URL (a bundled file or an uploaded blob). `id` is the
  *  stable identity used for the collision cache and status. */
@@ -228,6 +249,7 @@ function loadFromURL(url: string, id: string): void {
   room.scale.setScalar(1);
   if (charLoaded) { resetToSpawn(); play('idle'); } // with no room, that is the origin: wait there
   updateLoading();
+  loadStep(token, 'fetch');
   // only the newest load may end the loading screen or report on itself
   const finish = (error?: unknown) => {
     if (token !== loadToken) return;
@@ -240,8 +262,9 @@ function loadFromURL(url: string, id: string): void {
 
 /** Fetch and parse the scan, put it in the room levelled and scaled, and build its collision. */
 async function showScan(url: string, id: string, token: number): Promise<void> {
-  const parsed = await parseScan({ url });
+  const parsed = await parseScan({ url }, [], (p) => loadStep(token, p.step, p.step === 'fetch' ? p.fetched : 0));
   if (token !== loadToken) return; // superseded while loading
+  loadStep(token, 'build');
   const geometry = createGaussianSplatGeometry(parsed.centers, parsed.covariances, parsed.colors, parsed.sphericalHarmonics);
   // capture the real splat centers + per-splat opacity now — GaussianSplat
   // swaps geometry for a billboard quad, so these must be read before
@@ -272,6 +295,7 @@ async function showScan(url: string, id: string, token: number): Promise<void> {
   estimateScanFill(centers, color, cov, splat.matrixWorld, scanFill);
   console.log(`loaded ${id}: radius ${o.radius.toFixed(2)} → scaled ${k.toFixed(2)}x`);
   await buildCollision(id, token, centers, opacity, cov, splat.matrixWorld);
+  if (TEL && token === loadToken) console.log(`LOAD ends, ${(performance.now() - loadStepSince).toFixed(0)}ms after the step before`);
   if (token === loadToken && charLoaded) { resetToSpawn(); requestScanLight(); }
 }
 
@@ -1646,7 +1670,6 @@ function setupDebugMenu(): void {
     'For imported scans: min opacity mass a voxel needs to be kept. Higher removes more isolated floaters.');
   cleanup.addToggle('Crop to room', CLEAN_OPTS.crop ?? true, (on) => { CLEAN_OPTS.crop = on; void recleanUpload(); },
     'For imported scans: auto-level and crop to the room box (removes far background spray).');
-
 }
 
 // --- scan import (upload + in-browser cleanup) ------------------------------

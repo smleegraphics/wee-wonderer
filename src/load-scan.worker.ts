@@ -14,14 +14,42 @@ export interface ParsedScan {
   sphericalHarmonics: Record<string, Uint32Array>; // sphericalHarmonics1..3, as many bands as the file has
 }
 
+/** How far the load has got: fetching (`fetched`: the part of the file received, 0..1), then unpacking it. */
+export type ScanLoadProgress = { step: 'fetch'; fetched: number } | { step: 'unpack' };
+
 interface Req { id: number; url: string }
+
+const REPORT_EVERY = 0.01; // say so each time this much more of the file has arrived
+
+/** The response's body, telling `onFetched` what part of it has arrived as it comes in. */
+async function readBody(response: Response, onFetched: (part: number) => void): Promise<ArrayBuffer> {
+  const total = Number(response.headers.get('Content-Length'));
+  // no size given, or the body was compressed in transit (the size is then not the size of what arrives): nothing to measure against
+  if (!response.body || !(total > 0) || response.headers.get('Content-Encoding')) return response.arrayBuffer();
+  const bytes = new Uint8Array(total);
+  const reader = response.body.getReader();
+  let got = 0, said = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (got + value.length > total) throw new Error('the file is longer than the server said');
+    bytes.set(value, got);
+    got += value.length;
+    if (got / total - said >= REPORT_EVERY) onFetched(said = got / total);
+  }
+  if (got !== total) throw new Error('the file is shorter than the server said');
+  return bytes.buffer;
+}
 
 self.onmessage = async (e: MessageEvent<Req>) => {
   const { id, url } = e.data;
   try {
     const response = await fetch(url);
     if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
-    const geometry = new GaussianSplatPLYLoader().parse(await response.arrayBuffer());
+    const say = (progress: ScanLoadProgress) => (self as unknown as Worker).postMessage({ id, progress });
+    const body = await readBody(response, (fetched) => say({ step: 'fetch', fetched }));
+    say({ step: 'unpack' });
+    const geometry = new GaussianSplatPLYLoader().parse(body);
     const sphericalHarmonics: Record<string, Uint32Array> = {};
     for (const name of Object.keys(geometry.attributes)) {
       if (name.startsWith('sphericalHarmonics')) sphericalHarmonics[name] = (geometry.getAttribute(name) as BufferAttribute).array as Uint32Array;
