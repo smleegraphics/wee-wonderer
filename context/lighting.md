@@ -36,6 +36,12 @@ so a scan with a real ceiling is unaffected. This is the same idea as a game
 engine's ambient-probe fallback; the research equivalent is inpainting the
 environment map with a diffusion model (ComGS), which is far too heavy here.
 
+**Debug view.** "Scan light: debug view" shows a panorama of the capture in the
+bottom-left corner (up at the top, down at the bottom, all the way round left to
+right) and three balls above the figurine lit by it: a mirror, a half-rough metal
+and a matte white one. The panorama is the thing to look at first when lighting
+seems wrong: a band of one flat colour is a gap being filled.
+
 **Cross-fade.** There are two captures, not one. A new capture is rendered into
 whichever is not showing, and `scanLightMix` fades over to it ("Scan light: blend",
 0.4 s by default). The environment is a node, `mix(pmremTexture(a), pmremTexture(b),
@@ -64,14 +70,16 @@ rebuilds a shader. A new capture waits until the current fade has finished.
   - *Kitchen and Counter* (tabletop scans surrounded by empty space): the figurine
     is dark, because most directions see the black backdrop.
   - *Living Room:* dark and flat.
-- **The gap fill helps where there are gaps, and only there.** Figurine brightness
-  at spawn (0–255), fill off → on: Living Room 52 → 86 (the dark top of the head is
-  gone), Kitchen 43 → 48, Counter 63 → 65, Playroom 129 → 129.
-- **Counter and Kitchen are not dark because of gaps.** Their probes are almost
-  fully covered by splats. They are dark because the scan's own light is dim next to
-  the old fixed lights, under which the same patch read about 150 on every scan. At
-  strength 1 a surface is lit about as brightly as the scan around it, which is
-  consistent but looks dull on a dark-green figurine.
+- **The gap fill**, figurine brightness at spawn (0–255), fill off → on: Living Room
+  52 → 86, Kitchen 43 → 48, Counter 63 → 65, Playroom 129 → 129. That patch is the
+  centre of the face, which looks sideways, so it under-reports what happens to the
+  top of the head. Use the debug view to judge the top.
+- **Counter's probe is about half gap.** The debug panorama shows the whole upper
+  half as fill colour. An earlier note here said Counter and Kitchen were almost
+  fully covered by splats; that was wrong.
+- **The fill is dim.** It is an average, around 0.4 grey on most scans, so the top of
+  the figurine is lit like a mid-grey ceiling, not a bright one. Under the old fixed
+  lights the face patch read about 150 on every scan.
 - **Follow mode hitches on Playroom.** The 5 ms figure is only the time to submit a
   capture. On Playroom (30 ms a frame to begin with) the worst frame during a walk
   went from 60 ms to 128 ms with follow on, and the mean from 30.6 to 33.6 ms. On

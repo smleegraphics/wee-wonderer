@@ -6,7 +6,7 @@
 // floor-plane fit in the room inspector; baked as constants here.
 
 import * as THREE from 'three';
-import { WebGPURenderer } from 'three/webgpu';
+import { WebGPURenderer, MeshBasicNodeMaterial } from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import { GaussianSplat } from 'three/addons/objects/GaussianSplat.js';
@@ -18,7 +18,7 @@ import { voxelCacheKey, voxelCacheGet, voxelCachePut } from './voxel-cache';
 import type { VoxelSurface, VoxelOptions } from './voxelize';
 import type { CleanOptions } from './clean-scan-core';
 import { buildClimbSideClip } from './climb-side-anim';
-import { mix, pmremTexture, uniform } from 'three/tsl';
+import { cos, float, mix, PI, pmremTexture, sin, uniform, uv, vec3 } from 'three/tsl';
 
 const q = new URLSearchParams(location.search);
 const TEL = q.get('tel') === '1'; // debug telemetry: CLIMB-* console events + window.__dbg
@@ -450,7 +450,7 @@ function rebuildCollision(): void {
 // moves, which is the cheapest possible "dynamic" probe.
 //   There are two captures, not one: a new capture goes into whichever isn't showing,
 // and the light cross-fades over to it, so a re-capture never swaps in a single frame.
-const SCAN_LIGHT = { on: true, intensity: 1, follow: false, blend: 0.4, fill: true }; // blend: seconds to cross-fade to a new capture; fill: see scanFill
+const SCAN_LIGHT = { on: true, intensity: 1, follow: false, blend: 0.4, fill: true, debug: false }; // blend: seconds to cross-fade to a new capture; fill: see scanFill
 const FOLLOW_INTERVAL_MS = 500;            // follow mode re-captures at most this often
 // What the probe sees where the scan has nothing — typically the ceiling, which phone
 // scans rarely capture, and the empty space around a tabletop scan. Left as the dark
@@ -475,7 +475,7 @@ function captureScanLight(): void {
   const pmrem = (scanLightPmrem ??= new THREE.PMREMGenerator(renderer as unknown as THREE.WebGLRenderer));
   // only the scan lights the probe: hide the figurine and the debug overlays
   const hidden: THREE.Object3D[] = [];
-  for (const o of [player, collisionDebug, platformDebug]) if (o && o.visible) { o.visible = false; hidden.push(o); }
+  for (const o of [player, collisionDebug, platformDebug, scanDebugBalls, scanDebugThumb]) if (o && o.visible) { o.visible = false; hidden.push(o); }
   const lit = scene as unknown as { environmentNode: unknown };
   const envNode = lit.environmentNode, bg = scene.background;
   lit.environmentNode = null; scene.background = SCAN_LIGHT.fill ? scanFill : BACKDROP;
@@ -488,6 +488,7 @@ function captureScanLight(): void {
     // first time: fill both, so the mix has two valid captures to read from
     shoot(0); shoot(1);
     scanLightNode = mix(pmremTexture(scanLightEnv[0]!.texture), pmremTexture(scanLightEnv[1]!.texture), scanLightMix);
+    buildScanDebug();
     scanLightShown = 0; scanLightMix.value = 0;
   } else {
     scanLightShown = 1 - scanLightShown; // into the one that isn't showing, then fade over to it
@@ -537,6 +538,59 @@ function applyScanLight(): void {
   (scene as unknown as { environmentNode: unknown }).environmentNode = on ? scanLightNode : null;
   scene.environmentIntensity = SCAN_LIGHT.intensity;
   hemi.visible = sun.visible = !on;
+  const dbg = on && SCAN_LIGHT.debug;
+  if (scanDebugBalls) scanDebugBalls.visible = dbg;
+  if (scanDebugThumb) scanDebugThumb.visible = dbg;
+}
+
+// Debug view of the probe: a thumbnail of exactly what it captured, and three balls
+// lit by it. The thumbnail is the capture unwrapped as a panorama — up at the top,
+// down at the bottom, all the way round left to right — so a dark band along the top
+// IS the light arriving from overhead. The balls are a mirror (what the probe sees,
+// sharp), a half-rough metal (the same, blurred) and a matte white one (the soft
+// light every surface receives — its top is what the figurine's top gets).
+let scanDebugBalls: THREE.Group | null = null;
+let scanDebugThumb: THREE.Mesh | null = null;
+const SCAN_DEBUG_BALLS = [{ roughness: 0, metalness: 1 }, { roughness: 0.5, metalness: 1 }, { roughness: 1, metalness: 0 }];
+
+function buildScanDebug(): void {
+  if (scanDebugBalls) return;
+  const balls = new THREE.Group(), geo = new THREE.SphereGeometry(1, 32, 16);
+  SCAN_DEBUG_BALLS.forEach((m, i) => {
+    const ball = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0xffffff, ...m }));
+    ball.position.x = (i - 1) * 2.6; // a row, in ball radii
+    balls.add(ball);
+  });
+  balls.visible = false;
+  scene.add(balls);
+  scanDebugBalls = balls;
+
+  // the panorama: each pixel looks up the capture in the direction it stands for
+  const lon = uv().x.sub(0.5).mul(PI.mul(2)), lat = uv().y.sub(0.5).mul(PI);
+  const dir = vec3(cos(lat).mul(sin(lon)), sin(lat), cos(lat).mul(cos(lon)));
+  const mat = new MeshBasicNodeMaterial({ depthTest: false, depthWrite: false, transparent: true });
+  mat.colorNode = mix(pmremTexture(scanLightEnv[0]!.texture, dir, float(0)), pmremTexture(scanLightEnv[1]!.texture, dir, float(0)), scanLightMix);
+  const thumb = new THREE.Mesh(new THREE.PlaneGeometry(2, 1), mat);
+  thumb.renderOrder = 1e6; // over everything
+  thumb.frustumCulled = false;
+  thumb.visible = false;
+  scene.add(camera); // so the camera can carry the thumbnail
+  camera.add(thumb);
+  scanDebugThumb = thumb;
+}
+
+/** Keep the debug balls over the figurine's head and the thumbnail pinned to the
+ *  bottom-left corner of the view. */
+function updateScanDebug(): void {
+  if (!scanDebugBalls || !scanDebugThumb || !scanDebugBalls.visible) return;
+  const r = charH * 0.18;
+  scanDebugBalls.scale.setScalar(r);
+  scanDebugBalls.position.set(player.position.x, player.position.y + charH * 1.6, player.position.z);
+  scanDebugBalls.quaternion.copy(camera.quaternion); // the row runs across the screen
+  const d = charH, halfH = d * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2), halfW = halfH * camera.aspect;
+  const h = halfH * 2 * 0.2, margin = halfH * 0.04; // a fifth of the view's height; the panorama is twice as wide as tall
+  scanDebugThumb.scale.setScalar(h);
+  scanDebugThumb.position.set(-halfW + margin + h, -halfH + margin + h / 2, -d);
 }
 
 /** Per frame: run a pending capture, advance the cross-fade, and in follow mode
@@ -1195,7 +1249,7 @@ async function main(): Promise<void> {
     const dt = Math.min(clock.getDelta(), 0.05);
     if (charLoaded) { updateController(dt); if (FREECAM) updateFreeCam(); else updateCamera(dt); }
     mixer?.update(dt);
-    if (charLoaded) updateScanLight(dt);
+    if (charLoaded) { updateScanLight(dt); updateScanDebug(); }
     if (TEL) publishDebugState();
     void renderer.renderAsync(scene, camera).then(() => {
       if (charLoaded && ++frames === 3) (window as unknown as { __wwReady?: boolean }).__wwReady = true;
@@ -1375,6 +1429,8 @@ function setupDebugMenu(): void {
     'Re-capture the light as the figurine moves, so it changes from place to place. Off = captured once at the spawn point.');
   addToggle('Scan light: fill gaps', SCAN_LIGHT.fill, (on) => { SCAN_LIGHT.fill = on; requestScanLight(1); },
     'Where the scan has nothing (usually the ceiling), light the figurine with the average colour of the scan\'s upper half instead of darkness.');
+  addToggle('Scan light: debug view', SCAN_LIGHT.debug, (on) => { SCAN_LIGHT.debug = on; applyScanLight(); },
+    'Show what the light probe captured (panorama, bottom-left: up is at the top) and three balls lit by it: mirror, half-rough metal, matte white.');
   addSlider('Scan light: strength', SCAN_LIGHT.intensity, 0, 3, 0.05, (v) => { SCAN_LIGHT.intensity = v; applyScanLight(); });
   addSlider('Scan light: blend (s)', SCAN_LIGHT.blend, 0, 2, 0.1, (v) => { SCAN_LIGHT.blend = v; },
     'Seconds to cross-fade from one light capture to the next in follow mode. 0 = swap instantly.');
