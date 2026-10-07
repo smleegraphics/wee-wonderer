@@ -11,6 +11,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@fontsource/patrick-hand-sc": "^5.3.0",
+    "@fontsource/pixelify-sans": "^5.3.0",
     "three": "^0.186.0",
     "three-mesh-bvh": "^0.9.15"
   },

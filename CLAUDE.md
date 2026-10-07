@@ -13,6 +13,7 @@ The two docs below are the ones to read before touching movement.
 - **Collision mesh, voxelizer, floor, walls, scan cleanup** → `context/collision.md`
 - **Climbing, jumping onto walls, the follow camera, climb animation** → `context/climb.md`
 - **Lights, the environment map, the contact shadow, rendering the splats from another camera** → `context/lighting.md`
+- **Anything on screen that is not the 3D view: tiles, cards, the Debug card, title and loading screens, fonts, colours** → `context/ui.md`
 
 ## Commands
 
@@ -29,9 +30,14 @@ the default is `room2.ply` (Playroom). Cleaned demo scans are `*-clean.ply`.
 
 | File | What it holds |
 |---|---|
-| `src/main.ts` | App, controller (`updateController`, `navMove`), climb state machine, follow camera, Debug panel |
+| `src/main.ts` | App, controller (`updateController`, `navMove`), climb state machine, follow camera, the list of Debug tunables (`setupDebugMenu`) |
+| `src/ui/` | The on-screen UI: `hud.ts` (tiles, cards, screens), `debug-panel.ts`, `paper.ts` (building blocks), `ui.css` (all styles and tokens) |
 | `src/collision.ts` | `MeshCollision` (three-mesh-bvh over the collision mesh) and `NavGrid` (walkable cells) |
 | `src/voxelize-core.ts` (+ `.worker.ts`, `voxelize.ts`) | Splat → density field → collision surface |
+| `src/room-reveal.ts`, `src/loading-scene.ts`, `src/paper-bits.ts`, `src/paper-figurine.ts` | How a room arrives after loading (the scan's points start as a sheet of paper dots and rise to their places, in the scan's shader), the stand-in dots before it has loaded, the formulas both share, and the figurine's paper look meanwhile |
+| `src/three-internals.ts` | Every private part of three.js the app touches (`GaussianSplat`'s fields, the renderer's material conversion); check it on a three.js upgrade |
+| `src/load-scan.worker.ts` | Fetches and parses a scan's `.ply` off the main thread |
+| `src/worker-call.ts` | `workerCaller`: promise-based request/response for all three workers (a failed job rejects) |
 | `src/voxel-cache.ts` | IndexedDB cache of the built surface. **Bump `SCHEMA` when the surface algorithm changes.** |
 | `src/orient-scan.ts` | Levels the floor and yaw-aligns walls to X/Z (seeded, deterministic) |
 | `src/clean-scan-core.ts` (+ worker), `scripts/clean-scan.mjs` | Floater removal, in-browser and offline |
@@ -49,22 +55,32 @@ Visual and behavioural checks run headless in real Chrome through Playwright.
   (`dist` in `TARGET_RADIUS` units). Without it the camera follows the figurine.
 - **Telemetry and internal state:** `?tel=1` logs `CLIMB-*` events to the console
   and publishes `window.__dbg` every frame (state, position, climb facing, camera
-  distances, `probe`). Without `?tel=1` there is no `__dbg`. `window.__wwReady` is
+  distances, `probe`, and `reveal`: how much of the room is in place, 0 while
+  waiting and 1 once it has arrived). Without `?tel=1` there is no `__dbg`. `window.__wwReady` is
   always set once the first frames have rendered.
+- **UI regression check:** `node scripts/uicheck.mjs` runs 22 checks of the title,
+  keys, tiles, Debug card, loading view, room switch and a failed load, and exits
+  non-zero on a failure. Run it after any change under `src/ui/` or to loading.
 - **Climb regression check:** `node scripts/climbfuzz.mjs <scan> <seconds> <seed>`
   walks, jumps and climbs at random and reports any frame where the climber is
   inside a solid. Run a few seeds, at most three browsers at a time.
 - **Drive it:** press keys with Playwright and poll `__dbg`. Do not judge movement
-  from screenshots alone.
+  from screenshots alone. `scripts/drive.mjs` also clicks UI by name: `tile:Debug`,
+  `room:Kitchen`, `range:Isovalue (fill)=0.4`.
+- **The title screen** shows on a first visit and takes the keyboard. The scripts
+  dismiss it up front; a Playwright script of your own must set
+  `localStorage['ww.titleSeen'] = '1'` before load (see `context/ui.md`).
 - **Blind walks rarely reach walls.** Holding one key from spawn usually ends at a
   walkable-area edge. Counter and Kitchen have climbable objects near spawn;
   Playroom and Living Room mostly need a human to aim at a wall.
 
 ## Conventions
 
-- **Debug tunables go in the on-screen Debug panel** (`addToggle` / `addSlider` in
-  `setupDebugMenu`), not new URL params. Collision sliders set `VOXEL_OPTS` and call
-  `rebuildCollision()`.
+- **Debug tunables go in the on-screen Debug card** (`addToggle` / `addSlider` on a
+  section in `setupDebugMenu`), not new URL params. Collision sliders set `VOXEL_OPTS`
+  and call `rebuildCollision()`.
+- **`main.ts` does not build UI.** It talks to the `hud` handle; DOM and styles live
+  in `src/ui/`, and every colour, font and size is a token in `ui.css`.
 - **The controller talks to collision only through the `Collision` interface**, so
   backends stay swappable.
 - **Standing on something means the NavGrid says so.** Movement is confined to
@@ -93,7 +109,7 @@ When reviewing a change here, look for these, in this order:
    match the code.
 5. **Debug leftovers.** Console output and measurement code must be gated behind
    `?tel=1` and worth keeping. Remove temporary instrumentation, stale scripts and
-   URL-param tunables that belong in the Debug panel.
+   URL-param tunables that belong in the Debug card.
 
 Project-specific checks:
 
