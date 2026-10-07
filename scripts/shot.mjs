@@ -20,6 +20,8 @@ const browser = await chromium.launch({
 try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1 });
   page.on('console', (m) => console.log('[page]', m.type(), m.text()));
+  // a fresh browser profile would open on the title screen, which takes the keyboard until Begin is pressed
+  await page.addInitScript(() => localStorage.setItem('ww.titleSeen', '1'));
   page.on('pageerror', (e) => console.log('[pageerror]', e.message));
 
   await page.goto(url, { waitUntil: 'load', timeout: 15000 });

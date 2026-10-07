@@ -10,7 +10,7 @@ self.onmessage = (e: MessageEvent<Req>) => {
   const { id, buffer, opts } = e.data;
   try {
     const r = cleanScan(buffer, opts);
-    (self as unknown as Worker).postMessage({ id, ...r }, [r.buffer]);
+    (self as unknown as Worker).postMessage({ id, result: r }, [r.buffer]);
   } catch (err) {
     (self as unknown as Worker).postMessage({ id, error: err instanceof Error ? err.message : String(err) });
   }

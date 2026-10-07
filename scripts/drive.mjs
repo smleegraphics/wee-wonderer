@@ -1,19 +1,24 @@
 // Drive the app with keyboard input for controller verification.
 //   node scripts/drive.mjs <url> <step> [step...]
 // steps: down:KeyW  up:KeyW  press:Space  wait:1500  shot:/tmp/x.png
+//        room:Kitchen (pick a room by its name)   tile:Debug (click an icon tile by its name)
+//        range:Light strength=2 (set a Debug slider by its label)   title:1 (start on the title screen)
 import { chromium } from 'playwright';
 
 const url = process.argv[2] ?? 'http://localhost:5173/';
 const steps = process.argv.slice(3);
+const startOnTitle = steps.includes('title:1');
 
 const browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--enable-unsafe-swiftshader'] });
 try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1 });
   page.on('console', (m) => console.log('[page]', m.type(), m.text()));
   page.on('pageerror', (e) => console.log('[pageerror]', e.message));
+  // a fresh browser profile opens on the title screen, which takes the keyboard until Begin is pressed
+  if (!startOnTitle) await page.addInitScript(() => localStorage.setItem('ww.titleSeen', '1'));
   await page.goto(url, { waitUntil: 'load', timeout: 15000 });
   await page.waitForFunction(() => window.__wwReady === true, { timeout: 10000 }).catch(() => {});
-  await page.mouse.click(640, 400); // focus so key events land
+  if (!startOnTitle) await page.mouse.click(640, 400); // focus so key events land
 
   for (const s of steps) {
     const i = s.indexOf(':');
@@ -23,6 +28,7 @@ try {
     else if (op === 'up') await page.keyboard.up(arg);
     else if (op === 'press') await page.keyboard.press(arg);
     else if (op === 'wait') await page.waitForTimeout(Number(arg));
+    else if (op === 'title') { /* read before load: see startOnTitle */ }
     else if (op === 'drag') {
       const [dx, dy] = arg.split(',').map(Number);
       await page.mouse.move(640, 400);
@@ -34,11 +40,19 @@ try {
       await page.mouse.click(x, y);
     } else if (op === 'clickText') {
       await page.getByText(arg, { exact: true }).click();
-    } else if (op === 'select') {
-      await page.locator('select').selectOption(arg); // arg = option value (scan file)
+    } else if (op === 'tile') {
+      await page.getByRole('button', { name: arg, exact: true }).click();
+    } else if (op === 'room') {
+      await page.getByRole('button', { name: 'Rooms', exact: true }).click();
+      await page.locator('.ww-rooms').getByRole('button', { name: arg, exact: true }).click();
     } else if (op === 'range') {
-      const [nth, value] = arg.split('='); // "0=1.5" → nth range input, set value (fires change)
-      await page.locator('input[type=range]').nth(Number(nth)).fill(value);
+      const [label, value] = arg.split('='); // "Light strength=2" → that slider, set and released
+      // set it directly: the slider may sit in a folded section of a closed card, where it cannot be dragged
+      await page.getByLabel(label, { exact: true }).evaluate((el, v) => {
+        el.value = v;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      }, value);
     } else if (op === 'file') {
       await page.setInputFiles('input[type=file]', arg); // arg = path to upload
       await page.evaluate(() => (document.activeElement instanceof HTMLElement) && document.activeElement.blur()); // release focus so keys land on window

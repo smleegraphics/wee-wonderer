@@ -1,0 +1,128 @@
+/* Wee Wonderer's on-screen UI: cut-paper pieces over the scan (see context/ui.md).
+   Every colour, font and size is a token on .ww-ui; components only read tokens. */
+
+.ww-ui {
+  --paper: #e4f1f4;
+  --ink: #4c6377;
+  --ink-soft: #7d90a1;
+  --shade: var(--ink);      /* the colour a piece's shadow is cut from */
+  --mark: #5fb0e8;          /* small marks: slider fill, ticks, the current room */
+  --accent: #f1c84c;        /* the one loud colour: Begin, and whichever tile is open */
+  --accent-ink: #5a4310;
+  --danger: #b8434e;
+  --font-display: 'Pixelify Sans', ui-monospace, monospace;
+  --font-body: 'Patrick Hand SC', 'Comic Sans MS', cursive;
+  --text: 17px;
+  --tile: 58px;             /* side of a square icon tile */
+  --wonk: 0.8;              /* how lopsided the cuts are: 0 = perfect rectangles */
+  --edge: 16px;             /* gap between the HUD and the window edge */
+  --gap: 12px;              /* gap between neighbouring pieces */
+  --lift: 5px;              /* how far a piece sits above the page = its shadow offset */
+  --drop: drop-shadow(var(--lift) var(--lift) 0 var(--shade));
+  --card-pad: 14px;
+  --rule: color-mix(in srgb, var(--ink) 20%, transparent);
+  --sky: #b1d8ef;           /* the open air around a scan (--mark and --paper mixed 38:62). A plain value: the 3D scene reads it */
+  --beyond: #1a1c22;        /* what is around a scan once it has arrived: near-dark, so its gaps and edges recede. Plain, for the same reason */
+
+  position: fixed; inset: 0; z-index: 10;
+  pointer-events: none; /* the scan underneath keeps its mouse (orbit camera); only pieces take clicks */
+  color-scheme: light;
+  color: var(--ink);
+  font: var(--text)/1.25 var(--font-body);
+  text-transform: uppercase;
+  user-select: none;
+}
+.ww-ui > * { pointer-events: auto; }
+.ww-ui [hidden] { display: none !important; }
+.ww-ui button { font: inherit; color: inherit; text-transform: inherit; cursor: pointer; }
+.ww-ui :focus-visible { outline: 2px solid var(--mark); outline-offset: 2px; }
+/* a piece shows keyboard focus on its face: an outline on the holder would cast a shadow of its own */
+.ww-piece:focus-visible { outline: none; }
+.ww-piece:focus-visible > .ww-face { box-shadow: inset 0 0 0 4px var(--mark); }
+
+/* ---- paper pieces ----------------------------------------------------------
+   A piece is a holder that casts the shadow and a .ww-face cut to shape inside it.
+   The shadow is a drop-shadow filter on the holder, so it follows the cut. Three
+   cuts (a/b/c) so neighbouring pieces are never the same quadrilateral. */
+.ww-piece { display: inline-block; padding: 0; border: 0; background: none; filter: var(--drop); transition: transform 80ms, filter 80ms; }
+.ww-face { display: grid; place-items: center; box-sizing: border-box; width: 100%; height: 100%; background: var(--paper); clip-path: var(--cut); }
+.ww-cut-a { --cut: polygon(calc(5% * var(--wonk)) 0, 100% calc(4% * var(--wonk)), calc(100% - 4% * var(--wonk)) 100%, 0 calc(100% - 3% * var(--wonk))); }
+.ww-cut-b { --cut: polygon(0 calc(5% * var(--wonk)), calc(100% - 3% * var(--wonk)) 0, 100% calc(100% - 5% * var(--wonk)), calc(4% * var(--wonk)) 100%); }
+.ww-cut-c { --cut: polygon(calc(3% * var(--wonk)) calc(3% * var(--wonk)), 100% 0, calc(100% - 6% * var(--wonk)) calc(100% - 2% * var(--wonk)), 0 100%); }
+/* pressed: the piece is pushed flat onto the page, so it moves by its lift and loses its shadow */
+button.ww-piece:active { transform: translate(var(--lift), var(--lift)); filter: none; }
+button.ww-piece[aria-expanded='true'] > .ww-face, .ww-primary > .ww-face { background: var(--accent); color: var(--accent-ink); }
+
+.ww-tile { width: var(--tile); height: var(--tile); }
+.ww-tile svg { width: 58%; height: 58%; fill: currentColor; }
+
+.ww-card { box-sizing: border-box; padding: var(--card-pad) calc(var(--card-pad) + 2px); background: var(--paper); filter: var(--drop); transform: rotate(calc(0.5deg * var(--wonk))); }
+.ww-heading { margin: 0 0 8px; font: 700 1.15em/1.2 var(--font-display); letter-spacing: 0.04em; }
+
+/* ---- HUD: rooms top-right, reset + debug stacked bottom-right --------------- */
+.ww-corner { position: absolute; right: var(--edge); display: flex; flex-direction: column; gap: var(--gap); }
+.ww-corner-top { top: var(--edge); }
+.ww-corner-bottom { bottom: var(--edge); }
+/* cards unfold beside the tile column */
+.ww-rooms, .ww-debug { position: absolute; right: calc(var(--edge) + var(--tile) + var(--gap)); }
+
+.ww-rooms { top: var(--edge); width: 230px; }
+.ww-rooms ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.ww-rooms button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: 0; background: none; text-align: left; }
+.ww-rooms button:hover { background: color-mix(in srgb, var(--mark) 22%, transparent); }
+.ww-rooms button::before { content: ''; flex: none; width: 9px; height: 9px; border-radius: 50%; }
+.ww-rooms button[aria-current='true']::before { background: var(--mark); }
+.ww-rooms .ww-import { margin-top: 6px; padding-top: 10px; border-top: 2px dashed var(--ink-soft); color: var(--ink-soft); }
+
+/* ---- debug card: heading and help stay put, only the sections scroll -------- */
+.ww-debug { bottom: var(--edge); width: 300px; max-width: calc(100% - 2 * var(--edge) - var(--tile) - var(--gap)); max-height: calc(100% - 2 * var(--edge)); display: flex; flex-direction: column; }
+.ww-debug-sections { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding-right: 6px; }
+.ww-debug details { border-top: 2px solid var(--rule); padding: 6px 0; }
+.ww-debug summary { display: flex; align-items: center; justify-content: space-between; padding: 2px 0; cursor: pointer; list-style: none; font-family: var(--font-display); letter-spacing: 0.04em; }
+.ww-debug summary::-webkit-details-marker { display: none; }
+.ww-debug summary::after { content: '+'; font-size: 1.2em; color: var(--ink-soft); }
+.ww-debug details[open] > summary::after { content: '–'; }
+.ww-debug-count { margin: 0 auto 0 8px; color: var(--ink-soft); font-family: var(--font-body); font-variant-numeric: tabular-nums; }
+.ww-debug-rows { display: flex; flex-direction: column; gap: 8px; padding: 8px 0 2px; }
+.ww-debug-row { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; align-items: center; cursor: pointer; }
+.ww-debug-row output { color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.ww-debug-row input { margin: 0; accent-color: var(--mark); cursor: pointer; }
+.ww-debug-choice { display: flex; flex-direction: column; gap: 5px; }
+.ww-debug-choice > div { display: flex; flex-wrap: wrap; gap: 5px; }
+.ww-debug-row input[type='range'] { grid-column: 1 / -1; width: 100%; }
+.ww-debug-row input[type='checkbox'] { width: 18px; height: 18px; }
+.ww-debug-button { padding: 5px 8px; border: 2px solid var(--ink-soft); background: none; text-align: left; }
+.ww-debug-button:hover { background: color-mix(in srgb, var(--mark) 22%, transparent); }
+.ww-debug-button[aria-pressed='true'] { border-color: var(--ink); background: var(--accent); color: var(--accent-ink); }
+/* all the help texts share one grid cell, so the strip is as tall as the longest of them */
+.ww-debug-help { flex: none; display: grid; margin-top: 2px; padding-top: 8px; border-top: 2px dashed var(--rule); color: var(--ink-soft); font-size: 0.82em; line-height: 1.3; text-transform: none; }
+.ww-debug-help > * { grid-area: 1 / 1; visibility: hidden; }
+.ww-debug-help > [data-on] { visibility: visible; }
+
+/* ---- controls hint ---------------------------------------------------------- */
+.ww-hint { position: absolute; left: var(--edge); bottom: var(--edge); max-width: calc(100% - 3 * var(--edge) - var(--tile)); display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; color: #fff; text-shadow: 0 1px 3px rgb(0 0 0 / 0.7); pointer-events: none; }
+.ww-hint span { display: inline-flex; align-items: center; gap: 5px; }
+.ww-key { display: inline-grid; place-items: center; box-sizing: border-box; min-width: 26px; height: 26px; padding: 0 6px; background: var(--paper); color: var(--ink); font: 700 13px var(--font-display); text-shadow: none; filter: drop-shadow(2px 2px 0 var(--shade)); }
+
+/* ---- status: above everything, so an error is readable over the loading and title screens */
+.ww-status { position: absolute; z-index: 4; top: var(--edge); left: 50%; translate: -50% 0; max-width: 60%; padding: 8px 16px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ww-status[data-kind='error'] { color: var(--danger); cursor: pointer; }
+
+/* ---- full-window screens ---------------------------------------------------- */
+.ww-screen { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 22px; padding: 24px; text-align: center; }
+.ww-drop { z-index: 1; pointer-events: none; background: color-mix(in srgb, var(--mark) 55%, transparent); }
+.ww-drop .ww-card { font: 700 1.3em var(--font-display); }
+.ww-loading { z-index: 2; place-content: end center; padding-bottom: 12vh; pointer-events: none; transition: opacity 400ms, visibility 400ms; }
+.ww-loading[data-on='false'] { opacity: 0; visibility: hidden; }
+.ww-loading p { margin: 0; padding: 8px 18px; font-size: 1.15em; letter-spacing: 0.08em; }
+.ww-title { z-index: 3; background: color-mix(in srgb, color-mix(in srgb, var(--mark) 55%, #7fd0c4) 84%, transparent); }
+.ww-title h1 { display: grid; justify-items: center; gap: clamp(6px, 1.2vw, 14px); margin: 0; }
+.ww-title-word { display: flex; gap: clamp(4px, 0.9vw, 10px); }
+.ww-letter { width: clamp(30px, 6.6vw, 78px); height: clamp(36px, 8vw, 94px); }
+.ww-letter > .ww-face { font: 700 clamp(22px, 5vw, 60px)/1 var(--font-display); }
+.ww-title p { margin: 0; padding: 6px 16px; }
+.ww-begin > .ww-face { height: var(--tile); padding: 0 34px; font: 700 1.5em var(--font-display); letter-spacing: 0.04em; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ww-piece, .ww-loading { transition: none; }
+}

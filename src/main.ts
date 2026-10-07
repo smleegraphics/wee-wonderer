@@ -10,7 +10,7 @@ import { WebGPURenderer, MeshBasicNodeMaterial } from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import { GaussianSplat } from 'three/addons/objects/GaussianSplat.js';
-import { GaussianSplatPLYLoader } from 'three/addons/loaders/GaussianSplatPLYLoader.js';
+import { createGaussianSplatGeometry } from 'three/addons/utils/GaussianSplatUtils.js';
 import { orientScan } from './orient-scan';
 import { surfaceToGeometry } from './voxelize';
 import { MeshCollision, type NavGrid, type WallHit } from './collision';
@@ -18,6 +18,13 @@ import { voxelCacheKey, voxelCacheGet, voxelCachePut } from './voxel-cache';
 import type { VoxelSurface, VoxelOptions } from './voxelize';
 import type { CleanOptions } from './clean-scan-core';
 import { buildClimbSideClip } from './climb-side-anim';
+import { createHud } from './ui/hud';
+import { workerCaller } from './worker-call';
+import type { ParsedScan } from './load-scan.worker';
+import { splatInternals } from './splat-internals';
+import { installReveal, startReveal, updateReveal, revealPaused, waitingBits, HANDOVER, REVEAL, REVEAL_STYLES, type RevealStyle } from './room-reveal';
+import { createLoadingScene, type LoadingScene } from './loading-scene';
+import { createPaperFigurine, type PaperFigurine } from './paper-figurine';
 import { cameraPosition, cameraProjectionMatrixInverse, cameraWorldMatrix, cos, float, Fn, If, instanceIndex, mix, modelWorldMatrix, PI, pmremTexture, sin, smoothstep, uniform, uv, varying, vec3, vec4, viewportUV } from 'three/tsl';
 
 const q = new URLSearchParams(location.search);
@@ -61,7 +68,7 @@ const FREECAM = ['az', 'el', 'dist', 'cx', 'cy', 'cz'].some((k) => q.has(k));
 const FREECAM_OPTS = { az: num('az', 0.9), el: num('el', 0.5), dist: num('dist', 2.2), cx: num('cx', 0), cy: num('cy', 1), cz: num('cz', 0) };
 let showVoxels = q.get('voxel') === '1';
 let collisionDebug: THREE.Mesh | null = null;
-let voxelCheckbox: HTMLInputElement | null = null;
+let voxelCheckbox: HTMLInputElement | null = null; // the Debug card's copy of showVoxels (the V key changes it too)
 // Spike 1: platform-decomposition overlay (colored walkable surfaces). stepFactor
 // = max step (in char-heights) two cells can differ and still be one platform;
 // minCells drops floater specks. Tuned live to see how scans decompose.
@@ -90,10 +97,53 @@ let loadToken = 0; // guards against a slow async collision build landing after 
 // scan import (upload + in-browser cleanup), session-only
 const CLEAN_OPTS: CleanOptions = { alphaMin: 0.35, minMass: 4, scaleCapMul: 4, crop: true };
 const uploads = new Map<string, string>(); // upload id → blob object URL
-let scanSelect: HTMLSelectElement | null = null;
 let lastUploadBuffer: ArrayBuffer | null = null; // raw bytes of the active upload (for live re-clean)
 let lastUploadName = '';
 const app = document.getElementById('app')!;
+// The on-screen UI (context/ui.md). Demo scans load by filename; an uploaded id
+// resolves to its blob URL in `uploads`.
+const hud = createHud({
+  rooms: SCANS.map((s) => ({ id: s.file, label: s.label })),
+  onPickRoom: (id) => { const url = uploads.get(id); if (url) loadFromURL(url, id); else loadScan(id); },
+  onImport: (file) => void importScan(file),
+  onReset: () => { if (charLoaded) resetToSpawn(); }, // the way out of any spot the figurine gets stuck in
+});
+let scanLoading = false; // a scan is being fetched or its collision built
+// The loading view: there is no room yet, and the figurine waits, idle, in a drifting
+// field of paper dots (loading-scene.ts). When the view ends the room grows in around the figurine
+// (room-reveal.ts). `hold` keeps the view up after loading, to look at it.
+const LOADING_VIEW = { hold: false };
+let loadingScene: LoadingScene | null = null; // made once the figurine's height is known
+let paperFigurine: PaperFigurine | null = null; // the figurine's paper look while it waits (paper-figurine.ts)
+let loadingShown = true;
+let revealProgress = 1; // the last value of updateReveal, for telemetry
+
+/** True until there is a room to stand in and a figurine to stand in it. */
+function loadingViewOn(): boolean {
+  return scanLoading || !charLoaded || LOADING_VIEW.hold;
+}
+
+/** Bring the screen in line with whether the loading view is on. Call after anything it depends on changes. */
+function updateLoading(): void {
+  const on = loadingViewOn();
+  hud.setLoading(on);
+  room.visible = !on;
+  if (on) loadingScene?.place(player.position);
+  else if (loadingShown) revealRoom(); // the view has just ended
+  loadingShown = on;
+}
+
+/** The UI's paper colours, for the 3D things made of the same paper. */
+function paperColours(): { paper: string; accent: string; ink: string } {
+  return { paper: hud.token('--paper'), accent: hud.token('--accent'), ink: hud.token('--ink') };
+}
+
+/** Bring the room in around the figurine, from where it stands. */
+function revealRoom(): void {
+  loadingScene?.place(player.position);
+  // the scan is centred on the origin and scaled to TARGET_RADIUS, so this reaches all of the room from wherever the figurine is
+  startReveal(player.position, TARGET_RADIUS + Math.hypot(player.position.x, player.position.z), charH, paperColours());
+}
 
 const renderer = new WebGPURenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -101,8 +151,14 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 app.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-const BACKDROP = new THREE.Color(0x1a1c22);
-scene.background = BACKDROP;
+// What is seen around a scan. While the figurine waits it is the open air of the paper
+// world (the UI's --sky token; index.html paints it before the first frame). As the room
+// arrives it darkens to --beyond, which a scan's gaps and edges recede into; it changes
+// with the arrival, so it is never a cut.
+const SURROUND = { sky: new THREE.Color(hud.token('--sky')), beyond: new THREE.Color(hud.token('--beyond')), darken: [HANDOVER, 0.8] }; // darken: the part of the arrival it takes
+const surround = new THREE.Color().copy(SURROUND.sky);
+scene.background = surround;
+const UNLIT = new THREE.Color(0x1a1c22); // what the light probe sees where the scan has nothing and gaps are not filled: near-darkness
 
 const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.001, 200);
 
@@ -153,11 +209,18 @@ function loadScan(file: string): void {
   loadFromURL(`${import.meta.env.BASE_URL}${file}`, file);
 }
 
+// The .ply is fetched and parsed in a worker (load-scan.worker.ts): on the main
+// thread a large scan froze the page for seconds.
+const parseScan = workerCaller<{ url: string }, ParsedScan>(
+  new Worker(new URL('./load-scan.worker.ts', import.meta.url), { type: 'module' }), 'scan load');
+
 /** Load a scan from any URL (a bundled file or an uploaded blob). `id` is the
  *  stable identity used for the collision cache and status. */
 function loadFromURL(url: string, id: string): void {
   const token = ++loadToken;
   currentFile = id;
+  hud.setCurrentRoom(id);
+  scanLoading = true;
   if (currentSplat) {
     room.remove(currentSplat);
     currentSplat.geometry.dispose();
@@ -169,43 +232,53 @@ function loadFromURL(url: string, id: string): void {
   room.quaternion.identity();
   room.position.set(0, 0, 0);
   room.scale.setScalar(1);
-  new GaussianSplatPLYLoader().load(
-    url,
-    async (geometry) => {
-      // capture the real splat centers + per-splat opacity now — GaussianSplat
-      // swaps geometry for a billboard quad, so these must be read before
-      // construction. Opacity is the alpha of the loader's color attribute.
-      const centers = geometry.getAttribute('position') as THREE.BufferAttribute;
-      const color = geometry.getAttribute('color') as THREE.BufferAttribute;
-      const opacity = new Float32Array(centers.count);
-      for (let i = 0; i < opacity.length; i++) opacity[i] = color.getW(i);
-      const o = orientScan(centers);
-      // scans have arbitrary unit scales — normalize each to a consistent world
-      // size so the fixed-size figurine stays a sensible fraction of every room.
-      const k = TARGET_RADIUS / o.radius;
-      // per-splat 3-D Gaussian covariance drives anisotropic voxelization (splats fill
-      // their real ellipsoid footprint). The worldspace transform is applied in the core.
-      const covAttr = geometry.getAttribute('covariance') as THREE.BufferAttribute | undefined;
-      const cov = covAttr && covAttr.itemSize === 6 ? (covAttr.array as Float32Array) : null;
-      const splat = new GaussianSplat(geometry);
-      installContactShadow(splat);
-      splat.position.copy(o.center).multiplyScalar(-1); // recenter to origin
-      splat.visible = !MESHONLY; // mesh-only debug view hides the splat
-      room.add(splat);
-      room.quaternion.copy(o.quaternion); // auto-leveled: floor normal → +Y
-      room.scale.setScalar(k);
-      room.position.y = k * o.floorOffsetY; // floor at y=0 (in scaled space)
-      currentSplat = splat;
-      room.updateMatrixWorld(true);
-      lastCenters = centers; lastOpacity = opacity; lastCov = cov; lastMatrix.copy(splat.matrixWorld);
-      estimateScanFill(centers, color, cov, splat.matrixWorld, scanFill);
-      console.log(`loaded ${id}: radius ${o.radius.toFixed(2)} → scaled ${k.toFixed(2)}x`);
-      await buildCollision(id, token, centers, opacity, cov, splat.matrixWorld);
-      if (token === loadToken && charLoaded) { resetToSpawn(); requestScanLight(); }
-    },
-    undefined,
-    (err) => showBanner(`${id} load failed: ${String(err)}`),
-  );
+  if (charLoaded) { resetToSpawn(); play('idle'); } // with no room, that is the origin: wait there
+  updateLoading();
+  // only the newest load may end the loading screen or report on itself
+  const finish = (error?: unknown) => {
+    if (token !== loadToken) return;
+    scanLoading = false;
+    updateLoading();
+    if (error !== undefined) hud.status(`${id}: ${error instanceof Error ? error.message : String(error)}`, 'error');
+  };
+  showScan(new URL(url, location.href).href, id, token).then(() => finish(), finish); // absolute: a worker resolves URLs against its own script
+}
+
+/** Fetch and parse the scan, put it in the room levelled and scaled, and build its collision. */
+async function showScan(url: string, id: string, token: number): Promise<void> {
+  const parsed = await parseScan({ url });
+  if (token !== loadToken) return; // superseded while loading
+  const geometry = createGaussianSplatGeometry(parsed.centers, parsed.covariances, parsed.colors, parsed.sphericalHarmonics);
+  // capture the real splat centers + per-splat opacity now — GaussianSplat
+  // swaps geometry for a billboard quad, so these must be read before
+  // construction. Opacity is the alpha of the color attribute.
+  const centers = geometry.getAttribute('position') as THREE.BufferAttribute;
+  const color = geometry.getAttribute('color') as THREE.BufferAttribute;
+  const opacity = new Float32Array(centers.count);
+  for (let i = 0; i < opacity.length; i++) opacity[i] = color.getW(i);
+  const o = orientScan(centers);
+  // scans have arbitrary unit scales — normalize each to a consistent world
+  // size so the fixed-size figurine stays a sensible fraction of every room.
+  const k = TARGET_RADIUS / o.radius;
+  // per-splat 3-D Gaussian covariance drives anisotropic voxelization (splats fill
+  // their real ellipsoid footprint). The worldspace transform is applied in the core.
+  const cov = parsed.covariances;
+  const splat = new GaussianSplat(geometry);
+  installReveal(splat, centers.count);
+  installContactShadow(splat);
+  splat.position.copy(o.center).multiplyScalar(-1); // recenter to origin
+  splat.visible = !MESHONLY; // mesh-only debug view hides the splat
+  room.add(splat);
+  room.quaternion.copy(o.quaternion); // auto-leveled: floor normal → +Y
+  room.scale.setScalar(k);
+  room.position.y = k * o.floorOffsetY; // floor at y=0 (in scaled space)
+  currentSplat = splat;
+  room.updateMatrixWorld(true);
+  lastCenters = centers; lastOpacity = opacity; lastCov = cov; lastMatrix.copy(splat.matrixWorld);
+  estimateScanFill(centers, color, cov, splat.matrixWorld, scanFill);
+  console.log(`loaded ${id}: radius ${o.radius.toFixed(2)} → scaled ${k.toFixed(2)}x`);
+  await buildCollision(id, token, centers, opacity, cov, splat.matrixWorld);
+  if (token === loadToken && charLoaded) { resetToSpawn(); requestScanLight(); }
 }
 
 // --- character state ---------------------------------------------------------
@@ -258,6 +331,10 @@ function onLoaded(gltf: GLTF): void {
 
   play('idle', 0);
   charLoaded = true;
+  loadingScene = createLoadingScene(charH, paperColours());
+  paperFigurine = createPaperFigurine(model, renderer, hud.token('--paper'));
+  scene.add(loadingScene.object);
+  updateLoading();
   if (collision) rebuildPlatformOverlay(); // rebuild the NavGrid now charH (headroom/step) is real
   resetToSpawn();
   requestScanLight();
@@ -348,6 +425,9 @@ function onActionFinished(e: { action: THREE.AnimationAction }): void {
 }
 
 function keyEvent(e: KeyboardEvent, v: 0 | 1): void {
+  // A key pressed on a UI control, or while the title screen or the loading view is
+  // up, is not for the figurine. Releases always get through, so a held key can never stick down.
+  if (v && (hud.titleOpen() || loadingViewOn() || hud.owns(e.target))) return;
   if (v && !e.repeat && MOVE_KEYS.has(e.code)) camBasisHeld = false; // a fresh press is a fresh intent, in the current view
   switch (e.code) {
     case 'KeyW': move.f = v; break;
@@ -361,6 +441,7 @@ function keyEvent(e: KeyboardEvent, v: 0 | 1): void {
       e.preventDefault(); break;
     case 'KeyV': if (v) setVoxelOverlay(!showVoxels); break;
     case 'KeyP': if (v) setPlatformOverlay(!showPlatforms); break;
+    case 'Backquote': if (v) hud.toggleDebug(); break;
   }
 }
 addEventListener('keydown', (e) => keyEvent(e, 1));
@@ -372,30 +453,18 @@ function startJump(): void {
 }
 
 // --- collision ---------------------------------------------------------------
-// Voxelization runs in a Web Worker so the ~1s+ first build doesn't freeze the
-// frame. Requests are matched to responses by id.
-const voxelWorker = new Worker(new URL('./voxelize.worker.ts', import.meta.url), { type: 'module' });
-const voxelPending = new Map<number, (s: VoxelSurface) => void>();
-let voxelReqId = 0;
-voxelWorker.onmessage = (e: MessageEvent<{ id: number; surface?: VoxelSurface; error?: string }>) => {
-  if (e.data.error) { console.error('voxel worker failed:', e.data.error); return; }
-  const resolve = voxelPending.get(e.data.id);
-  if (resolve && e.data.surface) { voxelPending.delete(e.data.id); resolve(e.data.surface); }
-};
-voxelWorker.onerror = (e) => console.error('voxel worker error:', e.message, e.filename, e.lineno);
+// Voxelization runs in a Web Worker so the ~1s+ first build doesn't freeze the frame.
+const voxelize = workerCaller<{ positions: Float32Array; opacity: Float32Array; cov: Float32Array | null; count: number; matrix: number[]; voxelSize: number; opts: VoxelOptions }, VoxelSurface>(
+  new Worker(new URL('./voxelize.worker.ts', import.meta.url), { type: 'module' }), 'collision build');
 
 function voxelizeInWorker(centers: THREE.BufferAttribute, opacity: Float32Array, cov: Float32Array | null, matrixWorld: THREE.Matrix4, opts: VoxelOptions): Promise<VoxelSurface> {
-  return new Promise((resolve) => {
-    const id = ++voxelReqId;
-    voxelPending.set(id, resolve);
-    const positions = (centers.array as Float32Array).slice(); // copies so we can transfer
-    const op = opacity.slice();                                 // (originals kept for re-voxelize)
-    const cv = cov ? cov.slice() : null;
-    voxelWorker.postMessage(
-      { id, positions, opacity: op, cov: cv, count: centers.count, matrix: Array.from(matrixWorld.elements), voxelSize: VOXEL_SIZE, opts },
-      cv ? [positions.buffer, op.buffer, cv.buffer] : [positions.buffer, op.buffer],
-    );
-  });
+  const positions = (centers.array as Float32Array).slice(); // copies so we can transfer
+  const op = opacity.slice();                                 // (originals kept for re-voxelize)
+  const cv = cov ? cov.slice() : null;
+  return voxelize(
+    { positions, opacity: op, cov: cv, count: centers.count, matrix: Array.from(matrixWorld.elements), voxelSize: VOXEL_SIZE, opts },
+    cv ? [positions.buffer, op.buffer, cv.buffer] : [positions.buffer, op.buffer],
+  );
 }
 
 // Build the surface (cached after the first load), a three-mesh-bvh over it for
@@ -440,16 +509,9 @@ async function buildCollision(file: string, token: number, centers: THREE.Buffer
 function rebuildCollision(): void {
   if (!lastCenters || !lastOpacity) return;
   disposeCollision();
-  void buildCollision(currentFile, ++loadToken, lastCenters, lastOpacity, lastCov, lastMatrix);
+  buildCollision(currentFile, ++loadToken, lastCenters, lastOpacity, lastCov, lastMatrix)
+    .catch((err: unknown) => hud.status(err instanceof Error ? err.message : String(err), 'error'));
 }
-
-/** The parts of three's GaussianSplat this app reaches into that it does not make
- *  public. All of them are named here, so a three.js upgrade has one place to check.
- *    _buffers.centerRead — the splats' centres, as a GPU storage buffer
- *    _sort.orderRead     — the draw order: which splat each drawn instance is
- *    _sortInitialized    — false makes the next render sort again, whatever the view */
-type SplatInternals = { _buffers?: { centerRead?: any }; _sort?: { orderRead?: any }; _sortInitialized: boolean };
-function splatInternals(splat: GaussianSplat): SplatInternals { return splat as unknown as SplatInternals; }
 
 // --- light the figurine from the scan (see context/lighting.md) ----------------
 // The scan's lighting is baked into its splat colours, so the figurine can only match
@@ -524,14 +586,15 @@ function captureScanLight(): void {
   // everything the capture changes about the scene, put back whatever happens
   const hidden: THREE.Object3D[] = [];
   const envNode = lit.environmentNode, bg = scene.background, dark = shadowDark.value;
+  const resumeReveal = revealPaused(); // the probe must see the whole room, however far the reveal has got
   const t0 = performance.now();
   try {
     // only the scan lights the probe: hide the figurine and the debug overlays...
-    for (const o of [player, collisionDebug, platformDebug, scanDebugBalls, scanDebugThumb]) if (o && o.visible) { o.visible = false; hidden.push(o); }
+    for (const o of [player, collisionDebug, platformDebug, scanDebugBalls, scanDebugThumb, loadingScene?.object]) if (o && o.visible) { o.visible = false; hidden.push(o); }
     lit.environmentNode = null; scene.background = null;
     shadowDark.value = 0; // ...and the figurine's own shadow
     scanProbePoint(scanLightAt);
-    scanFillDome.material.color.copy(SCAN_LIGHT.fill ? scanFill : BACKDROP);
+    scanFillDome.material.color.copy(SCAN_LIGHT.fill ? scanFill : UNLIT);
     scanFillDome.position.copy(scanLightAt);
     scanFillDome.visible = true;
     const shoot = (i: number) => {
@@ -556,6 +619,7 @@ function captureScanLight(): void {
   } finally {
     scanFillDome.visible = false;
     shadowDark.value = dark;
+    resumeReveal();
     lit.environmentNode = envNode; scene.background = bg;
     for (const o of hidden) o.visible = true;
     // The capture left the splats sorted for the probe's last view. GaussianSplat only
@@ -596,7 +660,7 @@ function estimateScanFill(centers: THREE.BufferAttribute, color: THREE.BufferAtt
     const w = weight[i];
     r += color.getX(i) * w; g += color.getY(i) * w; b += color.getZ(i) * w; sum += w;
   }
-  if (sum > 0) out.setRGB(r / sum, g / sum, b / sum); else out.copy(BACKDROP);
+  if (sum > 0) out.setRGB(r / sum, g / sum, b / sum); else out.copy(UNLIT);
   if (TEL) console.log(`SCANFILL rgb=${out.r.toFixed(2)},${out.g.toFixed(2)},${out.b.toFixed(2)} from splats above y=${median.toFixed(2)} (scan spans ${y0.toFixed(2)}..${y1.toFixed(2)})`);
 }
 
@@ -1413,6 +1477,7 @@ function publishDebugState(): void {
     camDist: +camera.position.distanceTo(orbit.target).toFixed(2), camWant: +camWant.toFixed(2), camSwinging,
     anim: activeAction ? activeAction.getClip().name : 'none',
     climbPaused: ca ? ca.paused : null,
+    reveal: +revealProgress.toFixed(3), // how far the room's arrival has got: 1 when it is not running
   };
 }
 
@@ -1422,15 +1487,21 @@ let frames = 0;
 async function main(): Promise<void> {
   await renderer.init();
   loadScan(DEFAULT_SCAN);
-  setupScanSwitcher();
   setupDebugMenu();
-  new GLTFLoader().load(`${import.meta.env.BASE_URL}character.glb`, onLoaded, undefined, (err) => showBanner(`character.glb load failed: ${String(err)}`));
+  new GLTFLoader().load(`${import.meta.env.BASE_URL}character.glb`, onLoaded, undefined, (err) => hud.status(`character.glb load failed: ${String(err)}`, 'error'));
 
   renderer.setAnimationLoop(() => {
     const dt = Math.min(clock.getDelta(), 0.05);
     if (charLoaded) { updateController(dt); if (FREECAM) updateFreeCam(); else updateCamera(dt); }
     mixer?.update(dt);
     if (charLoaded) { updateContactShadow(dt); updateScanLight(dt); updateScanDebug(); }
+    const revealed = revealProgress = updateReveal(dt);
+    // the waiting dots are all there while waiting, and give way to the scan's own at the start of its arrival
+    const waiting = loadingViewOn();
+    loadingScene?.show(waiting ? 1 : 1 - Math.min(1, revealed / HANDOVER), waitingBits());
+    // the figurine waits as paper too, and becomes itself as the room arrives (which is also when the room's light reaches it)
+    paperFigurine?.show(waiting ? 0 : revealed);
+    surround.lerpColors(SURROUND.sky, SURROUND.beyond, waiting ? 0 : THREE.MathUtils.smoothstep(revealed, SURROUND.darken[0], SURROUND.darken[1]));
     if (TEL) publishDebugState();
     void renderer.renderAsync(scene, camera).then(() => {
       if (charLoaded && ++frames === 3) (window as unknown as { __wwReady?: boolean }).__wwReady = true;
@@ -1443,55 +1514,6 @@ addEventListener('resize', () => {
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
-
-/** A dropdown (top-left) to switch scans at runtime, plus an Import button. */
-function setupScanSwitcher(): void {
-  const bar = document.createElement('div');
-  bar.style.cssText = 'position:fixed;top:12px;left:12px;z-index:10;display:flex;gap:6px;align-items:center';
-
-  const sel = document.createElement('select');
-  scanSelect = sel;
-  sel.style.cssText =
-    'padding:7px 12px;border:1px solid #3a3b44;border-radius:8px;color:#e8e8ea;' +
-    'background:rgba(23,24,29,0.85);cursor:pointer;backdrop-filter:blur(4px);' +
-    'font:13px ui-monospace,Menlo,monospace';
-  for (const s of SCANS) {
-    const opt = document.createElement('option');
-    opt.value = s.file;
-    opt.textContent = s.label;
-    opt.style.color = '#111';
-    if (s.file === DEFAULT_SCAN) opt.selected = true;
-    sel.appendChild(opt);
-  }
-  // demo scans load by filename; uploaded ids resolve to a blob URL in `uploads`
-  sel.onchange = () => { const v = sel.value; const url = uploads.get(v); if (url) loadFromURL(url, v); else loadScan(v); };
-  bar.appendChild(sel);
-
-  const btn = document.createElement('button');
-  btn.textContent = '+ Import';
-  btn.title = 'Import your own scan (uncompressed 3DGS .ply)';
-  btn.style.cssText =
-    'padding:7px 11px;border:1px solid #3a3b44;border-radius:8px;color:#e8e8ea;' +
-    'background:rgba(23,24,29,0.85);cursor:pointer;backdrop-filter:blur(4px);font:13px ui-monospace,Menlo,monospace';
-  const picker = document.createElement('input');
-  picker.type = 'file';
-  picker.accept = '.ply';
-  picker.style.display = 'none';
-  picker.onchange = () => { if (picker.files?.[0]) importScan(picker.files[0]); picker.value = ''; };
-  btn.onclick = () => picker.click();
-  bar.append(btn, picker);
-
-  // the way out of any spot the figurine gets stuck in: back to the scan's spawn point
-  const reset = document.createElement('button');
-  reset.textContent = 'Reset';
-  reset.title = 'Put the figurine back at the starting point';
-  reset.style.cssText = btn.style.cssText;
-  reset.onclick = () => { if (charLoaded) resetToSpawn(); reset.blur(); }; // blur: Space must go back to being "jump", not "press Reset again"
-  bar.appendChild(reset);
-
-  document.body.appendChild(bar);
-  setupDropZone();
-}
 
 /** Show/hide the voxel collision overlay, keeping key + checkbox in sync. */
 function setVoxelOverlay(on: boolean): void {
@@ -1549,112 +1571,73 @@ function rebuildPlatformOverlay(): void {
   platformDebug = mesh;
 }
 
-// A small debug panel (top-right). Put new debug tunables here (addToggle /
-// addSlider) rather than reaching for URL params.
-let debugPanel: HTMLDivElement | null = null;
-
-/** A checkbox row; returns the input so callers can keep it in sync. */
-function addToggle(label: string, initial: boolean, onChange: (v: boolean) => void, tooltip?: string): HTMLInputElement {
-  const row = document.createElement('label');
-  row.style.cssText = 'display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none';
-  if (tooltip) row.title = tooltip;
-  const cb = document.createElement('input');
-  cb.type = 'checkbox';
-  cb.checked = initial;
-  cb.onchange = () => onChange(cb.checked);
-  row.append(cb, label);
-  debugPanel!.appendChild(row);
-  return cb;
-}
-
-/** A labelled slider with a live value readout; fires `onChange` on release. */
-function addSlider(label: string, initial: number, min: number, max: number, step: number, onChange: (v: number) => void, tooltip?: string): void {
-  const wrap = document.createElement('div');
-  wrap.style.cssText = 'display:flex;flex-direction:column;gap:3px';
-  if (tooltip) wrap.title = tooltip;
-  const head = document.createElement('div');
-  head.style.cssText = 'display:flex;justify-content:space-between;gap:10px';
-  const name = document.createElement('span'); name.textContent = label;
-  const val = document.createElement('span'); val.textContent = initial.toFixed(2); val.style.opacity = '0.7';
-  head.append(name, val);
-  const slider = document.createElement('input');
-  slider.type = 'range';
-  slider.min = String(min); slider.max = String(max); slider.step = String(step);
-  slider.value = String(initial);
-  slider.style.cssText = 'width:150px;accent-color:#2e6cff;cursor:pointer';
-  slider.oninput = () => { val.textContent = Number(slider.value).toFixed(2); };
-  slider.onchange = () => onChange(Number(slider.value));
-  wrap.append(head, slider);
-  debugPanel!.appendChild(wrap);
-}
-
+// The Debug card (the wrench tile, or the ` key). Put new debug tunables here, in
+// the section they belong to, rather than reaching for URL params.
 function setupDebugMenu(): void {
-  const panel = document.createElement('div');
-  panel.style.cssText =
-    'position:fixed;top:12px;right:12px;z-index:10;display:flex;flex-direction:column;gap:10px;' +
-    'padding:10px 12px;border:1px solid #3a3b44;border-radius:8px;background:rgba(23,24,29,0.85);' +
-    'color:#e8e8ea;font:12px ui-monospace,Menlo,monospace;backdrop-filter:blur(4px);' +
-    'max-height:calc(100vh - 24px);box-sizing:border-box;overflow-y:auto'; // 24px: its own top margin, twice — it has outgrown short windows, so it scrolls
-  const title = document.createElement('div');
-  title.textContent = 'Debug';
-  title.style.cssText = 'opacity:0.55;font-size:10px;letter-spacing:0.08em;text-transform:uppercase';
-  panel.appendChild(title);
-  debugPanel = panel;
-
-  voxelCheckbox = addToggle('Voxel wireframe (V)', showVoxels, setVoxelOverlay);
-  platformCheckbox = addToggle('Platforms (P)', showPlatforms, setPlatformOverlay,
+  const overlays = hud.debug.section('Overlays', true);
+  voxelCheckbox = overlays.addToggle('Voxel wireframe (V)', showVoxels, setVoxelOverlay,
+    'Draw the collision mesh over the scan as a wireframe.');
+  platformCheckbox = overlays.addToggle('Platforms (P)', showPlatforms, setPlatformOverlay,
     'Spike 1: color the walkable surfaces the collision decomposes into — floor, ' +
     'couch, counter. Distinct colors = distinct platforms (reached by climbing/jumping).');
-  addToggle('Contact shadow', CONTACT_SHADOW.on, (on) => { CONTACT_SHADOW.on = on; },
+
+  const light = hud.debug.section('Lighting and shadow');
+  light.addToggle('Contact shadow', CONTACT_SHADOW.on, (on) => { CONTACT_SHADOW.on = on; },
     'Darken the scan in a soft patch where the figurine touches it (the floor under its feet, or the wall it is climbing).');
-  addSlider('Contact shadow: darkness', CONTACT_SHADOW.darkness, 0, 1, 0.05, (v) => { CONTACT_SHADOW.darkness = v; });
-  addSlider('Contact shadow: size', CONTACT_SHADOW.size, 0.2, 1.5, 0.05, (v) => { CONTACT_SHADOW.size = v; },
+  light.addSlider('Shadow darkness', CONTACT_SHADOW.darkness, 0, 1, 0.05, (v) => { CONTACT_SHADOW.darkness = v; },
+    'How dark the contact shadow gets at its centre.');
+  light.addSlider('Shadow size', CONTACT_SHADOW.size, 0.2, 1.5, 0.05, (v) => { CONTACT_SHADOW.size = v; },
     'Radius of the shadow, in figurine heights.');
-  addToggle('Scan lighting', SCAN_LIGHT.on, (on) => { SCAN_LIGHT.on = on; applyScanLight(); },
+  light.addToggle('Scan lighting', SCAN_LIGHT.on, (on) => { SCAN_LIGHT.on = on; applyScanLight(); },
     'Light the figurine from the scan itself (a cubemap of the splats, captured at the figurine) instead of the fixed ambient fill.');
-  addToggle('Scan light: follow figurine', SCAN_LIGHT.follow, (on) => { SCAN_LIGHT.follow = on; if (on) requestScanLight(); },
+  light.addToggle('Follow figurine', SCAN_LIGHT.follow, (on) => { SCAN_LIGHT.follow = on; if (on) requestScanLight(); },
     'Re-capture the light as the figurine moves, so it changes from place to place. Off = captured once at the spawn point.');
-  addToggle('Scan light: fill gaps', SCAN_LIGHT.fill, (on) => { SCAN_LIGHT.fill = on; requestScanLight(); },
+  light.addToggle('Fill gaps', SCAN_LIGHT.fill, (on) => { SCAN_LIGHT.fill = on; requestScanLight(); },
     'Where the scan has nothing (usually the ceiling), light the figurine with the average colour of the scan\'s upper half instead of darkness.');
-  addToggle('Scan light: debug view', SCAN_LIGHT.debug, (on) => { SCAN_LIGHT.debug = on; applyScanLight(); },
+  light.addToggle('Light debug view', SCAN_LIGHT.debug, (on) => { SCAN_LIGHT.debug = on; applyScanLight(); },
     'Show what the light probe captured (panorama, bottom-left: up is at the top) and three balls lit by it: mirror, half-rough metal, matte white.');
-  addSlider('Scan light: strength', SCAN_LIGHT.intensity, 0, 3, 0.05, (v) => { SCAN_LIGHT.intensity = v; applyScanLight(); });
-  addSlider('Scan light: blend (s)', SCAN_LIGHT.blend, 0, 2, 0.1, (v) => { SCAN_LIGHT.blend = v; },
+  light.addSlider('Light strength', SCAN_LIGHT.intensity, 0, 3, 0.05, (v) => { SCAN_LIGHT.intensity = v; applyScanLight(); },
+    'How strongly the scan lights the figurine.');
+  light.addSlider('Light blend (s)', SCAN_LIGHT.blend, 0, 2, 0.1, (v) => { SCAN_LIGHT.blend = v; },
     'Seconds to cross-fade from one light capture to the next in follow mode. 0 = swap instantly.');
-  addToggle('Reliable ground (nav)', useNavGround, (on) => { useNavGround = on; },
+
+  const ground = hud.debug.section('Ground and platforms');
+  ground.addToggle('Reliable ground (nav)', useNavGround, (on) => { useNavGround = on; },
     'Spike 2: stand on / confine to the hole-filled NavGrid so the figurine can\'t ' +
     'fall through gaps or walk off platform edges. Off = raw mesh collision only.');
-  addSlider('Platform: step limit', PLATFORM_OPTS.stepFactor, 0.1, 1, 0.05, (v) => {
+  ground.addSlider('Step limit', PLATFORM_OPTS.stepFactor, 0.1, 1, 0.05, (v) => {
     PLATFORM_OPTS.stepFactor = v; rebuildPlatformOverlay();
   }, 'Max height (in char-heights) two neighboring cells can differ and still be ONE ' +
      'platform. Higher = merges steps/bumps into one surface; lower = splits into more platforms.');
-  addSlider('Platform: min size', PLATFORM_OPTS.minCells, 1, 40, 1, (v) => {
+  ground.addSlider('Min platform size', PLATFORM_OPTS.minCells, 1, 40, 1, (v) => {
     PLATFORM_OPTS.minCells = v; rebuildPlatformOverlay();
   }, 'Drop platforms smaller than this many cells (floater/noise rejection). Higher = only big surfaces survive.');
-  addSlider('Isovalue (fill)', VOXEL_OPTS.iso, 0.15, 0.7, 0.05, (v) => {
+  ground.addSlider('Climb threshold (deg)', PLATFORM_OPTS.climbDeg, 30, 89, 1, (v) => { PLATFORM_OPTS.climbDeg = v; rebuildPlatformOverlay(); },
+    'Surfaces steeper than this angle (from the ground) are walls you CLIMB; gentler ones are ' +
+    'ground you walk on. Lower = more things count as walls; higher = only near-vertical faces.');
+
+  const surface = hud.debug.section('Collision surface');
+  surface.addSlider('Isovalue (fill)', VOXEL_OPTS.iso, 0.15, 0.7, 0.05, (v) => {
     VOXEL_OPTS.iso = v;
     rebuildCollision();
   }, 'Surface threshold as a fraction of median density. LOWER fills faint flat ' +
      'panels (cabinet doors, distant walls) but eventually admits floater haze; ' +
      'higher hugs only well-scanned surfaces. Default 0.35 suits casual scans.');
-  addSlider('Surface hole-fill', VOXEL_OPTS.close, 0, 5, 1, (v) => {
+  surface.addSlider('Surface hole-fill', VOXEL_OPTS.close, 0, 5, 1, (v) => {
     VOXEL_OPTS.close = v;
     rebuildCollision();
   }, 'Bridges holes in the collision mesh (walls / climbable faces / floor) by ' +
      'closing gaps up to ~2× this many voxels. Higher fills bigger holes but welds ' +
      'objects to the floor / webs surfaces (a looser "seal"); big holes are better ' +
      'handled by the floor/panel fills. Default 1 keeps the seal tight.');
-  addSlider('Panel fill (area)', VOXEL_OPTS.panelFill, 0, 4, 0.25, (v) => {
+  surface.addSlider('Panel fill (area)', VOXEL_OPTS.panelFill, 0, 4, 0.25, (v) => {
     VOXEL_OPTS.panelFill = v;
     rebuildCollision();
   }, 'Fills enclosed holes in flat vertical panels (blank cabinet doors / walls that ' +
      'splatting captured too faintly) up to this area, in normalized scan units² ' +
      '(~room-relative — not metres). Bigger fills larger blank panels but can start ' +
      'closing real openings (doorways/windows); 0 = off. Default 2.5.');
-  addSlider('Climb threshold (deg)', PLATFORM_OPTS.climbDeg, 30, 89, 1, (v) => { PLATFORM_OPTS.climbDeg = v; rebuildPlatformOverlay(); },
-    'Surfaces steeper than this angle (from the ground) are walls you CLIMB; gentler ones are ' +
-    'ground you walk on. Lower = more things count as walls; higher = only near-vertical faces.');
-  addSlider('Floor flatten (voxels)', VOXEL_OPTS.floorFlat, 0, 2, 0.05, (v) => {
+  surface.addSlider('Floor flatten (voxels)', VOXEL_OPTS.floorFlat, 0, 2, 0.05, (v) => {
     VOXEL_OPTS.floorFlat = v;
     rebuildCollision();
   }, 'Height of the band above the floor (in voxels) snapped perfectly flat. ' +
@@ -1662,47 +1645,41 @@ function setupDebugMenu(): void {
      'lower = keeps low clutter but more floor waviness returns. 0 = off.');
 
   // cleanup tunables for imported scans (re-clean + reload the active upload)
-  addSlider('Import: opacity floor', CLEAN_OPTS.alphaMin ?? 0.35, 0, 0.9, 0.05, (v) => { CLEAN_OPTS.alphaMin = v; void recleanUpload(); },
+  const cleanup = hud.debug.section('Import cleanup');
+  cleanup.addSlider('Opacity floor', CLEAN_OPTS.alphaMin ?? 0.35, 0, 0.9, 0.05, (v) => { CLEAN_OPTS.alphaMin = v; void recleanUpload(); },
     'For imported scans: drop splats fainter than this. Higher burns off more floater haze (but can eat real surfaces).');
-  addSlider('Import: density', CLEAN_OPTS.minMass ?? 4, 0, 12, 0.5, (v) => { CLEAN_OPTS.minMass = v; void recleanUpload(); },
+  cleanup.addSlider('Density', CLEAN_OPTS.minMass ?? 4, 0, 12, 0.5, (v) => { CLEAN_OPTS.minMass = v; void recleanUpload(); },
     'For imported scans: min opacity mass a voxel needs to be kept. Higher removes more isolated floaters.');
-  addToggle('Import: crop to room', CLEAN_OPTS.crop ?? true, (on) => { CLEAN_OPTS.crop = on; void recleanUpload(); },
+  cleanup.addToggle('Crop to room', CLEAN_OPTS.crop ?? true, (on) => { CLEAN_OPTS.crop = on; void recleanUpload(); },
     'For imported scans: auto-level and crop to the room box (removes far background spray).');
 
-  document.body.appendChild(panel);
+  const ui = hud.debug.section('Interface');
+  ui.addButton('Show the title screen', () => hud.showTitle(),
+    'The title screen only appears the first time the game is opened on a device. This brings it back.');
+  ui.addToggle('Hold the loading view', LOADING_VIEW.hold, (on) => { LOADING_VIEW.hold = on; updateLoading(); },
+    'Keep the loading view up (room hidden, figurine waiting) so you can look at it. Movement is off while it is held. Letting go plays the reveal.');
+  ui.addChoice('Room reveal', Object.fromEntries(Object.entries(REVEAL_STYLES).map(([k, v]) => [k, v.name])), REVEAL.style, (v) => { REVEAL.style = v as RevealStyle; revealRoom(); },
+    'How a room arrives around the figurine once it has loaded. Picking one plays it.');
+  ui.addSlider('Reveal length (s)', REVEAL.seconds, 0.6, 8, 0.2, (v) => { REVEAL.seconds = v; revealRoom(); },
+    'How long the room takes to arrive.');
+  ui.addButton('Play the reveal again', revealRoom, 'Replay the room arriving, from where the figurine is standing now.');
 }
 
 // --- scan import (upload + in-browser cleanup) ------------------------------
-const cleanWorker = new Worker(new URL('./clean-scan.worker.ts', import.meta.url), { type: 'module' });
-type CleanResp = { id: number; buffer?: ArrayBuffer; kept?: number; total?: number; error?: string };
-const cleanCbs = new Map<number, { resolve: (r: { buffer: ArrayBuffer; kept: number; total: number }) => void; reject: (e: string) => void }>();
-let cleanReqId = 0;
-cleanWorker.onmessage = (e: MessageEvent<CleanResp>) => {
-  const cb = cleanCbs.get(e.data.id); if (!cb) return; cleanCbs.delete(e.data.id);
-  if (e.data.error) cb.reject(e.data.error);
-  else cb.resolve({ buffer: e.data.buffer!, kept: e.data.kept!, total: e.data.total! });
-};
-cleanWorker.onerror = (e) => showStatus(`cleanup worker error: ${e.message}`, true);
-
-function cleanInWorker(buffer: ArrayBuffer, opts: CleanOptions): Promise<{ buffer: ArrayBuffer; kept: number; total: number }> {
-  return new Promise((resolve, reject) => {
-    const id = ++cleanReqId;
-    cleanCbs.set(id, { resolve, reject });
-    cleanWorker.postMessage({ id, buffer, opts }, [buffer]); // buffer is transferred (detached here)
-  });
-}
+const cleanInWorker = workerCaller<{ buffer: ArrayBuffer; opts: CleanOptions }, { buffer: ArrayBuffer; kept: number; total: number }>(
+  new Worker(new URL('./clean-scan.worker.ts', import.meta.url), { type: 'module' }), 'scan cleanup');
 
 /** Import an uploaded .ply: keep a copy for live re-clean, then clean + load it. */
 async function importScan(file: File): Promise<void> {
-  if (!/\.ply$/i.test(file.name)) { showStatus(`${file.name}: not a .ply file`, true); return; }
+  if (!/\.ply$/i.test(file.name)) { hud.status(`${file.name}: not a .ply file`, 'error'); return; }
   try {
-    showStatus(`Reading ${file.name}…`);
+    hud.status(`Reading ${file.name}…`, 'busy');
     const raw = await file.arrayBuffer();
     lastUploadBuffer = raw.slice(0); // retain a copy; the worker transfers (detaches) the other
     lastUploadName = file.name;
     await cleanAndLoad(raw, file.name);
   } catch (err) {
-    showStatus(`${file.name}: ${err instanceof Error ? err.message : String(err)}`, true);
+    hud.status(`${file.name}: ${err instanceof Error ? err.message : String(err)}`, 'error');
   }
 }
 
@@ -1710,64 +1687,19 @@ async function importScan(file: File): Promise<void> {
 async function recleanUpload(): Promise<void> {
   if (!lastUploadBuffer) return;
   try { await cleanAndLoad(lastUploadBuffer.slice(0), lastUploadName); } // pass a copy; keep the original
-  catch (err) { showStatus(`${lastUploadName}: ${err instanceof Error ? err.message : String(err)}`, true); }
+  catch (err) { hud.status(`${lastUploadName}: ${err instanceof Error ? err.message : String(err)}`, 'error'); }
 }
 
 async function cleanAndLoad(rawToTransfer: ArrayBuffer, name: string): Promise<void> {
-  showStatus(`Cleaning ${name}…`);
+  hud.status(`Cleaning ${name}…`, 'busy');
   const id = `upload:${name}`;
-  const res = await cleanInWorker(rawToTransfer, CLEAN_OPTS);
+  const res = await cleanInWorker({ buffer: rawToTransfer, opts: CLEAN_OPTS }, [rawToTransfer]); // the buffer is transferred (detached here)
   const url = URL.createObjectURL(new Blob([res.buffer], { type: 'application/octet-stream' }));
   const prev = uploads.get(id); if (prev) URL.revokeObjectURL(prev);
   uploads.set(id, url);
-  addUploadOption(id, name);
-  if (scanSelect) scanSelect.value = id;
+  hud.addRoom({ id, label: `${name} (yours)` });
   loadFromURL(url, id);
-  showStatus(`${name}: kept ${res.kept.toLocaleString()} / ${res.total.toLocaleString()} splats`);
+  hud.status(`${name}: kept ${res.kept.toLocaleString()} / ${res.total.toLocaleString()} splats`, 'done');
 }
 
-function addUploadOption(id: string, name: string): void {
-  if (!scanSelect) return;
-  let opt = Array.from(scanSelect.options).find((o) => o.value === id);
-  if (!opt) { opt = document.createElement('option'); opt.value = id; opt.style.color = '#111'; scanSelect.appendChild(opt); }
-  opt.textContent = `${name} (yours)`;
-}
-
-let statusEl: HTMLDivElement | null = null;
-function showStatus(msg: string, isError = false): void {
-  if (!statusEl) {
-    statusEl = document.createElement('div');
-    statusEl.style.cssText =
-      'position:fixed;bottom:12px;left:12px;z-index:11;padding:7px 12px;border-radius:8px;' +
-      'background:rgba(23,24,29,0.9);color:#e8e8ea;font:12px ui-monospace,Menlo,monospace;backdrop-filter:blur(4px);max-width:60vw';
-    document.body.appendChild(statusEl);
-  }
-  statusEl.textContent = msg;
-  statusEl.style.border = isError ? '1px solid #c0483a' : '1px solid #3a3b44';
-  statusEl.style.display = 'block';
-}
-
-/** Full-window drag-and-drop to import a .ply. */
-function setupDropZone(): void {
-  const overlay = document.createElement('div');
-  overlay.style.cssText =
-    'position:fixed;inset:0;z-index:20;display:none;align-items:center;justify-content:center;' +
-    'background:rgba(20,40,90,0.55);color:#fff;font:600 20px ui-monospace,Menlo,monospace;' +
-    'pointer-events:none;border:3px dashed rgba(255,255,255,0.6);box-sizing:border-box';
-  overlay.textContent = 'Drop a .ply to import';
-  document.body.appendChild(overlay);
-  let depth = 0;
-  addEventListener('dragenter', (e) => { e.preventDefault(); depth++; overlay.style.display = 'flex'; });
-  addEventListener('dragover', (e) => e.preventDefault());
-  addEventListener('dragleave', (e) => { e.preventDefault(); if (--depth <= 0) overlay.style.display = 'none'; });
-  addEventListener('drop', (e) => {
-    e.preventDefault(); depth = 0; overlay.style.display = 'none';
-    const f = e.dataTransfer?.files?.[0]; if (f) void importScan(f);
-  });
-}
-
-function showBanner(msg: string): void {
-  document.body.insertAdjacentHTML('beforeend', `<pre style="position:fixed;top:0;left:0;right:0;margin:0;padding:12px;color:#f88;background:#1a1c22;font:12px ui-monospace;white-space:pre-wrap;z-index:9">${msg}</pre>`);
-}
-
-main().catch((err: unknown) => { console.error(err); showBanner(err instanceof Error ? err.message : String(err)); });
+main().catch((err: unknown) => { console.error(err); hud.status(err instanceof Error ? err.message : String(err), 'error'); });

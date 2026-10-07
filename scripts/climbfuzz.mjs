@@ -21,6 +21,8 @@ const rnd = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296; // 
 
 const browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--enable-unsafe-swiftshader'] });
 const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+// a fresh browser profile would open on the title screen, which takes the keyboard until Begin is pressed
+await page.addInitScript(() => localStorage.setItem('ww.titleSeen', '1'));
 const recent = []; // the last few climb events, for context on a violation
 let errors = 0;
 page.on('pageerror', (e) => { errors++; console.log('[pageerror]', e.message); });
