@@ -100,7 +100,8 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 app.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x1a1c22);
+const BACKDROP = new THREE.Color(0x1a1c22);
+scene.background = BACKDROP;
 
 const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.001, 200);
 
@@ -113,7 +114,8 @@ orbit.addEventListener('start', () => { camHandsOff = false; camSwinging = false
 orbit.enablePan = false; // pivot tracks the figurine; panning it away would fight that
 orbit.maxPolarAngle = Math.PI * 0.49; // don't drop below the floor
 
-scene.add(new THREE.HemisphereLight(0x8899bb, 0x22201c, 0.9));
+const hemi = new THREE.HemisphereLight(0x8899bb, 0x22201c, 0.9); // fixed ambient fill (replaced by the scan's own light when SCAN_LIGHT is on)
+scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xfff4e0, 2.4);
 sun.position.set(3, 6, 4);
 scene.add(sun);
@@ -196,7 +198,7 @@ function loadFromURL(url: string, id: string): void {
       lastCenters = centers; lastOpacity = opacity; lastCov = cov; lastMatrix.copy(splat.matrixWorld);
       console.log(`loaded ${id}: radius ${o.radius.toFixed(2)} → scaled ${k.toFixed(2)}x`);
       await buildCollision(id, token, centers, opacity, cov, splat.matrixWorld);
-      if (token === loadToken && charLoaded) resetToSpawn();
+      if (token === loadToken && charLoaded) { resetToSpawn(); requestScanLight(); }
     },
     undefined,
     (err) => showBanner(`${id} load failed: ${String(err)}`),
@@ -255,6 +257,7 @@ function onLoaded(gltf: GLTF): void {
   charLoaded = true;
   if (collision) rebuildPlatformOverlay(); // rebuild the NavGrid now charH (headroom/step) is real
   resetToSpawn();
+  requestScanLight();
   console.log(`character: ${charH.toFixed(3)} tall, ${gltf.animations.length} clips`);
 }
 
@@ -435,6 +438,58 @@ function rebuildCollision(): void {
   if (!lastCenters || !lastOpacity) return;
   disposeCollision();
   void buildCollision(currentFile, ++loadToken, lastCenters, lastOpacity, lastCov, lastMatrix);
+}
+
+// --- SPIKE: light the figurine from the scan ---------------------------------
+// The scan's lighting is baked into its splat colours, so the figurine can only match
+// it by looking at the scan: render the splats into a cubemap from where the figurine
+// is, prefilter it, and use that as the scene's environment light in place of the
+// fixed hemisphere fill. One probe, captured at the figurine — `follow` re-captures as
+// it moves, which is the cheapest possible "dynamic" probe.
+const SCAN_LIGHT = { on: true, intensity: 1, follow: false, show: false };
+let scanLightPmrem: THREE.PMREMGenerator | null = null;
+let scanLightEnv: THREE.WebGLRenderTarget | null = null;
+const scanLightAt = new THREE.Vector3();   // where the current probe was captured
+let scanLightDue = 0;                      // frames until a pending capture runs (0 = none pending)
+let scanLightLast = -Infinity;             // when the last capture ran (performance.now)
+
+/** Ask for a capture a few frames from now (the splat needs to have drawn first). */
+function requestScanLight(inFrames = 5): void { scanLightDue = inFrames; }
+
+function captureScanLight(): void {
+  if (!currentSplat || !charLoaded) return;
+  scanLightPmrem ??= new THREE.PMREMGenerator(renderer as unknown as THREE.WebGLRenderer);
+  // only the scan lights the probe: hide the figurine and the debug overlays
+  const hidden: THREE.Object3D[] = [];
+  for (const o of [player, collisionDebug, platformDebug]) if (o && o.visible) { o.visible = false; hidden.push(o); }
+  const env = scene.environment, bg = scene.background;
+  scene.environment = null; scene.background = BACKDROP;
+  scanLightAt.set(player.position.x, player.position.y + charH * CAM_PIVOT, player.position.z);
+  const t0 = performance.now();
+  scanLightEnv = scanLightPmrem.fromScene(scene, 0, charH * 0.05, TARGET_RADIUS * 20, { size: 64, position: scanLightAt, renderTarget: scanLightEnv ?? undefined } as never);
+  scene.environment = env; scene.background = bg;
+  for (const o of hidden) o.visible = true;
+  scanLightLast = performance.now();
+  if (TEL) console.log(`SCANLIGHT captured at ${scanLightAt.x.toFixed(2)},${scanLightAt.y.toFixed(2)},${scanLightAt.z.toFixed(2)} in ${(scanLightLast - t0).toFixed(1)}ms`);
+  applyScanLight();
+}
+
+function applyScanLight(): void {
+  const on = SCAN_LIGHT.on && !!scanLightEnv;
+  scene.environment = on ? scanLightEnv!.texture : null;
+  scene.environmentIntensity = SCAN_LIGHT.intensity;
+  hemi.visible = !on;
+  scene.background = on && SCAN_LIGHT.show ? scanLightEnv!.texture : BACKDROP; // debug: see what the probe saw
+}
+
+/** Per frame: run a pending capture; in follow mode, re-capture once the figurine has
+ *  moved a body-height from the probe (at most twice a second). */
+function updateScanLight(): void {
+  if (scanLightDue > 0 && --scanLightDue === 0) { captureScanLight(); return; }
+  if (!SCAN_LIGHT.on || !SCAN_LIGHT.follow || !scanLightEnv) return;
+  const p = player.position;
+  const moved = Math.hypot(p.x - scanLightAt.x, p.y + charH * CAM_PIVOT - scanLightAt.y, p.z - scanLightAt.z);
+  if (moved > charH && performance.now() - scanLightLast > 500) captureScanLight();
 }
 
 // --- controller update ------------------------------------------------------
@@ -1076,6 +1131,7 @@ async function main(): Promise<void> {
     const dt = Math.min(clock.getDelta(), 0.05);
     if (charLoaded) { updateController(dt); if (FREECAM) updateFreeCam(); else updateCamera(dt); }
     mixer?.update(dt);
+    if (charLoaded) updateScanLight();
     if (TEL) publishDebugState();
     void renderer.renderAsync(scene, camera).then(() => {
       if (charLoaded && ++frames === 3) (window as unknown as { __wwReady?: boolean }).__wwReady = true;
@@ -1249,6 +1305,16 @@ function setupDebugMenu(): void {
   platformCheckbox = addToggle('Platforms (P)', showPlatforms, setPlatformOverlay,
     'Spike 1: color the walkable surfaces the collision decomposes into — floor, ' +
     'couch, counter. Distinct colors = distinct platforms (reached by climbing/jumping).');
+  // SPIKE: scan lighting
+  addToggle('Scan lighting (spike)', SCAN_LIGHT.on, (on) => { SCAN_LIGHT.on = on; applyScanLight(); },
+    'Light the figurine from the scan itself (a cubemap of the splats, captured at the figurine) instead of the fixed ambient fill.');
+  addToggle('Scan light: follow figurine', SCAN_LIGHT.follow, (on) => { SCAN_LIGHT.follow = on; if (on) requestScanLight(1); },
+    'Re-capture the light as the figurine moves, so it changes from place to place. Off = captured once at the spawn point.');
+  addToggle('Scan light: show capture', SCAN_LIGHT.show, (on) => { SCAN_LIGHT.show = on; applyScanLight(); },
+    'Debug: show what the light probe captured as the backdrop.');
+  addSlider('Scan light: strength', SCAN_LIGHT.intensity, 0, 3, 0.05, (v) => { SCAN_LIGHT.intensity = v; applyScanLight(); });
+  addSlider('Sun strength', sun.intensity, 0, 4, 0.1, (v) => { sun.intensity = v; },
+    'The fixed directional light. Lower it to see the scan lighting on its own.');
   addToggle('Reliable ground (nav)', useNavGround, (on) => { useNavGround = on; },
     'Spike 2: stand on / confine to the hole-filled NavGrid so the figurine can\'t ' +
     'fall through gaps or walk off platform edges. Off = raw mesh collision only.');
