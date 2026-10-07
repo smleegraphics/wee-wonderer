@@ -440,7 +440,7 @@ function rebuildCollision(): void {
   void buildCollision(currentFile, ++loadToken, lastCenters, lastOpacity, lastCov, lastMatrix);
 }
 
-// --- SPIKE: light the figurine from the scan ---------------------------------
+// --- light the figurine from the scan (see context/lighting.md) ----------------
 // The scan's lighting is baked into its splat colours, so the figurine can only match
 // it by looking at the scan: render the splats into a cubemap from where the figurine
 // is, prefilter it, and use that as the scene's environment light in place of the
@@ -1304,8 +1304,7 @@ function setupDebugMenu(): void {
   platformCheckbox = addToggle('Platforms (P)', showPlatforms, setPlatformOverlay,
     'Spike 1: color the walkable surfaces the collision decomposes into — floor, ' +
     'couch, counter. Distinct colors = distinct platforms (reached by climbing/jumping).');
-  // SPIKE: scan lighting
-  addToggle('Scan lighting (spike)', SCAN_LIGHT.on, (on) => { SCAN_LIGHT.on = on; applyScanLight(); },
+  addToggle('Scan lighting', SCAN_LIGHT.on, (on) => { SCAN_LIGHT.on = on; applyScanLight(); },
     'Light the figurine from the scan itself (a cubemap of the splats, captured at the figurine) instead of the fixed ambient fill.');
   addToggle('Scan light: follow figurine', SCAN_LIGHT.follow, (on) => { SCAN_LIGHT.follow = on; if (on) requestScanLight(1); },
     'Re-capture the light as the figurine moves, so it changes from place to place. Off = captured once at the spawn point.');

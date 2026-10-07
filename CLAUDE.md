@@ -12,6 +12,7 @@ The two docs below are the ones to read before touching movement.
 
 - **Collision mesh, voxelizer, floor, walls, scan cleanup** → `context/collision.md`
 - **Climbing, jumping onto walls, the follow camera, climb animation** → `context/climb.md`
+- **Lights, the environment map, rendering the splats from another camera** → `context/lighting.md`
 
 ## Commands
 
