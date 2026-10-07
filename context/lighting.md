@@ -2,8 +2,8 @@
 
 How the figurine picks up the scan's lighting, and what was tried. Read this before
 changing lights, the environment map, or anything that renders the splats from a
-second camera. The code is in `src/main.ts` (`SCAN_LIGHT`, `captureScanLight`,
-`applyScanLight`, `updateScanLight`).
+second camera. The code is in `src/main.ts` (`SCAN_LIGHT`, `SCAN_PROBE`,
+`captureScanLight`, `applyScanLight`, `updateScanLight`).
 
 ## The problem
 
@@ -20,11 +20,18 @@ One light probe, captured at the figurine.
    cubemap from the figurine's head height and prefilters it (64 px).
 3. The result becomes the scene's environment light. While it is in use, both fixed
    lights (the hemisphere fill and the sun) are switched off; they remain as the
-   fallback when scan lighting is off, and for the `?meshonly=1` view.
+   fallback when scan lighting is off or a capture has failed. The `?meshonly=1`
+   view never captures (the scan is hidden, so there is nothing to capture) and
+   always uses the fixed lights.
 
-It is captured a few frames after a scan loads and the figurine is placed. With
-"Scan light: follow figurine" on, it is re-captured when the figurine has moved one
-body-height from the last capture point, at most twice a second.
+**When it is captured.** `requestScanLight()` only records that a capture is wanted;
+`updateScanLight` takes it on the first frame it can (`scanLightReady`: a scan is
+loaded, the figurine is loaded, and the scan's collision exists, which is when the
+figurine has been placed on it). So a request can be made at any time, including
+before the scan has loaded, and a scan load that is superseded by another never
+captures. With "Scan light: follow figurine" on, a capture is also wanted when the
+figurine has moved one body-height from the last capture point, at most twice a
+second. The probe's numbers are all in `SCAN_PROBE`.
 
 **Gap fill.** Where the scan has no splats (usually the ceiling, which phone scans
 rarely capture), the probe would see the dark backdrop and read it as "no light from
@@ -46,7 +53,9 @@ seems wrong: a band of one flat colour is a gap being filled.
 whichever is not showing, and `scanLightMix` fades over to it ("Scan light: blend",
 0.4 s by default). The environment is a node, `mix(pmremTexture(a), pmremTexture(b),
 scanLightMix)`, set as `scene.environmentNode`, so the fade is one uniform and never
-rebuilds a shader. A new capture waits until the current fade has finished.
+rebuilds a shader. Every capture, whether requested or from follow mode, waits
+until the current fade has finished: mid-fade both captures are on screen, so there
+is nowhere to render a new one without a pop.
 
 ## What is known
 
@@ -70,6 +79,15 @@ rebuilds a shader. A new capture waits until the current fade has finished.
   - *Kitchen and Counter* (tabletop scans surrounded by empty space): the figurine
     is dark, because most directions see the black backdrop.
   - *Living Room:* dark and flat.
+- **After a capture the splats must be re-sorted for the main camera.**
+  `GaussianSplat` re-sorts only when the view direction changes by more than about
+  1.8°, and a capture leaves it sorted for the probe's last view (looking along −Z).
+  That order is wrong for any other camera position: everything nearer than the
+  probe falls in one depth bin and is not sorted at all. With the camera parked
+  looking along −Z on Counter, 36% of the screen's pixels differed from a correctly
+  sorted frame, against 0.07% after the fix. `captureScanLight` now clears the
+  splat's private `_sortInitialized`, so the next frame sorts again. In normal play
+  it needed the camera level and pointing within 1.8° of −Z, so it was rare.
 - **Do not let `PMREMGenerator` paint the backdrop.** Given a solid-colour
   `scene.background` it draws a unit box at the world origin, once, from wherever its
   cube camera was left by the *previous* capture. So the first two captures look
@@ -137,10 +155,6 @@ need lighting, or if probes can be computed from splat colours without rendering
   actually sees around the gap, would adapt to bright and dark parts of a room.
 - **No directional key light.** The environment gives soft light only, so the
   figurine has less shape than it did under the sun.
-- **A possible one-frame flash on capture**, from the splats being re-sorted for the
-  probe's views. A headless measurement on Counter was at noise level, and
-  re-sorting for the main camera straight after the capture made no clear
-  difference, so nothing was changed.
 - No contact shadow. The collision mesh could act as a shadow receiver.
 
 ## Contact shadow
@@ -166,10 +180,18 @@ behind the chest when climbing. The light probe's capture skips the shadow.
 
 **Things learned, each the hard way**
 
-- **Three's `GaussianSplat` does not expose its centres.** The shadow keeps its own
-  copy in a storage buffer (16 bytes a splat) and reads the draw order from the
-  private `_sort.orderRead`. If that field goes away the shadow turns itself off
-  with a console warning.
+- **Three's `GaussianSplat` does not expose its centres or draw order.** The shadow
+  reads both from private fields (`_buffers.centerRead`, `_sort.orderRead`), which
+  are already on the GPU for the splat's own drawing, so it adds no buffer of its
+  own. Every private field the app touches is listed in `splatInternals`; check it
+  on a three.js upgrade. If the fields go away the shadow turns itself off with a
+  console warning.
+- **A view ray may not meet the contact plane.** Rays running alongside it, or
+  heading away from it, are skipped; without that, a hit behind the camera counts as
+  inside the disc.
+- **The shadow's normal eases toward a new facing, but jumps past a right angle.**
+  Blending two opposed unit vectors passes through zero, and short of halfway
+  normalises back to the start, so it would never arrive.
 - **Darkening whole splats by their centre does not work.** Floors are often a few
   very large flat splats (about 500 per body-width on Playroom's rug), so it gives a
   faint smudge in the wrong place.
@@ -195,7 +217,5 @@ measurable on the lighter scans, which sit at the display's refresh rate.
 - On Counter and Living Room the default shadow was not clearly visible in
   screenshots (clutter under the feet; camera too close).
 - Low objects within half a body-height of the feet's level get darkened too.
-- `GaussianSplat` has no `dispose`, so the extra buffer is not freed on a scan
-  switch, the same as the splat's own buffers.
 - It is a blob, not the figurine's shape. A shaped shadow needs a light direction,
   which the scan does not give.
