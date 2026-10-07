@@ -197,6 +197,7 @@ function loadFromURL(url: string, id: string): void {
       currentSplat = splat;
       room.updateMatrixWorld(true);
       lastCenters = centers; lastOpacity = opacity; lastCov = cov; lastMatrix.copy(splat.matrixWorld);
+      estimateScanFill(centers, color, cov, splat.matrixWorld, scanFill);
       console.log(`loaded ${id}: radius ${o.radius.toFixed(2)} → scaled ${k.toFixed(2)}x`);
       await buildCollision(id, token, centers, opacity, cov, splat.matrixWorld);
       if (token === loadToken && charLoaded) { resetToSpawn(); requestScanLight(); }
@@ -449,8 +450,14 @@ function rebuildCollision(): void {
 // moves, which is the cheapest possible "dynamic" probe.
 //   There are two captures, not one: a new capture goes into whichever isn't showing,
 // and the light cross-fades over to it, so a re-capture never swaps in a single frame.
-const SCAN_LIGHT = { on: true, intensity: 1, follow: false, blend: 0.4 }; // blend: seconds to cross-fade to a new capture
+const SCAN_LIGHT = { on: true, intensity: 1, follow: false, blend: 0.4, fill: true }; // blend: seconds to cross-fade to a new capture; fill: see scanFill
 const FOLLOW_INTERVAL_MS = 500;            // follow mode re-captures at most this often
+// What the probe sees where the scan has nothing — typically the ceiling, which phone
+// scans rarely capture, and the empty space around a tabletop scan. Left as the dark
+// backdrop those directions read as "no light from there" and the figurine goes dark
+// on top. The scan can't say what was really there, so this is an estimate: the
+// average colour of the upper half of the scan (see estimateScanFill).
+const scanFill = new THREE.Color();
 let scanLightPmrem: THREE.PMREMGenerator | null = null;
 const scanLightEnv: Array<THREE.WebGLRenderTarget | null> = [null, null];
 const scanLightMix = uniform(0);           // which capture is lighting the scene: 0 = the first, 1 = the second, between = mid-fade
@@ -471,7 +478,7 @@ function captureScanLight(): void {
   for (const o of [player, collisionDebug, platformDebug]) if (o && o.visible) { o.visible = false; hidden.push(o); }
   const lit = scene as unknown as { environmentNode: unknown };
   const envNode = lit.environmentNode, bg = scene.background;
-  lit.environmentNode = null; scene.background = BACKDROP;
+  lit.environmentNode = null; scene.background = SCAN_LIGHT.fill ? scanFill : BACKDROP;
   scanLightAt.set(player.position.x, player.position.y + charH * CAM_PIVOT, player.position.z);
   const t0 = performance.now();
   const shoot = (i: number) => {
@@ -492,6 +499,35 @@ function captureScanLight(): void {
   scanLightLast = performance.now();
   if (TEL) console.log(`SCANLIGHT captured at ${scanLightAt.x.toFixed(2)},${scanLightAt.y.toFixed(2)},${scanLightAt.z.toFixed(2)} in ${(scanLightLast - t0).toFixed(1)}ms`);
   applyScanLight();
+}
+
+/** Estimate the colour of what the scan is missing overhead: the average colour of its
+ *  upper half — the splats above the scan's median height, where "median" and
+ *  "average" are both weighted by how much each splat shows (opacity × size). In a
+ *  room that is the upper walls, which a ceiling usually resembles; in a tabletop scan
+ *  it is the upper part of whatever was captured. Colours are averaged as stored,
+ *  which is also how the probe's own blur averages them. */
+function estimateScanFill(centers: THREE.BufferAttribute, color: THREE.BufferAttribute, cov: Float32Array | null, world: THREE.Matrix4, out: THREE.Color): void {
+  const n = centers.count, e = world.elements, BINS = 256;
+  const height = (i: number) => e[1] * centers.getX(i) + e[5] * centers.getY(i) + e[9] * centers.getZ(i) + e[13];
+  // how much a splat shows: its opacity times its footprint (the sum of its variances ∝ area)
+  const weight = (i: number) => color.getW(i) * (cov ? cov[i * 6] + cov[i * 6 + 3] + cov[i * 6 + 5] : 1);
+  let y0 = Infinity, y1 = -Infinity;
+  for (let i = 0; i < n; i++) { const y = height(i); if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  const span = Math.max(y1 - y0, 1e-9), hist = new Float64Array(BINS);
+  let total = 0;
+  for (let i = 0; i < n; i++) { const w = weight(i); hist[Math.min(BINS - 1, Math.floor(((height(i) - y0) / span) * BINS))] += w; total += w; }
+  let acc = 0, bin = 0;
+  while (bin < BINS - 1 && acc + hist[bin] < total / 2) acc += hist[bin++];
+  const median = y0 + (bin / BINS) * span;
+  let r = 0, g = 0, b = 0, sum = 0;
+  for (let i = 0; i < n; i++) {
+    if (height(i) < median) continue;
+    const w = weight(i);
+    r += color.getX(i) * w; g += color.getY(i) * w; b += color.getZ(i) * w; sum += w;
+  }
+  if (sum > 0) out.setRGB(r / sum, g / sum, b / sum); else out.copy(BACKDROP);
+  if (TEL) console.log(`SCANFILL rgb=${out.r.toFixed(2)},${out.g.toFixed(2)},${out.b.toFixed(2)} from splats above y=${median.toFixed(2)} (scan spans ${y0.toFixed(2)}..${y1.toFixed(2)})`);
 }
 
 /** Scan lighting replaces both fixed lights; with it off (or before the first
@@ -1337,6 +1373,8 @@ function setupDebugMenu(): void {
     'Light the figurine from the scan itself (a cubemap of the splats, captured at the figurine) instead of the fixed ambient fill.');
   addToggle('Scan light: follow figurine', SCAN_LIGHT.follow, (on) => { SCAN_LIGHT.follow = on; if (on) requestScanLight(1); },
     'Re-capture the light as the figurine moves, so it changes from place to place. Off = captured once at the spawn point.');
+  addToggle('Scan light: fill gaps', SCAN_LIGHT.fill, (on) => { SCAN_LIGHT.fill = on; requestScanLight(1); },
+    'Where the scan has nothing (usually the ceiling), light the figurine with the average colour of the scan\'s upper half instead of darkness.');
   addSlider('Scan light: strength', SCAN_LIGHT.intensity, 0, 3, 0.05, (v) => { SCAN_LIGHT.intensity = v; applyScanLight(); });
   addSlider('Scan light: blend (s)', SCAN_LIGHT.blend, 0, 2, 0.1, (v) => { SCAN_LIGHT.blend = v; },
     'Seconds to cross-fade from one light capture to the next in follow mode. 0 = swap instantly.');

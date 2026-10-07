@@ -26,6 +26,16 @@ It is captured a few frames after a scan loads and the figurine is placed. With
 "Scan light: follow figurine" on, it is re-captured when the figurine has moved one
 body-height from the last capture point, at most twice a second.
 
+**Gap fill.** Where the scan has no splats (usually the ceiling, which phone scans
+rarely capture), the probe would see the dark backdrop and read it as "no light from
+there", leaving the figurine dark on top. During a capture the backdrop is instead
+`scanFill`: the average colour of the scan's upper half, computed once at load by
+`estimateScanFill` (splats above the median height, weighted by opacity × size). It
+is an estimate, not a measurement. It only shows through where nothing was captured,
+so a scan with a real ceiling is unaffected. This is the same idea as a game
+engine's ambient-probe fallback; the research equivalent is inpainting the
+environment map with a diffusion model (ComGS), which is far too heavy here.
+
 **Cross-fade.** There are two captures, not one. A new capture is rendered into
 whichever is not showing, and `scanLightMix` fades over to it ("Scan light: blend",
 0.4 s by default). The environment is a node, `mix(pmremTexture(a), pmremTexture(b),
@@ -54,6 +64,14 @@ rebuilds a shader. A new capture waits until the current fade has finished.
   - *Kitchen and Counter* (tabletop scans surrounded by empty space): the figurine
     is dark, because most directions see the black backdrop.
   - *Living Room:* dark and flat.
+- **The gap fill helps where there are gaps, and only there.** Figurine brightness
+  at spawn (0–255), fill off → on: Living Room 52 → 86 (the dark top of the head is
+  gone), Kitchen 43 → 48, Counter 63 → 65, Playroom 129 → 129.
+- **Counter and Kitchen are not dark because of gaps.** Their probes are almost
+  fully covered by splats. They are dark because the scan's own light is dim next to
+  the old fixed lights, under which the same patch read about 150 on every scan. At
+  strength 1 a surface is lit about as brightly as the scan around it, which is
+  consistent but looks dull on a dark-green figurine.
 - **Follow mode hitches on Playroom.** The 5 ms figure is only the time to submit a
   capture. On Playroom (30 ms a frame to begin with) the worst frame during a walk
   went from 60 ms to 128 ms with follow on, and the mean from 30.6 to 33.6 ms. On
@@ -90,8 +108,11 @@ need lighting, or if probes can be computed from splat colours without rendering
 ## Open
 
 - **The thresholds are first guesses** (one body-height, half a second).
-- **Brightness.** With the sun off the figurine may read as too dark; the default
-  strength has not been tuned.
+- **Brightness.** With the sun off the figurine reads as too dark on three of the
+  four scans; the default strength (1) has not been tuned. Around 2 would match the
+  old look.
+- **The fill is one colour per scan.** A per-capture fill, from what each probe
+  actually sees around the gap, would adapt to bright and dark parts of a room.
 - **No directional key light.** The environment gives soft light only, so the
   figurine has less shape than it did under the sun.
 - **A possible one-frame flash on capture**, from the splats being re-sorted for the
