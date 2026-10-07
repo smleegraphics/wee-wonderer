@@ -48,7 +48,20 @@ rebuilds a shader. A new capture waits until the current fade has finished.
   twice with the same numbers.
 - **Without the sun the figurine is darker and flatter** than under the fixed lights,
   because the scan's light is low dynamic range. "Scan light: strength" is still 1.
-- Only tested on Counter.
+- **Tested on all four demo scans** (headless, one walk each). No errors on any.
+  - *Playroom:* the figurine picks up the warm colour of the play mat and reads as
+    well lit. This is the scan it suits best: enclosed, bright, colourful.
+  - *Kitchen and Counter* (tabletop scans surrounded by empty space): the figurine
+    is dark, because most directions see the black backdrop.
+  - *Living Room:* dark and flat.
+- **Follow mode hitches on Playroom.** The 5 ms figure is only the time to submit a
+  capture. On Playroom (30 ms a frame to begin with) the worst frame during a walk
+  went from 60 ms to 128 ms with follow on, and the mean from 30.6 to 33.6 ms. On
+  Living Room there was no measurable change (16.6 ms either way).
+- **The cross-fade also helped on Living Room** (biggest one-frame brightness jump
+  6.8 → 1.2). On Playroom it made no measurable difference (4.0 either way), and on
+  Kitchen the brightness measurement was swamped by the figurine moving against
+  the background.
 
 ## Tried and rejected: a probe grid
 
