@@ -22,7 +22,7 @@ export interface CollisionHealth {
   cells: number;          // walkable cells
   platforms: number;      // separate walkable surfaces
   realPlatforms: number;  // ...of at least `realCells` cells
-  scrapShare: number;     // share of walkable cells on smaller ones: perches on clutter (lower is better)
+  scrapShare: number;     // share of walkable cells on smaller ones. Small perches, nearly all high up on furniture: a description of the room, not a fault to drive down
   spawnShare: number;     // share of walkable cells on the surface the figurine starts on, reachable by walking alone (higher is better)
   jumpShare: number;      // ...reachable by walking, jumping and dropping (higher is better)
   reachShare: number;     // ...and by climbing, where the mesh has a face to climb (higher is better)

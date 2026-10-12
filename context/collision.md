@@ -38,7 +38,7 @@ Baseline (SCHEMA g16, default settings):
 |---|---|---|---|---|
 | Walkable cells | 9,626 | 4,594 | 4,667 | 15,991 |
 | Platforms (of 40 cells or more) | 85 (25) | 65 (16) | 61 (12) | 103 (31) |
-| Cells on scraps (smaller platforms) | 9.3% | 18.4% | 15.7% | 6.8% |
+| Cells on small perches (smaller platforms) | 9.3% | 18.4% | 15.7% | 6.8% |
 | Cells reached from spawn by walking | 46.3% | 43.9% | 58.5% | 59.9% |
 | ...and jumping or dropping | 46.9% | 52.3% | 75.2% | 66.0% |
 | ...and climbing the mesh's faces | 99.4% | 54.3% | 75.2% | 98.8% |
@@ -100,7 +100,8 @@ What the baseline says:
 - **Counter and Kitchen have real platforms nothing reaches** (12 and 4): other
   furniture across gaps the scan never covered. That, not faces, is what keeps their
   reach at 54% and 75%.
-- **A tenth to a fifth of walkable cells are scraps** on clutter.
+- **A tenth to a fifth of walkable cells are small perches**, which is not a fault: see
+  the next section.
 - **The mesh sits 0.5 to 0.6 voxel off the splats**, the looseness described below.
 
 Not measured:
@@ -109,6 +110,31 @@ Not measured:
   face between two surfaces does it show, in reach.
 - **Whether the mesh is right where it is**, only how far it is from splats.
 - **Headroom and narrow passages**, beyond what the NavGrid already requires to stand.
+
+## Small platforms are perches, not debris
+
+Each room has 60 to 100 platforms and only 12 to 31 of 40 cells or more, which looks
+like fragmentation to clean up. It is not. Measured against the surface the figurine
+starts on, as a share of all walkable cells:
+
+| Small platforms that are... | Living Room | Playroom | Counter | Kitchen |
+|---|---|---|---|---|
+| more than a figurine's height above it | 8.6% | 6.0% | 5.7% | 4.9% |
+| up to a figurine's height above it | 0.8% | 0.6% | 2.0% | 4.5% |
+| at its level (fragments of it) | 0.1% | 0.2% | 2.9% | 1.8% |
+| below it | 0% | 0% | 7.9% | 4.5% |
+
+- **In the rooms nearly all are small tops high on furniture**: real places to climb
+  to. Removing them would take those away to improve a number.
+- **Fragments of the floor are next to nothing**, now that `fillGround` joins its
+  pieces. There is nothing to merge.
+- **On Counter and Kitchen** the rest is the other furniture and real floor round the
+  table, most of it out of reach whatever is done here.
+
+So collision is left as it is, and "cells on small perches" is shown by the health
+check but not guarded. When a game feature needs real platforms only (placing things,
+paths for other characters), give the NavGrid a way to say which those are; do not
+delete the small ones.
 
 ## Filling gaps in the ground: `fillGround`
 

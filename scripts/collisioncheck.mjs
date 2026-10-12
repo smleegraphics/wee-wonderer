@@ -28,7 +28,7 @@ const METRICS = [
   { key: 'cells', label: 'walkable cells' }, // not guarded: clearing scraps lowers it, filling floor raises it
   { key: 'platforms', label: 'platforms' },
   { key: 'realPlatforms', label: 'real platforms' },
-  { key: 'scrapShare', label: 'cells on scraps', share: true, worse: 'up', slack: 0.01 },
+  { key: 'scrapShare', label: 'cells on small perches', share: true }, // not guarded: these are small tops of furniture, somewhere to climb to, not a defect (context/collision.md)
   { key: 'spawnShare', label: 'cells walkable from spawn', share: true, worse: 'down', slack: 0.01 },
   { key: 'jumpShare', label: '...and by jumping or dropping', share: true, worse: 'down', slack: 0.01 },
   { key: 'reachShare', label: '...and by climbing the mesh\'s faces', share: true, worse: 'down', slack: 0.01 },
