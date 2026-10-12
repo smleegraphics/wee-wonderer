@@ -80,6 +80,11 @@ How far each number can be trusted:
 - **"Holes" is low because the NavGrid already fills enclosed ones.** A bare stretch
   open to the outside (Living Room's floor) shows in "fills its convex outline"
   instead, which furniture standing on the floor also lowers.
+- **"Fills its convex outline" is shown but not guarded.** It is a share of the
+  surface's own outline, so it falls when the surface grows into a less regular shape:
+  filling Living Room's bare floor in a trial took walkable cells from 8,247 to 9,626
+  and walking reach from 30% to 46%, and this number from 75.5% to 66.2%. Judge floor
+  changes by walkable cells and reach.
 - **No small floating mesh pieces** on any room (`despeckle` works), so that guard only
   matters if it starts failing.
 

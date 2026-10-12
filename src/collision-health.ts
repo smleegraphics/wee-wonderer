@@ -31,7 +31,7 @@ export interface CollisionHealth {
   // --- the shape of that surface
   holeShare: number;      // enclosed holes in it, as a share of its area with them filled (lower is better)
   edgeShare: number;      // share of its cells that are on an edge: raggedness (lower is better)
-  solidity: number;       // its area as a share of the convex outline round it: 1 is a floor with no bays or missing stretches (higher is better)
+  solidity: number;       // its area as a share of the convex outline round it: 1 is a floor with no bays or missing stretches. Compare only between surfaces of the same extent: one that grows into a less regular shape scores lower
   roughness: number;      // mean height difference between its neighbouring cells, in voxels: 0 is flat (lower is better)
   // --- the mesh
   triangles: number;      // without the backstop plane

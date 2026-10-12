@@ -25,7 +25,7 @@ const scans = named.length ? named : ['livingroom-clean.ply', 'counter-clean.ply
 // What is shown, and what is guarded: `worse` is the direction that is a regression, and
 // `slack` how far a number may move that way before it counts (shares are 0..1; offsets are voxels).
 const METRICS = [
-  { key: 'cells', label: 'walkable cells' },
+  { key: 'cells', label: 'walkable cells' }, // not guarded: clearing scraps lowers it, filling floor raises it
   { key: 'platforms', label: 'platforms' },
   { key: 'realPlatforms', label: 'real platforms' },
   { key: 'scrapShare', label: 'cells on scraps', share: true, worse: 'up', slack: 0.01 },
@@ -36,7 +36,7 @@ const METRICS = [
   { key: 'islands', label: 'real platforms no face could join', worse: 'up', slack: 0 },
   { key: 'holeShare', label: 'holes in the spawn surface', share: true, worse: 'up', slack: 0.01 },
   { key: 'edgeShare', label: 'spawn surface cells on an edge', share: true, worse: 'up', slack: 0.01 },
-  { key: 'solidity', label: 'spawn surface fills its outline', share: true, worse: 'down', slack: 0.01 },
+  { key: 'solidity', label: 'spawn surface fills its outline', share: true }, // shown, not guarded: it falls when the surface grows into a less regular shape, which is an improvement
   { key: 'roughness', label: 'spawn surface roughness (voxels)', worse: 'up', slack: 0.01 },
   { key: 'triangles', label: 'triangles' },
   { key: 'pieces', label: 'mesh pieces' },
