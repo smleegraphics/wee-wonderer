@@ -13,6 +13,8 @@ export interface HealthInput {
   voxel: number;
   realCells: number; // a platform of at least this many cells is somewhere to be, not a scrap
   move: { jumpVel: number; gravity: number; runSpeed: number; climbOver: number }; // how the figurine moves, in world units: take-off speed, gravity (positive), speed in the air, and how far over a lip a climb steps
+  /** Is there a face the figurine could climb from standing at (ax, ay, az) up to the surface at (bx, by, bz)? Asked of the collision mesh itself. */
+  climbable: (ax: number, ay: number, az: number, bx: number, by: number, bz: number) => boolean;
 }
 
 export interface CollisionHealth {
@@ -23,8 +25,9 @@ export interface CollisionHealth {
   scrapShare: number;     // share of walkable cells on smaller ones: perches on clutter (lower is better)
   spawnShare: number;     // share of walkable cells on the surface the figurine starts on, reachable by walking alone (higher is better)
   jumpShare: number;      // ...reachable by walking, jumping and dropping (higher is better)
-  reachShare: number;     // ...and by climbing up between surfaces that meet, seen from above. An upper bound: see `reach` (higher is better)
-  islands: number;        // real platforms that even that does not get to: places nothing can be put
+  reachShare: number;     // ...and by climbing, where the mesh has a face to climb (higher is better)
+  reachBound: number;     // ...and by climbing wherever two surfaces meet, seen from above, face or no face: the most a better mesh could give
+  islands: number;        // real platforms that even that does not get to: no change to the mesh's faces will join them
   // --- the shape of that surface
   holeShare: number;      // enclosed holes in it, as a share of its area with them filled (lower is better)
   edgeShare: number;      // share of its cells that are on an edge: raggedness (lower is better)
@@ -120,13 +123,14 @@ function standing(input: HealthInput): Pick<CollisionHealth, 'cells' | 'platform
  *  and no further off than it travels at a run in the time the jump (or the fall) takes.
  *  That is measured against the game: a jump rises 0.24 and carries about 1.3 at a run
  *  (Playroom), against 0.26 and 1.29 by this arithmetic. Walls in the way of a jump are
- *  not considered. For climbing, a higher surface counts as reached when it comes within
- *  a climb's step over a lip of a reached one, seen from above. Whether the face between
- *  them is there and can be climbed is not checked, so `reachShare` is an upper bound,
- *  and `islands` (what even that does not reach) is certain. */
-function reach(input: HealthInput): Pick<CollisionHealth, 'jumpShare' | 'reachShare' | 'islands'> {
-  const { walk, move, realCells } = input, cells = walk.platformId.length, start = startPlatform(input);
-  if (start < 0) return { jumpShare: 0, reachShare: 0, islands: 0 };
+ *  not considered. For climbing, a higher surface is reached from a cell within a climb's
+ *  step over a lip of it, seen from above, if `climbable` finds a face between the two
+ *  in the mesh (`reachShare`). Without that last test the same search gives the most
+ *  that better faces could reach (`reachBound`), and what even that leaves out is out of
+ *  reach for certain (`islands`). */
+function reach(input: HealthInput): Pick<CollisionHealth, 'jumpShare' | 'reachShare' | 'reachBound' | 'islands'> {
+  const { walk, move, realCells, climbable } = input, cells = walk.platformId.length, start = startPlatform(input);
+  if (start < 0) return { jumpShare: 0, reachShare: 0, reachBound: 0, islands: 0 };
   const step = walk.sampleStep, P = walk.positions;
   let minX = Infinity, minZ = Infinity, maxX = -Infinity, maxZ = -Infinity, minY = Infinity;
   for (let i = 0; i < cells; i++) {
@@ -142,7 +146,7 @@ function reach(input: HealthInput): Pick<CollisionHealth, 'jumpShare' | 'reachSh
   /** How far a jump carries by the time it is `dy` above where it left (below, if negative). */
   const carry = (dy: number) => move.runSpeed * (move.jumpVel + Math.sqrt(Math.max(0, move.jumpVel * move.jumpVel - 2 * move.gravity * dy))) / move.gravity;
 
-  const spread = (climbing: boolean): Uint8Array => {
+  const spread = (climbing: 'no' | 'faces' | 'anywhere'): Uint8Array => {
     const reached = new Uint8Array(walk.platformCount), queue = [start];
     reached[start] = 1;
     for (let h = 0; h < queue.length; h++)
@@ -155,16 +159,19 @@ function reach(input: HealthInput): Pick<CollisionHealth, 'jumpShare' | 'reachSh
               const p = walk.platformId[b];
               if (reached[p]) continue;
               const dy = P[b * 3 + 1] - ya, away = Math.hypot(P[b * 3] - P[a * 3], P[b * 3 + 2] - P[a * 3 + 2]);
-              if ((dy <= rise && away <= carry(dy)) || (climbing && dy > 0 && away <= move.climbOver + step)) { reached[p] = 1; queue.push(p); }
+              const jump = dy <= rise && away <= carry(dy);
+              const climb = !jump && climbing !== 'no' && dy > 0 && away <= move.climbOver + step
+                && (climbing === 'anywhere' || climbable(P[a * 3], ya, P[a * 3 + 2], P[b * 3], P[b * 3 + 1], P[b * 3 + 2]));
+              if (jump || climb) { reached[p] = 1; queue.push(p); }
             }
       }
     return reached;
   };
   const share = (reached: Uint8Array) => { let n = 0; for (let i = 0; i < cells; i++) n += reached[walk.platformId[i]]; return n / cells; };
-  const byJump = spread(false), byClimb = spread(true);
+  const anywhere = spread('anywhere');
   let islands = 0;
-  for (let p = 0; p < walk.platformCount; p++) if (!byClimb[p] && members[p].length >= realCells) islands++;
-  return { jumpShare: share(byJump), reachShare: share(byClimb), islands };
+  for (let p = 0; p < walk.platformCount; p++) if (!anywhere[p] && members[p].length >= realCells) islands++;
+  return { jumpShare: share(spread('no')), reachShare: share(spread('faces')), reachBound: share(anywhere), islands };
 }
 
 /** The area of the convex outline round cells (each a unit square centred on its x, z). */

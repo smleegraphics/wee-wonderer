@@ -1670,6 +1670,23 @@ function publishDebugState(): void {
   };
 }
 
+/** For the collision health check: is there a face the figurine could climb from
+ *  standing at (ax, ay, az) up to the surface at (bx, by, bz)? That is, a wall in front of
+ *  it, on the way from one to the other, at every height from its feet to where a mantle
+ *  takes over. Probed as the climb itself probes (climbWall, isWall). */
+const faceFrom = new THREE.Vector3(), faceDir = new THREE.Vector3();
+function climbableFace(ax: number, ay: number, az: number, bx: number, by: number, bz: number): boolean {
+  const away = faceDir.set(bx - ax, 0, bz - az).length();
+  if (away < 1e-6) return false; // straight overhead: nothing to climb from here
+  faceDir.divideScalar(away);
+  const up = lastVoxelSize, top = by - charH * CLIMB.mantleUp; // a mantle reaches a surface this far above the feet
+  for (let h = Math.min(ay + up / 2, (ay + by) / 2); ; h = Math.min(top, h + up)) {
+    const w = climbWall(faceFrom.set(ax, h, az), faceDir, away + up);
+    if (!w || !isWall(w)) return false;
+    if (h >= top) return true;
+  }
+}
+
 // ?tel=1 only: what `scripts/collisioncheck.mjs` reads. The measuring is in its own module,
 // loaded when asked for, so none of it is part of normal play.
 if (TEL) (window as unknown as { __collisionHealth?: () => Promise<unknown> }).__collisionHealth = async () => {
@@ -1683,6 +1700,7 @@ if (TEL) (window as unknown as { __collisionHealth?: () => Promise<unknown> })._
     voxel: lastVoxelSize,
     realCells: WALK_FILL.patch, // the same line the gap fill draws between ground and a scrap
     move: { jumpVel: TUNE.jumpVel * charH, gravity: -TUNE.gravity * charH, runSpeed: TUNE.runSpeed * charH, climbOver: CAPSULE_RADIUS * charH * CLIMB.mantleOver },
+    climbable: climbableFace,
   });
 };
 

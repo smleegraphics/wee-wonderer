@@ -41,8 +41,9 @@ Baseline (SCHEMA g15, default settings):
 | Cells on scraps (smaller platforms) | 10.9% | 18.5% | 16.0% | 7.1% |
 | Cells reached from spawn by walking | 30.3% | 43.9% | 58.2% | 56.8% |
 | ...and jumping or dropping | 37.6% | 52.4% | 75.1% | 64.5% |
-| ...and climbing (upper bound) | 99.6% | 55.5% | 75.1% | 100.0% |
-| Real platforms out of reach | 0 | 12 | 4 | 0 |
+| ...and climbing the mesh's faces | 99.3% | 54.4% | 75.1% | 98.8% |
+| ...if every meeting of surfaces had a face | 99.6% | 55.5% | 75.1% | 100.0% |
+| Real platforms no face could join | 0 | 12 | 4 | 0 |
 | Holes in the spawn surface | 1.1% | 3.7% | 2.0% | 1.4% |
 | Spawn surface cells on an edge | 13.6% | 16.9% | 11.6% | 9.4% |
 | Spawn surface fills its convex outline | 75.5% | 87.2% | 83.1% | 85.9% |
@@ -55,15 +56,18 @@ How far each number can be trusted:
 
 - **The script checks its own arithmetic first.** It runs the measuring on a made-up
   room (a floor with a hole, a ledge too high to jump to, a floor too far to jump to)
-  where all 19 numbers can be counted by hand, and measures nothing if one is wrong. Add
+  where all 20 numbers can be counted by hand, and measures nothing if one is wrong. Add
   a case there when adding a number.
 - **Reach is a model of the movement, not the controller.** Its jump was checked against
   the game: a real jump rises 0.24 and carries about 1.3 at a run, the model's
-  0.26 and 1.29. It ignores walls in the way of a jump. For climbing it counts a higher
-  surface as reached when it comes within a mantle's step of a reached one seen from
-  above, without checking that the face between is there and climbable: so "and
-  climbing" is an upper bound, and "out of reach" is certain. It takes its speeds from
-  `TUNE` and `CLIMB`, so it follows them when they change.
+  0.26 and 1.29. It ignores walls in the way of a jump. For climbing, a higher surface
+  is reached from a cell within a mantle's step of it, seen from above, if the mesh has
+  a wall between the two at every height from the feet to where a mantle takes over
+  (`climbableFace` in `main.ts`, through the climb's own `climbWall` and `isWall`). The
+  row below it drops that test: it is the most that better faces could reach, and what
+  it leaves out no change to faces will join. No predicted climb has been played out in
+  the game to confirm it. The model takes its speeds from `TUNE` and `CLIMB`, so it
+  follows them when they change.
 - **The mesh-to-splat distance is not an artefact of sparse splats**: opaque splats are
   a median 0.12 voxel from their nearest neighbour, against the 0.5 to 0.6 measured.
   It moves the right way with `iso` (Counter 0.71 / 0.59 / 0.53 at 0.15 / 0.35 / 0.6).
@@ -83,15 +87,18 @@ What the baseline says:
 
 - **Walking alone reaches a third to a half of what is walkable.** Jumping adds little;
   the rest depends on climbing.
+- **Where surfaces meet, the mesh nearly always has a face to climb**: missing faces
+  cost about 1% of reach on Counter, Living Room and Playroom, and nothing on Kitchen.
 - **Counter and Kitchen have real platforms nothing reaches** (12 and 4): other
-  furniture across gaps the scan never covered.
+  furniture across gaps the scan never covered. That, not faces, is what keeps their
+  reach at 54% and 75%.
 - **A tenth to a fifth of walkable cells are scraps** on clutter.
 - **The mesh sits 0.5 to 0.6 voxel off the splats**, the looseness described below.
 
 Not measured:
 
-- **Thin or blank surfaces** (hollow cabinet doors), and whether a face that looks
-  climbable is: reach assumes it.
+- **Thin or blank surfaces** (hollow cabinet doors) as such: only where one leaves no
+  face between two surfaces does it show, in reach.
 - **Whether the mesh is right where it is**, only how far it is from splats.
 - **Headroom and narrow passages**, beyond what the NavGrid already requires to stand.
 

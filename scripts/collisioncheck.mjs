@@ -31,8 +31,9 @@ const METRICS = [
   { key: 'scrapShare', label: 'cells on scraps', share: true, worse: 'up', slack: 0.01 },
   { key: 'spawnShare', label: 'cells walkable from spawn', share: true, worse: 'down', slack: 0.01 },
   { key: 'jumpShare', label: '...and by jumping or dropping', share: true, worse: 'down', slack: 0.01 },
-  { key: 'reachShare', label: '...and by climbing (upper bound)', share: true, worse: 'down', slack: 0.01 },
-  { key: 'islands', label: 'real platforms out of reach', worse: 'up', slack: 0 },
+  { key: 'reachShare', label: '...and by climbing the mesh\'s faces', share: true, worse: 'down', slack: 0.01 },
+  { key: 'reachBound', label: '...if every meeting had a face', share: true, worse: 'down', slack: 0.01 },
+  { key: 'islands', label: 'real platforms no face could join', worse: 'up', slack: 0 },
   { key: 'holeShare', label: 'holes in the spawn surface', share: true, worse: 'up', slack: 0.01 },
   { key: 'edgeShare', label: 'spawn surface cells on an edge', share: true, worse: 'up', slack: 0.01 },
   { key: 'solidity', label: 'spawn surface fills its outline', share: true, worse: 'down', slack: 0.01 },
@@ -54,7 +55,8 @@ let failed = 0;
 
 /** The measuring, run on a made-up room (voxel 1) where every answer can be counted by hand:
  *    surface 0: a 10 × 10 floor at y = 0 with a 2 × 2 hole in the middle (96 cells); the figurine starts on it
- *    surface 1: 3 cells at y = 2 along the floor's edge: too high to jump to (a jump rises 1), near enough to climb to
+ *    surface 1: 3 cells at y = 2 along the floor's edge: too high to jump to (a jump rises 1), near enough to climb to, with a face to climb
+ *    surface 3: the same along another edge, with no face: reached only if faces are not asked for
  *    surface 2: a 5 × 10 floor at y = 0, 21 cells away: too far to jump to (a level jump carries 4.7), and nothing to climb
  *    mesh: two separate triangles (and the two of the backstop plane)
  *    splats: one 1 voxel off the first triangle's centre, one 0.5 off the second's, one far from everything, one too faint to count */
@@ -64,17 +66,19 @@ async function selfTest(page) {
     const pos = [], id = [];
     for (let x = 0; x < 10; x++) for (let z = 0; z < 10; z++) if (!(x >= 4 && x <= 5 && z >= 4 && z <= 5)) { pos.push(x, 0, z); id.push(0); }
     for (let z = 0; z < 3; z++) { pos.push(10, 2, z); id.push(1); }
+    for (let x = 0; x < 3; x++) { pos.push(x, 2, -1); id.push(3); }
     for (let x = 30; x < 35; x++) for (let z = 0; z < 10; z++) { pos.push(x, 0, z); id.push(2); }
     return collisionHealth({
-      walk: { positions: new Float32Array(pos), platformId: new Int32Array(id), platformCount: 3, sampleStep: 1 },
+      walk: { positions: new Float32Array(pos), platformId: new Int32Array(id), platformCount: 4, sampleStep: 1 },
       mesh: { positions: [0, 0, 0, 3, 0, 0, 0, 0, 3, 19, 0, 19, 22, 0, 19, 19, 0, 22, -50, -1, -50, 50, -1, -50, 50, -1, 50, -50, -1, 50], index: [0, 1, 2, 3, 4, 5, 6, 7, 8, 6, 8, 9] },
       splats: { centers: [1, 1, 1, 20, 0.5, 20, 100, 100, 100, 1, 0, 1], opacity: [1, 1, 1, 0.05], count: 4, matrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] },
       spawn: [0, 0, 0], voxel: 1, realCells: 40,
       move: { jumpVel: Math.sqrt(18), gravity: 9, runSpeed: 5, climbOver: 1 },
+      climbable: (ax, ay, az, bx) => bx === 10, // only surface 1 has a face
     });
   });
   const want = {
-    cells: 149, platforms: 3, realPlatforms: 2, scrapShare: 3 / 149, spawnShare: 96 / 149, jumpShare: 96 / 149, reachShare: 99 / 149, islands: 1,
+    cells: 152, platforms: 4, realPlatforms: 2, scrapShare: 6 / 152, spawnShare: 96 / 152, jumpShare: 96 / 152, reachShare: 99 / 152, reachBound: 102 / 152, islands: 1,
     holeShare: 4 / 100, edgeShare: 44 / 96, solidity: 96 / 100, roughness: 0,
     triangles: 2, pieces: 2, smallPieces: 2, looseShare: 1, offMedian: 1, offP90: 1, missedShare: 1 / 3,
   };
