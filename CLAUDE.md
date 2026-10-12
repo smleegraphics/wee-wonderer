@@ -13,6 +13,7 @@ The two docs below are the ones to read before touching movement.
 - **Collision mesh, voxelizer, floor, walls, scan cleanup** → `context/collision.md`
 - **Climbing, jumping onto walls, the follow camera, climb animation** → `context/climb.md`
 - **Lights, the environment map, the contact shadow, rendering the splats from another camera** → `context/lighting.md`
+- **Filling see-through ground with extra splats, or measuring how see-through a scan is** → `context/splat-fill.md`
 - **Anything on screen that is not the 3D view: tiles, cards, the Debug card, title and loading screens, fonts, colours** → `context/ui.md`
 
 ## Commands
@@ -39,6 +40,7 @@ the default is `room2.ply` (Playroom). Cleaned demo scans are `*-clean.ply`.
 | `src/load-scan.worker.ts` | Fetches and parses a scan's `.ply` off the main thread |
 | `src/worker-call.ts` | `workerCaller`: promise-based request/response for all three workers (a failed job rejects) |
 | `src/voxel-cache.ts` | IndexedDB cache of the built surface. **Bump `SCHEMA` when the surface algorithm changes.** |
+| `src/fill-scan-core.ts` (+ `.worker.ts`) | Walkable gap fill: flat splats added where the ground the figurine can stand on lets the backdrop through |
 | `src/orient-scan.ts` | Levels the floor and yaw-aligns walls to X/Z (seeded, deterministic) |
 | `src/clean-scan-core.ts` (+ worker), `scripts/clean-scan.mjs` | Floater removal, in-browser and offline |
 | `src/climb-side-anim.ts` | Sideways-climb animation generated from the `climb` clip |
@@ -61,6 +63,12 @@ Visual and behavioural checks run headless in real Chrome through Playwright.
 - **UI regression check:** `node scripts/uicheck.mjs` runs 22 checks of the title,
   keys, tiles, Debug card, loading view, room switch and a failed load, and exits
   non-zero on a failure. Run it after any change under `src/ui/` or to loading.
+- **Gap measurement:** `node scripts/holes.mjs <scan> [outDir]` counts the pixels the
+  scan leaves see-through from 16 cameras inside the room, and what is behind them.
+  Playroom must stay at 0. It drives `window.__matte` (`?tel=1`), which shows the scan
+  or the solid collision mesh alone over a chosen backdrop, with the gap fill faded.
+  It cannot judge the fill: for that, compare fill off and on by eye
+  (`context/splat-fill.md`).
 - **Climb regression check:** `node scripts/climbfuzz.mjs <scan> <seconds> <seed>`
   walks, jumps and climbs at random and reports any frame where the climber is
   inside a solid. Run a few seeds, at most three browsers at a time.
@@ -78,7 +86,8 @@ Visual and behavioural checks run headless in real Chrome through Playwright.
 
 - **Debug tunables go in the on-screen Debug card** (`addToggle` / `addSlider` on a
   section in `setupDebugMenu`), not new URL params. Collision sliders set `VOXEL_OPTS`
-  and call `rebuildCollision()`.
+  and call `rebuildCollision()`; gap-fill sliders set `WALK_FILL` and call
+  `refillWalkable()`.
 - **`main.ts` does not build UI.** It talks to the `hud` handle; DOM and styles live
   in `src/ui/`, and every colour, font and size is a token in `ui.css`.
 - **The controller talks to collision only through the `Collision` interface**, so
@@ -86,6 +95,11 @@ Visual and behavioural checks run headless in real Chrome through Playwright.
 - **Standing on something means the NavGrid says so.** Movement is confined to
   validated walkable cells; the raw mesh is used for walls and probes, not for
   deciding where the figurine may stand.
+- **A scan's splat arrays hold more than the scan.** Fill splats follow the scan's
+  own. Collision, orientation and anything else that reasons about the room use the
+  first `own` only (see `showSplat`).
+- **The gap fill follows the walkable cells.** It runs after collision and again
+  whenever `rebuildPlatformOverlay` rebuilds them; nothing else decides where it goes.
 - Scans are scaled to `TARGET_RADIUS`, so distances are in normalized scan units,
   not metres. Express sizes relative to `charH`.
 
