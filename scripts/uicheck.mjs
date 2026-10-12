@@ -96,6 +96,15 @@ try {
   const since = loadedLogs().slice(loadedBefore).map((l) => l.split(':')[0]);
   check('of two rooms picked in a row, only the last loads', settled && since.join() === `loaded ${SECOND.file}`, since.join(' | '));
 
+  // --- a collision slider moved while a room loads: the load still ends, with that room
+  const before = logs.length;
+  await page.getByRole('button', { name: 'Rooms', exact: true }).click();
+  await page.locator('.ww-rooms').getByRole('button', { name: FIRST.label, exact: true }).click();
+  await page.getByLabel('Isovalue (fill)', { exact: true }).evaluate((el) => { el.value = '0.45'; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); });
+  const ended = await loaded() && await arrived();
+  const built = logs.slice(before).filter((l) => l.startsWith('loaded ') || l.startsWith('collision')).map((l) => l.split(':')[0]);
+  check('a collision slider moved mid-load does not stop the load', ended && built.includes(`loaded ${FIRST.file}`) && built.some((l) => l.startsWith('collision')), built.join(' | '));
+
   // --- a load that fails says so and does not leave the loading view up
   await page.goto(`${base}?scan=nope.ply`, { waitUntil: 'load' });
   const failedLoad = await soon(() => document.querySelector('.ww-status').dataset.kind === 'error' && document.querySelector('.ww-loading').dataset.on === 'false', null, LOAD_MS);

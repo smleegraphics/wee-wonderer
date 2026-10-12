@@ -22,6 +22,19 @@ splat centres + opacity → density field (voxels) → cleanup → Surface Nets 
 - `new MeshBVH(geom, { indirect: true })` is required: without it the BVH reorders
   the index and face-index checks (such as "is this the backstop plane") break.
 
+## Rebuilding from the Debug sliders
+
+- **`rebuildCollision()` does nothing while a room is loading.** There is no settled
+  room then: the saved splats (`lastCenters` and the rest) are still the last room's
+  while `currentFile` is already the new one, and bumping `loadToken` tells the load it
+  was replaced, so the loading view never ends. A slider moved mid-load used to do all
+  of that, and cached the old room's collision under the new room's name (hence
+  `SCHEMA` g15). The load builds collision itself; when it ends, `loadFromURL` compares
+  `collisionKey` with the current settings and rebuilds if a slider moved meanwhile.
+- **`buildCollision` copies `VOXEL_OPTS` on entry** and uses the copy for both the cache
+  key and the build, so a slider moved while it waits cannot store one setting's
+  surface under another's key.
+
 ## Walking uses the NavGrid, not the mesh
 
 A capsule simulated directly on the mesh got wedged on bumpy furniture and fell

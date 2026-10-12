@@ -98,6 +98,7 @@ const lastMatrix = new THREE.Matrix4();
 const CAPSULE_RADIUS = 0.22; // capsule hemisphere radius, in char-heights
 const PHYSICS_STEPS = 5;     // collide-and-slide substeps per frame
 let loadToken = 0; // guards against a slow async collision build landing after a scan swap
+let collisionKey = ''; // the settings (voxelCacheKey) the collision there is was built with
 // scan import (upload + in-browser cleanup), session-only
 const CLEAN_OPTS: CleanOptions = { alphaMin: 0.35, minMass: 4, scaleCapMul: 4, crop: true };
 const uploads = new Map<string, string>(); // upload id → blob object URL
@@ -296,6 +297,8 @@ function loadFromURL(url: string, id: string): void {
     if (error === undefined) loadStep(token, 'done');
     scanLoading = false;
     updateLoading();
+    // a collision slider moved while the room was loading (rebuildCollision waits for this): catch up
+    if (error === undefined && collisionKey !== voxelCacheKey(id, VOXEL_SIZE, VOXEL_OPTS, TARGET_RADIUS)) rebuildCollision();
     if (error !== undefined) hud.status(`${id}: ${error instanceof Error ? error.message : String(error)}`, 'error');
   };
   showScan(new URL(url, location.href).href, id, token, abort.signal).then(() => finish(), finish); // absolute: a worker resolves URLs against its own script
@@ -655,17 +658,19 @@ async function buildCollision(file: string, token: number, centers: THREE.Buffer
   // uploads aren't cached: re-cleaning changes the splat under a stable id, so the
   // key wouldn't reflect it — always re-voxelize an upload.
   const useCache = !file.startsWith('upload:');
-  const key = voxelCacheKey(file, VOXEL_SIZE, VOXEL_OPTS, TARGET_RADIUS);
+  const opts = { ...VOXEL_OPTS }; // as they are now: a slider can move while this waits, and the key must match what is built
+  const key = voxelCacheKey(file, VOXEL_SIZE, opts, TARGET_RADIUS);
   let surf: VoxelSurface | null = useCache ? await voxelCacheGet(key) : null;
   const cached = surf !== null;
   if (token !== loadToken) return; // superseded while awaiting the cache
   if (!surf) {
-    surf = await voxelizeInWorker(centers, opacity, cov, matrixWorld, VOXEL_OPTS);
+    surf = await voxelizeInWorker(centers, opacity, cov, matrixWorld, opts);
     if (token !== loadToken) return; // superseded while voxelizing
     if (useCache) void voxelCachePut(key, surf);
   }
   const geom = surfaceToGeometry(surf);
   collision = new MeshCollision(geom, GROUND_OFFSET); // note: MeshBVH indexes geom in place
+  collisionKey = key;
   const mesh = new THREE.Mesh(
     geom,
     MESHONLY
@@ -685,9 +690,12 @@ async function buildCollision(file: string, token: number, centers: THREE.Buffer
 }
 
 /** Re-voxelize the current scan with the current VOXEL_OPTS (for debug tunables),
- *  without reloading the PLY. */
+ *  without reloading the PLY. Not while a room is loading: there is no settled room to
+ *  rebuild then (the saved splats are still the last room's, under the new room's name),
+ *  and bumping loadToken would tell the load it had been replaced, so that it never ends.
+ *  The load builds collision itself, and catches up afterwards if the settings moved. */
 function rebuildCollision(): void {
-  if (!lastCenters || !lastOpacity) return;
+  if (scanLoading || !lastCenters || !lastOpacity) return;
   disposeCollision();
   buildCollision(currentFile, ++loadToken, lastCenters, lastOpacity, lastCov, lastMatrix)
     .catch((err: unknown) => hud.status(err instanceof Error ? err.message : String(err), 'error'));

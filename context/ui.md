@@ -153,7 +153,7 @@ to its spawn point, and the reveal starts from there.
   Before, parsing the 453 MB Playroom blocked the main thread for about 10 s and a
   click on Begin did nothing until it ended.
 
-- **`scripts/uicheck.mjs` is the regression check for all of this**: 22 checks of
+- **`scripts/uicheck.mjs` is the regression check for all of this**: 23 checks of
   the title, keys, tiles, Debug card, loading note, progress bar, arrival, room
   switch and a failed load. Run it after any change here. It waits for conditions,
   not for fixed times: a fixed 200 ms wait failed about one run in five.
