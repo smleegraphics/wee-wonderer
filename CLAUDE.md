@@ -43,6 +43,7 @@ the default is `room2.ply` (Playroom). Cleaned demo scans are `*-clean.ply`.
 | `src/fill-scan-core.ts` (+ `.worker.ts`) | Walkable gap fill: flat splats added where the ground the figurine can stand on lets the backdrop through |
 | `src/orient-scan.ts` | Levels the floor and yaw-aligns walls to X/Z (seeded, deterministic) |
 | `src/clean-scan-core.ts` (+ worker), `scripts/clean-scan.mjs` | Floater removal, in-browser and offline |
+| `src/collision-health.ts` | The collision health numbers, for `scripts/collisioncheck.mjs` (loaded only under `?tel=1`) |
 | `src/climb-side-anim.ts` | Sideways-climb animation generated from the `climb` clip |
 
 ## Testing without a human
@@ -69,6 +70,11 @@ Visual and behavioural checks run headless in real Chrome through Playwright.
   or the solid collision mesh alone over a chosen backdrop, with the gap fill faded.
   It cannot judge the fill: for that, compare fill off and on by eye
   (`context/splat-fill.md`).
+- **Collision health check:** `node scripts/collisioncheck.mjs` measures each demo
+  room's collision as ground for a game (how much of the walkable area the figurine can
+  reach, how ragged it is, how closely the mesh fits the splats) and fails if a number is worse than
+  `scripts/collision-baseline.json`. Run it after any change to the voxelizer, its
+  settings or the NavGrid; `--save` a new baseline when a change is meant to move one.
 - **Climb regression check:** `node scripts/climbfuzz.mjs <scan> <seconds> <seed>`
   walks, jumps and climbs at random and reports any frame where the climber is
   inside a solid. Run a few seeds, at most three browsers at a time.
