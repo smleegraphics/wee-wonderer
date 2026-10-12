@@ -48,7 +48,7 @@ const VOXEL_OPTS = {
   iso: num('iso', 0.35),         // isovalue as a fraction of median surface density (low → fills faint flat panels)
   despeckle: num('despeckle', 20), // drop solid islands smaller than this (stray cubes / floaters the low iso admits)
   close: num('close', 1),        // dilate→erode iterations (bridges tiny holes); kept low so it doesn't weld objects to the floor / web surfaces (loose "seal"). Big holes are handled by the enclosed floor/panel fills.
-  fillFloor: num('fillfloor', 1), // fill enclosed holes in the floor layer
+  fillFloor: num('fillfloor', 20), // fill gaps in the surface the figurine plays on: on the ground, bare stretches nothing this many voxels wide can get into (1 = enclosed holes only). Living Room's bare floor closes at 20, not at 12
   panelFill: num('panelfill', 2.5), // fill enclosed holes in vertical panels up to this area, in NORMALIZED scan units² (~room-relative, not metres — every scan is scaled to TARGET_RADIUS); blank cabinet doors/walls; 0 = off
   smooth: num('smooth', 0),      // majority occupancy passes (Taubin handles smoothing)
   taubin: num('taubin', 6),      // Taubin mesh-smoothing iterations
@@ -1898,6 +1898,12 @@ function setupDebugMenu(): void {
      'closing gaps up to ~2× this many voxels. Higher fills bigger holes but welds ' +
      'objects to the floor / webs surfaces (a looser "seal"); big holes are better ' +
      'handled by the floor/panel fills. Default 1 keeps the seal tight.');
+  surface.addSlider('Ground gap fill (voxels)', VOXEL_OPTS.fillFloor, 0, 40, 1, (v) => {
+    VOXEL_OPTS.fillFloor = v;
+    rebuildCollision();
+  }, 'Makes bare stretches of the ground walkable when nothing this many voxels wide could get into them from outside, ' +
+     'past the floor, walls and furniture round them (the figurine is about 5 voxels tall). Higher closes wider-mouthed ' +
+     'bays; 1 fills only holes with floor all round; 0 = off. Only the ground: a worktop or table keeps its edges.');
   surface.addSlider('Panel fill (area)', VOXEL_OPTS.panelFill, 0, 4, 0.25, (v) => {
     VOXEL_OPTS.panelFill = v;
     rebuildCollision();
