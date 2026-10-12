@@ -15,7 +15,7 @@ import { orientScan } from './orient-scan';
 import type { Walkable, WalkableFillOptions } from './fill-scan-core';
 import type { FilledScan } from './fill-scan.worker';
 import { surfaceToGeometry } from './voxelize';
-import { MeshCollision, type NavGrid, type WallHit } from './collision';
+import { MeshCollision, type NavGrid, type PlatformField, type WallHit } from './collision';
 import { voxelCacheKey, voxelCacheGet, voxelCachePut } from './voxel-cache';
 import type { VoxelSurface, VoxelOptions } from './voxelize';
 import type { CleanOptions } from './clean-scan-core';
@@ -83,6 +83,8 @@ const STEP_DOWN_MAX = 0.6; // hop straight down a drop up to this (char-heights)
 // Spike 2: the reliable ground. The controller stands on the NavGrid (no
 // fall-through), is confined to it (no walking off), and recovers to `lastGood`.
 let navGrid: NavGrid | null = null;
+let navField: PlatformField | null = null; // navGrid's cells as a list, for the overlay and the gap fill
+let navVersion = 0;                       // goes up each time the walkable cells are rebuilt
 let supportY = 0;                       // height of the platform the player is standing on
 const lastGood = new THREE.Vector3();   // last validated on-platform position (recovery)
 let useNavGround = q.get('nav') !== '0'; // the platform reliability layer (on by default)
@@ -206,7 +208,7 @@ scene.add(sun);
 const room = new THREE.Group();
 scene.add(room);
 let currentSplat: GaussianSplat | null = null;
-let currentScan: { scan: ParsedScan; own: number } | null = null; // the arrays currentSplat draws: the scan's `own` splats, then its fill
+let currentScan: { scan: ParsedScan; own: number; cellsUsed: number } | null = null; // the arrays currentSplat draws (the scan's `own` splats, then its fill), and which walkable cells (navVersion) that fill is for
 
 /** Load (or swap to) a scan: dispose the old splat, auto-level the new one, respawn. */
 function disposeCollision(): void {
@@ -305,7 +307,8 @@ async function showScan(url: string, id: string, token: number, cancelled: Abort
   await roomGone; // the old room has to be out of the way first; it usually is long before this
   if (token !== loadToken) return; // superseded while loading
   loadStep(token, 'build');
-  const o = orientScan(new THREE.BufferAttribute(parsed.centers, 3));
+  const ownCenters = new THREE.BufferAttribute(parsed.centers, 3);
+  const o = orientScan(ownCenters);
   // scans have arbitrary unit scales — normalize each to a consistent world
   // size so the fixed-size figurine stays a sensible fraction of every room.
   const k = TARGET_RADIUS / o.radius;
@@ -319,27 +322,30 @@ async function showScan(url: string, id: string, token: number, cancelled: Abort
   const own = parsed.centers.length / 3;
   const opacity = new Float32Array(own);
   for (let i = 0; i < own; i++) opacity[i] = parsed.colors[i * 4 + 3] / 255;
-  await buildCollision(id, token, new THREE.BufferAttribute(parsed.centers, 3), opacity, parsed.covariances, toWorld);
+  await buildCollision(id, token, ownCenters, opacity, parsed.covariances, toWorld);
   if (token !== loadToken) return; // superseded while building
   const tFill = performance.now();
-  const walk = walkableNow();
+  const walk = walkableNow(), cellsUsed = navVersion;
   const filled: FilledScan = walk ? await fillScan({ scan: parsed, matrix: Array.from(toWorld.elements), walk, opts: walkFillOptions() }, scanBuffers(parsed))
     : { scan: parsed, own, cells: 0, seeThrough: 0 };
   if (token !== loadToken) return; // superseded while filling
-  if (TEL) logWalkFill(id, filled, tFill);
-  const shown = showSplat(filled, o.center.multiplyScalar(-1)); // recentred on the origin
+  if (walk) reportWalkFill(id, filled, tFill);
+  const shown = showSplat(filled, o.center.multiplyScalar(-1), opacity, cellsUsed); // recentred on the origin
+  // The walkable cells may have been rebuilt while the fill was being worked out (the
+  // figurine arriving gives them its real height), when there was no splat to refill.
+  void refillWalkable();
   estimateScanFill(shown.centers, new THREE.BufferAttribute(filled.scan.colors.subarray(0, own * 4), 4, true), shown.cov, lastMatrix, scanFill);
   console.log(`loaded ${id}: radius ${o.radius.toFixed(2)} → scaled ${k.toFixed(2)}x`);
   if (charLoaded) { resetToSpawn(); requestScanLight(); }
 }
 
 /** Put a scan and its fill in the room as the splat object, at `position` in the room.
+ *  `opacity` is each of the scan's own splats' (it does not change with the fill), and
+ *  `cellsUsed` the navVersion of the walkable cells the fill was worked out from.
  *  Returns the scan as it was captured, which is the first `own` splats: collision and
  *  the light estimate work from these alone, never from the added ones. */
-function showSplat({ scan, own }: FilledScan, position: THREE.Vector3): { centers: THREE.BufferAttribute; cov: Float32Array } {
+function showSplat({ scan, own }: FilledScan, position: THREE.Vector3, opacity: Float32Array, cellsUsed: number): { centers: THREE.BufferAttribute; cov: Float32Array } {
   const centers = new THREE.BufferAttribute(scan.centers.subarray(0, own * 3), 3);
-  const opacity = new Float32Array(own);
-  for (let i = 0; i < own; i++) opacity[i] = scan.colors[i * 4 + 3] / 255;
   // per-splat 3-D Gaussian covariance drives anisotropic voxelization (splats fill
   // their real ellipsoid footprint). The worldspace transform is applied in the core.
   const cov = scan.covariances.subarray(0, own * 6);
@@ -351,7 +357,7 @@ function showSplat({ scan, own }: FilledScan, position: THREE.Vector3): { center
   splat.visible = !MESHONLY; // mesh-only debug view hides the splat
   room.add(splat);
   currentSplat = splat;
-  currentScan = { scan, own };
+  currentScan = { scan, own, cellsUsed };
   room.updateMatrixWorld(true);
   lastCenters = centers; lastOpacity = opacity; lastCov = cov; lastMatrix.copy(splat.matrixWorld);
   return { centers, cov };
@@ -366,20 +372,21 @@ const WALK_FILL = {
   drop: 0.5,     // how far under those splats the fill lies
   patch: 40,     // fill only level ground of at least this many walkable cells: a tabletop, not the top of a toy...
   level: 0.25,   // ...where neighbouring cells are level when their heights are within this
-  minGain: 0.25, // a fill splat must make its spot at least this much more opaque. At 0.1 the ordinary thin places in a well-captured floor are filled and show; at 0.5 the speckle in Kitchen's table is left
+  under: 0.75,   // fill a spot when the scan's ground there is less opaque than this. At 0.9 the ordinary thin places in a well-captured floor are filled and show; at 0.5 the speckle in Kitchen's table is left
 };
 function walkFillOptions(): WalkableFillOptions {
-  const { cell, band, drop, patch, level, minGain } = WALK_FILL;
-  return { cell: cell * VOXEL_SIZE, band: band * VOXEL_SIZE, drop: drop * VOXEL_SIZE, patch, level: level * VOXEL_SIZE, minGain };
+  const { cell, band, drop, patch, level, under } = WALK_FILL;
+  return { cell: cell * VOXEL_SIZE, band: band * VOXEL_SIZE, drop: drop * VOXEL_SIZE, patch, level: level * VOXEL_SIZE, under };
 }
 /** Where the figurine can stand right now, for the fill; null if nowhere, or the scan is not being drawn (the mesh-only view). */
 function walkableNow(): Walkable | null {
-  if (MESHONLY || !navGrid) return null;
-  const { positions, platformId, sampleStep } = navGrid.toField();
-  return platformId.length ? { positions, platformId, step: sampleStep } : null;
+  if (MESHONLY || !navField || !navField.platformId.length) return null;
+  return { positions: navField.positions, platformId: navField.platformId, step: navField.sampleStep };
 }
-function logWalkFill(id: string, filled: FilledScan, since: number): void {
-  console.log(`WALKFILL ${id}: ${filled.scan.centers.length / 3 - filled.own} splats added to ${filled.own} in ${(performance.now() - since).toFixed(0)}ms; ` +
+/** Say how a fill went: a warning if it could not be worked out (the scan is then shown without one), and the numbers under ?tel=1. */
+function reportWalkFill(id: string, filled: FilledScan, since: number): void {
+  if (filled.failed) console.warn(`walkable fill: ${id} is shown without it — ${filled.failed}`);
+  else if (TEL) console.log(`WALKFILL ${id}: ${filled.scan.centers.length / 3 - filled.own} splats added to ${filled.own} in ${(performance.now() - since).toFixed(0)}ms; ` +
     `${filled.seeThrough} of ${filled.cells} walkable cells were over half see-through`);
 }
 // How the fill is drawn, for looking at it (the Debug card). These are shader switches:
@@ -418,13 +425,15 @@ function installFillView(splat: GaussianSplat, own: number): void {
   material.needsUpdate = true;
 }
 
-/** Work the fill out again and swap it in, without reloading the scan: for when where the
- *  figurine can stand has changed (the walkable cells are rebuilt), or a debug tunable has. */
-let refilling = false, refillWanted = false;
-async function refillWalkable(): Promise<void> {
-  if (refilling) { refillWanted = true; return; } // one at a time: the newest state is picked up when this one lands
-  const was = currentSplat, held = currentScan, walk = walkableNow(), token = loadToken;
-  if (!was || !held || !walk) return; // (during a load there is no splat yet: showScan fills it itself)
+/** Bring the fill in line with where the figurine can stand now, without reloading the
+ *  scan: work it out again and swap it in. Does nothing if the fill being drawn is already
+ *  for the current walkable cells, unless `changed` says a tunable of the fill itself has. */
+let refilling = false, refillWanted = false, refillChanged = false;
+async function refillWalkable(changed = false): Promise<void> {
+  if (refilling) { refillWanted = true; refillChanged ||= changed; return; } // one at a time: the newest state is picked up when this one lands
+  const was = currentSplat, held = currentScan, walk = walkableNow(), token = loadToken, cellsUsed = navVersion;
+  if (!was || !held || !walk || !lastOpacity) return; // (during a load there is no splat yet: showScan fills it, then calls this)
+  if (held.cellsUsed === cellsUsed && !changed) return;
   refilling = true;
   try {
     // The worker takes its arrays for good, and the ones being drawn stay until the new
@@ -435,16 +444,17 @@ async function refillWalkable(): Promise<void> {
     const copy: ParsedScan = { centers: scan.centers.slice(0, own * 3), covariances: scan.covariances.slice(0, own * 6), colors: scan.colors.slice(0, own * 4), sphericalHarmonics };
     const filled = await fillScan({ scan: copy, matrix: Array.from(lastMatrix.elements), walk, opts: walkFillOptions() }, scanBuffers(copy));
     if (currentSplat !== was || token !== loadToken) return; // another scan is on its way in, or collision is being rebuilt (which fills again)
-    if (TEL) logWalkFill(currentFile, filled, since);
-    const position = was.position.clone();
+    reportWalkFill(currentFile, filled, since);
+    if (filled.failed) return; // keep what is being drawn
+    const position = was.position.clone(), opacity = lastOpacity;
     disposeSplat();
-    showSplat(filled, position);
+    showSplat(filled, position, opacity, cellsUsed);
     requestScanLight(); // the probe saw the old fill
   } catch (err) {
     hud.status(err instanceof Error ? err.message : String(err), 'error');
   } finally {
     refilling = false;
-    if (refillWanted) { refillWanted = false; void refillWalkable(); }
+    if (refillWanted) { const again = refillChanged; refillWanted = refillChanged = false; void refillWalkable(again); }
   }
 }
 
@@ -1656,13 +1666,13 @@ function publishDebugState(): void {
  *  `window.__matte` is set, the view is the scan alone, or the collision mesh alone drawn
  *  solid (with or without its backstop plane), over a backdrop of the given colour, from
  *  the given fixed camera (needs a camera parameter in the URL). Two backdrops give each
- *  pixel's opacity. `fill` sets how much of the surface fill is drawn. It does not undo itself. */
+ *  pixel's opacity. `fill` sets how much of the gap fill is drawn (as the Debug card's "Fill opacity" does). It does not undo itself. */
 type MatteView = { mode: 'splat' | 'mesh' | 'meshNoPlane'; bg: [number, number, number]; cam?: Partial<typeof FREECAM_OPTS>; fill?: number };
 function applyMatteView(): void {
   const view = (window as unknown as { __matte?: MatteView }).__matte;
   if (!view || !currentSplat || !collisionDebug) return;
   if (view.cam) Object.assign(FREECAM_OPTS, view.cam);
-  if (view.fill !== undefined) fillShown.value = view.fill;
+  if (view.fill !== undefined && view.fill !== FILL_VIEW.opacity) { FILL_VIEW.opacity = view.fill; applyFillView(); }
   surround.setRGB(view.bg[0], view.bg[1], view.bg[2], THREE.SRGBColorSpace);
   player.visible = false;
   if (platformDebug) platformDebug.visible = false;
@@ -1733,12 +1743,13 @@ const platformTmp = new THREE.Object3D();
 const platformColor = new THREE.Color();
 function rebuildPlatformOverlay(): void {
   disposePlatformOverlay();
-  navGrid = null;
+  navGrid = null; navField = null;
   if (!collision) return;
   // leveling puts the real floor at y=0; reject anything a char-height below it as sub-floor floater noise
   navGrid = collision.buildNavGrid(lastVoxelSize, charH, charH * PLATFORM_OPTS.stepFactor, PLATFORM_OPTS.minCells, wallSlopeMax(), -charH);
+  const field = navField = navGrid.toField();
+  navVersion++;
   void refillWalkable(); // where the figurine can stand has changed, and the fill follows it
-  const field = navGrid.toField();
   const cells = field.positions.length / 3;
   // size histogram: how concentrated are cells? (a few big surfaces + noise specks?)
   const sizes = new Int32Array(field.platformCount);
@@ -1809,11 +1820,11 @@ function setupDebugMenu(): void {
     'Hide the scan\'s own splats and draw just the added ones. Compare with the Platforms overlay: the fill covers the same ground.');
   fill.addSlider('Fill opacity', FILL_VIEW.opacity, 0, 1, 0.05, (v) => { FILL_VIEW.opacity = v; applyFillView(); },
     'Fade the added splats, to compare with the bare scan.');
-  fill.addSlider('Fill where under (opacity)', 1 - WALK_FILL.minGain, 0.1, 0.95, 0.05, (v) => { WALK_FILL.minGain = 1 - v; void refillWalkable(); },
+  fill.addSlider('Fill where under (opacity)', WALK_FILL.under, 0.1, 0.95, 0.05, (v) => { WALK_FILL.under = v; void refillWalkable(true); },
     'Fill a spot when the scan\'s ground there is less opaque than this. Higher fills thinner patches too, and starts to blur ground that was fine (a rug\'s seams). Works the fill out again.');
-  fill.addSlider('Smallest level patch (cells)', WALK_FILL.patch, 1, 200, 1, (v) => { WALK_FILL.patch = v; void refillWalkable(); },
+  fill.addSlider('Smallest level patch (cells)', WALK_FILL.patch, 1, 200, 1, (v) => { WALK_FILL.patch = v; void refillWalkable(true); },
     'Fill only level ground of at least this many walkable cells. Lower takes in small tops (a box, a toy), where a flat sheet fits badly. Works the fill out again.');
-  fill.addSlider('Fill spacing (voxels)', WALK_FILL.cell, 0.25, 1, 0.25, (v) => { WALK_FILL.cell = v; void refillWalkable(); },
+  fill.addSlider('Fill spacing (voxels)', WALK_FILL.cell, 0.25, 1, 0.25, (v) => { WALK_FILL.cell = v; void refillWalkable(true); },
     'Distance between the added splats, in collision voxels. Smaller = more, smaller splats. Works the fill out again.');
 
   const ground = hud.debug.section('Ground and platforms');

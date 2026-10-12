@@ -33,13 +33,13 @@ After collision is built, in a worker, before the splat object is made:
    neighbours'.
 4. **Spread colour into bare spots** (pull-push), one walkable surface at a time, so a
    floor's colour does not run onto a table.
-5. **Lay flat splats** at spots that are see-through enough (`minGain`), only on level
+5. **Lay flat splats** at spots less opaque than `under`, only on level
    ground of at least `patch` cells, and not in the ring of cells along its edge.
 
 The added splats go in the same arrays as the scan's, after its own, and so in the same
 `GaussianSplat`: sorted with it, moved by the reveal, shadowed, seen by the light probe.
 
-Typical result: 700 on Kitchen and Counter, a few thousand on the rooms, about 0.1 s in the worker on the
+Typical result: about 730 on Kitchen and Counter, 1,057 on Living Room, 1,912 on Playroom, about 0.1 s in the worker on the
 small scans and 1.3 s on Playroom (1.9 M splats; nearly all of it is the pass over them).
 
 ## Rules
@@ -49,8 +49,18 @@ small scans and 1.3 s on Playroom (1.9 M splats; nearly all of it is the pass ov
   figurine loading, a Debug slider, a collision rebuild).
 - **Order at load is collision, then fill, then the splat object.** `showScan` builds
   collision from the parsed arrays, hands them to the fill worker, and only then calls
-  `showSplat`. If the figurine has not loaded yet the cells are provisional, and the
-  fill is redone when it has.
+  `showSplat`.
+- **Each fill records which cells it was worked out from** (`navVersion`, kept in
+  `currentScan.cellsUsed`), and `refillWalkable()` does nothing when that is current.
+  So it is safe, and necessary, to call it after anything that might have left the
+  fill behind: `showScan` calls it once the splat exists, because the figurine can
+  arrive (and the cells be rebuilt with its real height) while the first fill is still
+  being worked out, when there is no splat yet to refill. A slider of the fill itself
+  passes `true`, since the cells have not changed.
+- **A fill that cannot be worked out must not cost the room.** The worker answers with
+  the scan unfilled and `failed` set; it does not reject, because the scan's arrays
+  were transferred to it and a rejection would lose them. `showScan` shows the room
+  without a fill and warns; a refill keeps what is being drawn.
 - **Collision, orientation and the light-fill estimate use the scan's own splats only**:
   the first `own` of every array. Fill splats must never change where the figurine can
   stand, or the two would feed each other.
@@ -93,7 +103,7 @@ Three designs came before this one. All are gone from the code.
   speckle near Kitchen's table edge, which is the thing to fix.
 - **Colour and height from every splat at the cell's height.** Beside a box on the
   floor the fill took the box's colour and rose up its side.
-- **`minGain` 0.1**: fills the ordinary thin places in Playroom's rug, visibly.
+- **`under` 0.9**: fills the ordinary thin places in Playroom's rug, visibly.
   **0.5**: leaves Kitchen's speckle.
 - **Running the fill before collision**, as the first designs did: there are no
   walkable cells yet.

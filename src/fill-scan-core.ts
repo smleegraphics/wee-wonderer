@@ -26,7 +26,7 @@ export interface WalkableFillOptions {
   drop: number;    // how far under those splats the fill lies
   patch: number;   // fill only level ground of at least this many walkable cells...
   level: number;   // ...where neighbouring cells count as level when their heights are within this
-  minGain: number; // skip a fill splat that would make its spot less than this much more opaque (0..1)
+  under: number;   // fill a spot when the scan's ground there is less opaque than this (0..1)
 }
 
 /** Splats to add to a scan, in the scan's own coordinates and in the layout `createGaussianSplatGeometry` takes. */
@@ -39,12 +39,12 @@ export interface ScanFill {
   seeThrough: number;        // ...of which the scan left more than half see-through
 }
 
-const SIGMA = 0.65;            // a fill splat's radius (1σ) in cells: neighbours on the grid then blend into an even sheet
-const FLAT = 0.1;              // its thickness (1σ) in cells: a disc, not a ball
+const SIGMA = 0.65;            // a fill splat's radius (1σ) as a share of the fill's spacing: neighbours then blend into an even sheet
+const FLAT = 0.1;              // its thickness (1σ), likewise: a disc, not a ball
 const SHEET_MAX = 0.95;        // the most opaque the sheet is asked to be (a splat's own opacity must stay below 1)
 const SH_ZERO = 0x80808080;     // a packed word of spherical-harmonic coefficients that are all zero (byte 128 each)
 const FOOTPRINT_SIGMAS = 3;    // how far out a splat is counted when working out what it covers
-const MAX_FOOTPRINT = 16;      // ...in cells at most, so one huge splat cannot cost a whole grid
+const MAX_FOOTPRINT = 16;      // ...in fill spacings at most, so one huge splat cannot cost a whole grid
 const COVERED = 0.5;           // a walkable cell this opaque or more has its ground drawn
 const LIES_FLAT = 0.3;         // a splat lies flat, and so is ground, when it is thinner than this (up and down) as a share of its width
 const NOT_FLAT = 0.05;         // how much one that does not counts toward the ground's colour and height: enough to go by where nothing lies flat
@@ -248,7 +248,7 @@ export function fillWalkable(
     let edge = false;
     for (let dx = -1; dx <= 1 && !edge; dx++) for (let dz = -1; dz <= 1; dz++) { const o = beside(e, dx, dz); if (o === -1 || group[o] !== group[e]) { edge = true; break; } }
     if (edge) continue;
-    for (let c = e * spots; c < (e + 1) * spots; c++) if (through[c] * SHEET_MAX >= opts.minGain) pick.push(c);
+    for (let c = e * spots; c < (e + 1) * spots; c++) if (1 - through[c] < opts.under) pick.push(c);
   }
   const n = pick.length;
   const out: ScanFill = { count: n, centers: new Float32Array(n * 3), covariances: new Float32Array(n * 6), colors: new Uint8ClampedArray(n * 4), cells: walkable, seeThrough };
