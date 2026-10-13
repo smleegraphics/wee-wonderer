@@ -5,6 +5,8 @@
 //
 //   node scripts/collisioncheck.mjs [scan.ply ...]     compare with the baseline; exits 1 if a number got worse
 //   node scripts/collisioncheck.mjs --save [scan ...]  make what is measured now the baseline
+//   node scripts/collisioncheck.mjs --with fit=1 [...] try a setting: adds it to the page's address (the collision settings can
+//                                                      all be given there: VOXEL_OPTS in src/main.ts). Compared, never saved.
 //
 // With no scans named, the four demo rooms. Collision is seeded, so the numbers repeat
 // exactly from run to run: any change is a change in the code or its settings.
@@ -19,16 +21,18 @@ import { fileURLToPath } from 'node:url';
 
 const BASELINE = fileURLToPath(new URL('./collision-baseline.json', import.meta.url));
 const args = process.argv.slice(2), save = args.includes('--save');
-const named = args.filter((a) => !a.startsWith('--'));
+const trial = args.flatMap((a, i) => (args[i - 1] === '--with' ? [a] : [])); // settings to try, as key=value
+if (save && trial.length) { console.log('--save and --with do not go together: a trial is not the baseline'); process.exit(1); }
+const named = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--with');
 const scans = named.length ? named : ['livingroom-clean.ply', 'counter-clean.ply', 'kitchen-clean.ply', 'room2.ply'];
 
 // What is shown, and what is guarded: `worse` is the direction that is a regression, and
 // `slack` how far a number may move that way before it counts (shares are 0..1; offsets are voxels).
 const METRICS = [
-  { key: 'cells', label: 'walkable cells' }, // not guarded: clearing scraps lowers it, filling floor raises it
+  { key: 'cells', label: 'walkable area (grains²)' }, // not guarded: clearing scraps lowers it, filling floor raises it
   { key: 'platforms', label: 'platforms' },
   { key: 'realPlatforms', label: 'real platforms' },
-  { key: 'scrapShare', label: 'cells on scraps', share: true, worse: 'up', slack: 0.01 },
+  { key: 'scrapShare', label: 'cells on small perches', share: true }, // not guarded: these are small tops of furniture, somewhere to climb to, not a defect (context/collision.md)
   { key: 'spawnShare', label: 'cells walkable from spawn', share: true, worse: 'down', slack: 0.01 },
   { key: 'jumpShare', label: '...and by jumping or dropping', share: true, worse: 'down', slack: 0.01 },
   { key: 'reachShare', label: '...and by climbing the mesh\'s faces', share: true, worse: 'down', slack: 0.01 },
@@ -37,16 +41,18 @@ const METRICS = [
   { key: 'holeShare', label: 'holes in the spawn surface', share: true, worse: 'up', slack: 0.01 },
   { key: 'edgeShare', label: 'spawn surface cells on an edge', share: true, worse: 'up', slack: 0.01 },
   { key: 'solidity', label: 'spawn surface fills its outline', share: true }, // shown, not guarded: it falls when the surface grows into a less regular shape, which is an improvement
-  { key: 'roughness', label: 'spawn surface roughness (voxels)', worse: 'up', slack: 0.01 },
+  { key: 'roughness', label: 'spawn surface roughness (slope)', worse: 'up', slack: 0.01 },
   { key: 'triangles', label: 'triangles' },
   { key: 'pieces', label: 'mesh pieces' },
   { key: 'smallPieces', label: 'small mesh pieces' },
   { key: 'looseShare', label: 'triangles in small pieces', share: true, worse: 'up', slack: 0.005 },
-  { key: 'offMedian', label: 'mesh to splats, median (voxels)', worse: 'up', slack: 0.05 },
-  { key: 'offP90', label: 'mesh to splats, 90th pct (voxels)', worse: 'up', slack: 0.05 },
+  { key: 'bumpiness', label: 'mesh bumpiness', worse: 'up', slack: 0.005 },
+  { key: 'offMedian', label: 'mesh to splats, median (grains)', worse: 'up', slack: 0.05 },
+  { key: 'offP90', label: 'mesh to splats, 90th pct (grains)', worse: 'up', slack: 0.05 },
   { key: 'missedShare', label: 'opaque splats with no mesh near', share: true, worse: 'up', slack: 0.01 },
+  { key: 'openShare', label: 'sight lines that meet no collision', share: true, worse: 'up', slack: 0.03 }, // the same solid meshed two ways reads up to 2% apart (the lookouts move with the walkable cells); a wall trimmed full of holes read 6 to 8% up
 ];
-const show = (m, v) => (v === undefined ? '—' : m.share ? `${(100 * v).toFixed(1)}%` : Number.isInteger(v) ? v.toLocaleString() : v.toFixed(2));
+const show = (m, v) => (v === undefined ? '—' : m.share ? `${(100 * v).toFixed(1)}%` : Number.isInteger(v) ? v.toLocaleString() : v.toFixed(m.key === 'bumpiness' ? 3 : 2));
 
 const baseline = existsSync(BASELINE) ? JSON.parse(readFileSync(BASELINE, 'utf8')) : {};
 const browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--enable-unsafe-swiftshader'] });
@@ -72,15 +78,16 @@ async function selfTest(page) {
       walk: { positions: new Float32Array(pos), platformId: new Int32Array(id), platformCount: 4, sampleStep: 1 },
       mesh: { positions: [0, 0, 0, 3, 0, 0, 0, 0, 3, 19, 0, 19, 22, 0, 19, 19, 0, 22, -50, -1, -50, 50, -1, -50, 50, -1, 50, -50, -1, 50], index: [0, 1, 2, 3, 4, 5, 6, 7, 8, 6, 8, 9] },
       splats: { centers: [1, 1, 1, 20, 0.5, 20, 100, 100, 100, 1, 0, 1], opacity: [1, 1, 1, 0.05], count: 4, matrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] },
-      spawn: [0, 0, 0], voxel: 1, realCells: 40,
+      spawn: [0, 0, 0], unit: 1, realCells: 40,
       move: { jumpVel: Math.sqrt(18), gravity: 9, runSpeed: 5, climbOver: 1 },
       climbable: (ax, ay, az, bx) => bx === 10, // only surface 1 has a face
+      blocked: (ox, oy, oz, dx, dy) => dy > 0, eyeHeight: 1, // the upward half of all directions meets something
     });
   });
   const want = {
     cells: 152, platforms: 4, realPlatforms: 2, scrapShare: 6 / 152, spawnShare: 96 / 152, jumpShare: 96 / 152, reachShare: 99 / 152, reachBound: 102 / 152, islands: 1,
     holeShare: 4 / 100, edgeShare: 44 / 96, solidity: 96 / 100, roughness: 0,
-    triangles: 2, pieces: 2, smallPieces: 2, looseShare: 1, offMedian: 1, offP90: 1, missedShare: 1 / 3,
+    triangles: 2, pieces: 2, smallPieces: 2, looseShare: 1, bumpiness: 0, offMedian: 1, offP90: 1, missedShare: 1 / 3, openShare: 0.5,
   };
   let wrong = 0;
   for (const [key, value] of Object.entries(want)) if (!(Math.abs(got[key] - value) < 1e-6)) { wrong++; console.log(`FAIL  self-test: ${key} is ${got[key]}, should be ${value}`); }
@@ -101,7 +108,7 @@ try {
     const page = await browser.newPage();
     page.on('pageerror', (e) => { failed++; console.log(`FAIL  ${scan}: page error — ${e.message}`); });
     await page.addInitScript(() => localStorage.setItem('ww.titleSeen', '1'));
-    await page.goto(`http://localhost:5173/?scan=${scan}&tel=1`, { waitUntil: 'load' });
+    await page.goto(`http://localhost:5173/?scan=${scan}&tel=1${trial.map((t) => '&' + t).join('')}`, { waitUntil: 'load' });
     await page.waitForFunction(() => window.__wwReady === true && window.__dbg?.reveal === 1, undefined, { timeout: 280000 });
     measured[scan] = await page.evaluate(() => window.__collisionHealth());
     await page.close();

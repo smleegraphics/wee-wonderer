@@ -67,7 +67,7 @@ small scans and 1.3 s on Playroom (1.9 M splats; nearly all of it is the pass ov
 - **The scan's arrays are transferred to the fill worker.** Anything holding them from
   before holds nothing; read them from what comes back. A refill sends a copy, since
   the arrays being drawn must last until the new ones arrive (`currentScan`).
-- **Sizes are in collision voxels**, which is also the walkable cells' spacing.
+- **Sizes are in grains** (`GRAIN`: `collision.md`), which is the walkable cells' spacing.
 - **Debug card, "Patch splat holes".** The toggles and "Fill opacity" are shader
   switches (`FILL_VIEW`): they act on splats by whether their index is past `own`.
   The other sliders change `WALK_FILL` and call `refillWalkable()`.

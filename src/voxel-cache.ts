@@ -8,7 +8,7 @@ import type { VoxelSurface } from './voxelize';
 
 const DB_NAME = 'wee-wonderer';
 const STORE = 'voxel-surface';
-const SCHEMA = 'g15'; // bump when the surface-generation algorithm changes (invalidates old entries)
+const SCHEMA = 'g26'; // bump when the surface-generation algorithm changes (invalidates old entries)
 
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -23,10 +23,10 @@ function openDB(): Promise<IDBDatabase> {
 export function voxelCacheKey(
   file: string,
   voxelSize: number,
-  opts: { iso: number; despeckle: number; close: number; fillFloor: number; panelFill: number; smooth: number; taubin: number; floorFlat: number },
+  opts: { iso: number; despeckle: number; close: number; fillFloor: number; panelFill: number; smooth: number; taubin: number; floorFlat: number; refine: number },
   targetRadius: number,
 ): string {
-  return `${SCHEMA}|${file}|v${voxelSize.toFixed(4)}|r${targetRadius}|i${opts.iso}|d${opts.despeckle}|c${opts.close}|f${opts.fillFloor}|pf${opts.panelFill}|s${opts.smooth}|t${opts.taubin}|ff${opts.floorFlat}`;
+  return `${SCHEMA}|${file}|v${voxelSize.toFixed(4)}|r${targetRadius}|i${opts.iso}|d${opts.despeckle}|c${opts.close}|f${opts.fillFloor}|pf${opts.panelFill}|s${opts.smooth}|t${opts.taubin}|ff${opts.floorFlat}|rf${opts.refine}`;
 }
 
 export async function voxelCacheGet(key: string): Promise<VoxelSurface | null> {

@@ -42,17 +42,29 @@ const DEFAULT_SCAN = q.get('scan') ?? SCANS[0].file;
 const TARGET_RADIUS = 7; // normalize every scan to this world size (figurine ~0.45 tall)
 // Collision voxelization: build a cleaned blocky surface mesh from the splat and
 // show it as a debug overlay (toggle 'V', or ?voxel=1 to start visible).
-const VOXEL_SIZE = Number(q.get('vox')) || TARGET_RADIUS / 72; // ~0.097 world units
+// GRAIN is the length collision's settings are counted in: the voxel size they were
+// tuned at, about a fifth of the figurine's height. The grid itself can be finer
+// (VOXEL_SIZE); settings given in grains then mean the same thing at any grid size.
+const GRAIN = TARGET_RADIUS / 72; // ~0.097 world units
+const VOXEL_SIZE = Number(q.get('vox')) || GRAIN;
+/** The spacing of the walkable cells: a grain, however fine the collision grid is. (Coarser
+ *  only if the grid itself had to be: a scan too large for it.) Where the figurine can
+ *  stand is sampled from the mesh at this spacing; making it finer as well changes what
+ *  counts as a step and what as a slope, and is a separate question from the mesh's detail. */
+const navStep = () => Math.max(GRAIN, lastVoxelSize);
+/** How many walkable cells go to a grain (1, unless the cells had to be coarser). */
+const cellsPerGrain = () => GRAIN / navStep();
 const num = (key: string, def: number) => (q.has(key) ? Number(q.get(key)) : def);
 const VOXEL_OPTS = {
   iso: num('iso', 0.35),         // isovalue as a fraction of median surface density (low → fills faint flat panels)
   despeckle: num('despeckle', 20), // drop solid islands smaller than this (stray cubes / floaters the low iso admits)
   close: num('close', 1),        // dilate→erode iterations (bridges tiny holes); kept low so it doesn't weld objects to the floor / web surfaces (loose "seal"). Big holes are handled by the enclosed floor/panel fills.
-  fillFloor: num('fillfloor', 1), // fill enclosed holes in the floor layer
+  fillFloor: num('fillfloor', 20), // fill gaps in the surface the figurine plays on: on the ground, bare stretches nothing this many voxels wide can get into (1 = enclosed holes only). Living Room's bare floor closes at 20, not at 12
   panelFill: num('panelfill', 2.5), // fill enclosed holes in vertical panels up to this area, in NORMALIZED scan units² (~room-relative, not metres — every scan is scaled to TARGET_RADIUS); blank cabinet doors/walls; 0 = off
   smooth: num('smooth', 0),      // majority occupancy passes (Taubin handles smoothing)
   taubin: num('taubin', 6),      // Taubin mesh-smoothing iterations
-  floorFlat: num('floorflat', 0.75), // snap mesh within this many voxels of y=0 flat
+  floorFlat: num('floorflat', 0.75), // snap mesh within this many grains of y=0 flat
+  refine: num('refine', 2),      // build the mesh on a grid this many times finer than the one that decides what is solid, trimmed in to the splats (1 = the same grid). 2: half as bumpy as 1 and about a tenth tighter, for four to five times the triangles (context/collision.md)
 };
 // Walkable surfaces are de-quantized to the real splat height in the voxelizer,
 // so no ground offset is needed; ?sink stays as a manual override (default 0).
@@ -77,8 +89,8 @@ let voxelCheckbox: HTMLInputElement | null = null; // the Debug card's copy of s
 let showPlatforms = q.get('platforms') === '1';
 let platformDebug: THREE.InstancedMesh | null = null;
 let platformCheckbox: HTMLInputElement | null = null;
-let lastVoxelSize = TARGET_RADIUS / 72;
-const PLATFORM_OPTS = { stepFactor: 0.35, minCells: 6, climbDeg: 70 }; // climbDeg: surfaces steeper than this (from horizontal) are walls to climb, gentler ones are ground to walk
+let lastVoxelSize = GRAIN;
+const PLATFORM_OPTS = { stepFactor: 0.35, minCells: 6, climbDeg: 70, bridge: 2, fill: 3 }; // climbDeg: surfaces steeper than this (from horizontal) are walls to climb, gentler ones are ground to walk. minCells: an area, in grains². bridge, fill: how wide a gap in a surface is bridged, and how wide a hole in it filled, in grains
 const STEP_DOWN_MAX = 0.6; // hop straight down a drop up to this (char-heights); taller → climb down the face
 // Spike 2: the reliable ground. The controller stands on the NavGrid (no
 // fall-through), is confined to it (no walking off), and recovers to `lastGood`.
@@ -367,19 +379,19 @@ function showSplat({ scan, own }: FilledScan, position: THREE.Vector3, opacity: 
 }
 
 // --- fill the see-through ground the figurine can stand on (see context/splat-fill.md) ---
-// Sizes are in collision voxels, which is also the walkable cells' spacing.
+// Sizes are in grains (GRAIN).
 const WALK_FILL = {
   on: true,
   cell: 0.5,     // spacing of the fill splats
   band: 1.5,     // the splats within this height of a walkable cell are the ones that draw its ground
   drop: 0.5,     // how far under those splats the fill lies
-  patch: 40,     // fill only level ground of at least this many walkable cells: a tabletop, not the top of a toy...
-  level: 0.25,   // ...where neighbouring cells are level when their heights are within this
+  patch: 40,     // fill only level ground of at least this area, in grains²: a tabletop, not the top of a toy...
+  level: 0.25,   // ...where neighbouring walkable cells are level when the slope between them is within this
   under: 0.75,   // fill a spot when the scan's ground there is less opaque than this. At 0.9 the ordinary thin places in a well-captured floor are filled and show; at 0.5 the speckle in Kitchen's table is left
 };
 function walkFillOptions(): WalkableFillOptions {
   const { cell, band, drop, patch, level, under } = WALK_FILL;
-  return { cell: cell * VOXEL_SIZE, band: band * VOXEL_SIZE, drop: drop * VOXEL_SIZE, patch, level: level * VOXEL_SIZE, under };
+  return { cell: cell * GRAIN, band: band * GRAIN, drop: drop * GRAIN, patch: Math.round(patch * cellsPerGrain() ** 2), level: level * navStep(), under };
 }
 /** Where the figurine can stand right now, for the fill; null if nowhere, or the scan is not being drawn (the mesh-only view). */
 function walkableNow(): Walkable | null {
@@ -637,7 +649,7 @@ function startJump(): void {
 
 // --- collision ---------------------------------------------------------------
 // Voxelization runs in a Web Worker so the ~1s+ first build doesn't freeze the frame.
-const voxelize = workerCaller<{ positions: Float32Array; opacity: Float32Array; cov: Float32Array | null; count: number; matrix: number[]; voxelSize: number; opts: VoxelOptions }, VoxelSurface>(
+const voxelize = workerCaller<{ positions: Float32Array; opacity: Float32Array; cov: Float32Array | null; count: number; matrix: number[]; voxelSize: number; unit: number; opts: VoxelOptions }, VoxelSurface>(
   new Worker(new URL('./voxelize.worker.ts', import.meta.url), { type: 'module' }), 'collision build');
 
 function voxelizeInWorker(centers: THREE.BufferAttribute, opacity: Float32Array, cov: Float32Array | null, matrixWorld: THREE.Matrix4, opts: VoxelOptions): Promise<VoxelSurface> {
@@ -645,7 +657,7 @@ function voxelizeInWorker(centers: THREE.BufferAttribute, opacity: Float32Array,
   const op = opacity.slice();                                 // (originals kept for re-voxelize)
   const cv = cov ? cov.slice() : null;
   return voxelize(
-    { positions, opacity: op, cov: cv, count: centers.count, matrix: Array.from(matrixWorld.elements), voxelSize: VOXEL_SIZE, opts },
+    { positions, opacity: op, cov: cv, count: centers.count, matrix: Array.from(matrixWorld.elements), voxelSize: VOXEL_SIZE, unit: GRAIN, opts },
     cv ? [positions.buffer, op.buffer, cv.buffer] : [positions.buffer, op.buffer],
   );
 }
@@ -1679,9 +1691,9 @@ function climbableFace(ax: number, ay: number, az: number, bx: number, by: numbe
   const away = faceDir.set(bx - ax, 0, bz - az).length();
   if (away < 1e-6) return false; // straight overhead: nothing to climb from here
   faceDir.divideScalar(away);
-  const up = lastVoxelSize, top = by - charH * CLIMB.mantleUp; // a mantle reaches a surface this far above the feet
+  const up = lastVoxelSize, top = by - charH * CLIMB.mantleUp; // (probed at every cell of the grid, up to where a mantle reaches: a surface this far above the feet)
   for (let h = Math.min(ay + up / 2, (ay + by) / 2); ; h = Math.min(top, h + up)) {
-    const w = climbWall(faceFrom.set(ax, h, az), faceDir, away + up);
+    const w = climbWall(faceFrom.set(ax, h, az), faceDir, away + GRAIN);
     if (!w || !isWall(w)) return false;
     if (h >= top) return true;
   }
@@ -1697,10 +1709,12 @@ if (TEL) (window as unknown as { __collisionHealth?: () => Promise<unknown> })._
     mesh: { positions: collisionDebug.geometry.attributes.position.array, index: collisionDebug.geometry.index!.array },
     splats: { centers: lastCenters.array, opacity: lastOpacity, count: lastCenters.count, matrix: lastMatrix.elements },
     spawn: [player.position.x, player.position.y, player.position.z],
-    voxel: lastVoxelSize,
-    realCells: WALK_FILL.patch, // the same line the gap fill draws between ground and a scrap
+    unit: GRAIN,
+    realCells: Math.round(WALK_FILL.patch * cellsPerGrain() ** 2), // the same line the gap fill draws between ground and a scrap
     move: { jumpVel: TUNE.jumpVel * charH, gravity: -TUNE.gravity * charH, runSpeed: TUNE.runSpeed * charH, climbOver: CAPSULE_RADIUS * charH * CLIMB.mantleOver },
     climbable: climbableFace,
+    blocked: (ox, oy, oz, dx, dy, dz) => !!collision && collision.wallAhead(faceFrom.set(ox, oy, oz), faceDir.set(dx, dy, dz), TARGET_RADIUS * 4) !== null, // (further than any scan reaches)
+    eyeHeight: charH * 0.5,
   });
 };
 
@@ -1788,7 +1802,9 @@ function rebuildPlatformOverlay(): void {
   navGrid = null; navField = null;
   if (!collision) return;
   // leveling puts the real floor at y=0; reject anything a char-height below it as sub-floor floater noise
-  navGrid = collision.buildNavGrid(lastVoxelSize, charH, charH * PLATFORM_OPTS.stepFactor, PLATFORM_OPTS.minCells, wallSlopeMax(), -charH);
+  const per = cellsPerGrain();
+  navGrid = collision.buildNavGrid(navStep(), charH, charH * PLATFORM_OPTS.stepFactor, Math.round(PLATFORM_OPTS.minCells * per * per), wallSlopeMax(), -charH,
+    Math.round(PLATFORM_OPTS.bridge * per), Math.round(PLATFORM_OPTS.fill * per));
   const field = navField = navGrid.toField();
   navVersion++;
   void refillWalkable(); // where the figurine can stand has changed, and the fill follows it
@@ -1898,6 +1914,18 @@ function setupDebugMenu(): void {
      'closing gaps up to ~2× this many voxels. Higher fills bigger holes but welds ' +
      'objects to the floor / webs surfaces (a looser "seal"); big holes are better ' +
      'handled by the floor/panel fills. Default 1 keeps the seal tight.');
+  surface.addSlider('Mesh detail', VOXEL_OPTS.refine, 1, 3, 1, (v) => {
+    VOXEL_OPTS.refine = v;
+    rebuildCollision();
+  }, 'What is solid is decided on the coarse collision grid, where a thinly scanned wall still adds up to a wall. ' +
+     'At 2 or 3 the mesh is then built on a grid that many times finer and trimmed in to the splats, so it hugs ' +
+     'objects more closely. More triangles, and a slower first build. 1 = the coarse grid only.');
+  surface.addSlider('Ground gap fill (voxels)', VOXEL_OPTS.fillFloor, 0, 40, 1, (v) => {
+    VOXEL_OPTS.fillFloor = v;
+    rebuildCollision();
+  }, 'Makes bare stretches of the ground walkable when nothing this many voxels wide could get into them from outside, ' +
+     'past the floor, walls and furniture round them (the figurine is about 5 voxels tall). Higher closes wider-mouthed ' +
+     'bays; 1 fills only holes with floor all round; 0 = off. Only the ground: a worktop or table keeps its edges.');
   surface.addSlider('Panel fill (area)', VOXEL_OPTS.panelFill, 0, 4, 0.25, (v) => {
     VOXEL_OPTS.panelFill = v;
     rebuildCollision();

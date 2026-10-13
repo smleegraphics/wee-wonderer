@@ -13,18 +13,19 @@
 // The thresholded field is also cleaned as a binary grid before meshing:
 //   despeckle — drop solid components smaller than K voxels (dense stray blobs)
 //   close     — dilate then erode (fills holes / small gaps in floors & walls)
-//   fillFloor — fill enclosed holes in the floor layer
+//   fillFloor — fill the gaps in the surface the figurine plays on (fillGround)
 // then Taubin smoothing relaxes the mesh (no occupancy drift).
 
 export interface VoxelOptions {
   iso?: number;        // isovalue as a fraction of the median surface density (default 0.35)
-  despeckle?: number;  // remove solid components smaller than this many voxels (default 20; 0 = off)
-  close?: number;      // morphological-close iterations, fills holes/gaps (default 1; 0 = off)
-  fillFloor?: number;  // fill enclosed holes in the floor layer (default 1; 0 = off)
+  despeckle?: number;  // remove solid components smaller than this many voxels of the unit grain (default 20; 0 = off)
+  close?: number;      // morphological close by this many units: fills holes/gaps (default 1; 0 = off)
+  fillFloor?: number;  // fill gaps in the surface the figurine plays on: 0 = off, 1 = enclosed holes only, more = on the ground, also bare stretches nothing this many units wide can get into (fillGround)
   panelFill?: number;  // fill enclosed holes in vertical panels up to this area, in NORMALIZED scan units² (~room-relative, not metres — world coords are scaled to TARGET_RADIUS); blank cabinet doors / walls; 0 = off (default 2.5)
   smooth?: number;     // majority-filter passes on occupancy (default 0; Taubin handles smoothing)
   taubin?: number;     // Taubin mesh-smoothing iterations (default 6; 0 = off)
-  floorFlat?: number;  // snap mesh vertices within this many voxels of y=0 flat (default 0.75; 0 = off)
+  floorFlat?: number;  // snap mesh vertices within this many units of y=0 flat (default 0.75; 0 = off)
+  refine?: number;     // build the mesh on a grid this many times finer than the one that decides what is solid (default 1 = the same grid; refineSolid)
 }
 
 export interface VoxelSurface {
@@ -72,13 +73,14 @@ export function voxelizeCore(
   voxelSize: number,
   opts: VoxelOptions = {},
   cov?: ArrayLike<number> | null, // per-splat 3-D covariance (6 floats: Cxx,Cxy,Cxz,Cyy,Cyz,Czz) for anisotropic splatting
+  unit: number = voxelSize, // the length the options' sizes are counted in (see `per` below); the voxel size itself unless a finer grid is asked for
 ): VoxelSurface {
   const isoFactor = opts.iso ?? 0.35;
   const despeckleMin = opts.despeckle ?? 20;
   const closeIters = opts.close ?? 1;
   const smoothPasses = opts.smooth ?? 0;
   const taubinIters = opts.taubin ?? 6;
-  const doFillFloor = (opts.fillFloor ?? 1) !== 0;
+  const groundFill = opts.fillFloor ?? 1;
   const panelArea = opts.panelFill ?? 2.5; // vertical-panel hole-fill cap, in normalized world units² (~room-relative; 0 = off)
 
   // affine transform of splat center i into world space (w = 1, no divide)
@@ -118,6 +120,12 @@ export function voxelizeCore(
   const MAX_CELLS = 48_000_000;
   if (cellsAt(vs) > MAX_CELLS) vs *= Math.cbrt(cellsAt(vs) / MAX_CELLS) * 1.02;
 
+  // Sizes below that are about the scan (how wide a gap to close, how much headroom is
+  // room to stand, how small a blob is a speck) are given in `unit`s, the grain they were
+  // tuned at, and turned into voxels here: so the same settings mean the same thing on a
+  // finer grid. Sizes that are about the grid itself (MIN_VAR, Taubin passes) stay in voxels.
+  const per = unit / vs, perArea = per * per; // voxels to a unit, along a line and over an area
+
   minX -= vs; minY -= vs; minZ -= vs; // pad by a voxel so morphology has room at the edge
   const gx = Math.max(1, Math.ceil((maxX - minX) / vs) + 2);
   const gy = Math.max(1, Math.ceil((maxY - minY) / vs) + 2);
@@ -130,86 +138,95 @@ export function voxelizeCore(
   // ALONG a flat surface fills sparse panels (a plain cabinet door has few splat
   // centres), while NOT spreading perpendicular keeps the surface hugging the real
   // splats (no puffing / hovering). Tiny floaters stay ~1 faint voxel and get rejected.
-  const dens = new Float32Array(gx * gy * gz);
-  const centerBin = (cx: number, cy: number, cz: number, op: number) => {
-    const vx = Math.floor(cx), vy = Math.floor(cy), vz = Math.floor(cz);
-    if (vx >= 0 && vx < gx && vy >= 0 && vy < gy && vz >= 0 && vz < gz) dens[(vx * gy + vy) * gz + vz] += op;
+  /** The splats' opacity as a density on a grid of `vs`-sized voxels with its corner at
+   *  (minX, minY, minZ): pass 2, below. A splat is spread over at most MAX_R voxels each way. */
+  const splatDensity = (vs: number, gx: number, gy: number, gz: number, minX: number, minY: number, minZ: number, MAX_R: number): Float32Array => {
+    const dens = new Float32Array(gx * gy * gz);
+    const centerBin = (cx: number, cy: number, cz: number, op: number) => {
+      const vx = Math.floor(cx), vy = Math.floor(cy), vz = Math.floor(cz);
+      if (vx >= 0 && vx < gx && vy >= 0 && vy < gy && vz >= 0 && vz < gz) dens[(vx * gy + vy) * gz + vz] += op;
+    };
+    // linear (rotation × uniform-scale) part of the world matrix, row-major 3×3
+    const L0 = m[0], L1 = m[4], L2 = m[8], L3 = m[1], L4 = m[5], L5 = m[9], L6 = m[2], L7 = m[6], L8 = m[10];
+    const inv2 = 1 / (vs * vs); // world → voxel² scale for the covariance
+    // Floor each world-axis variance to a small epsilon (voxel²). This keeps the
+    // covariance invertible for razor-flat splats WITHOUT inflating the surface
+    // perpendicular: at 0.05 a flat splat spreads ~1 voxel thick (√0.05·σ), not the
+    // ±2-voxel slab a larger floor produced (which made floors/items hover & bloat).
+    const MIN_VAR = 0.05;
+    const SIGMA = 2.5;
+    const wbuf = new Float32Array((2 * MAX_R + 1) ** 3); // per-splat weights, reused pass A → pass B
+    for (let i = 0; i < count; i++) {
+      const cx = (wx(i) - minX) / vs, cy = (wy(i) - minY) / vs, cz = (wz(i) - minZ) / vs;
+      const op = opacity[i];
+      if (!cov) { centerBin(cx, cy, cz, op); continue; }
+      const a = cov[i * 6], b = cov[i * 6 + 1], c = cov[i * 6 + 2], d = cov[i * 6 + 3], e = cov[i * 6 + 4], f = cov[i * 6 + 5];
+      // world covariance in voxel units = (L·Σ·Lᵀ)/vs², inlined (hot loop). Each Wab is
+      // rowA(L)ᵀ · Σ · rowB(L) for the symmetric local Σ [a,b,c; b,d,e; c,e,f].
+      const W00 = (a * L0 * L0 + d * L1 * L1 + f * L2 * L2 + 2 * (b * L0 * L1 + c * L0 * L2 + e * L1 * L2)) * inv2 + MIN_VAR;
+      const W11 = (a * L3 * L3 + d * L4 * L4 + f * L5 * L5 + 2 * (b * L3 * L4 + c * L3 * L5 + e * L4 * L5)) * inv2 + MIN_VAR;
+      const W22 = (a * L6 * L6 + d * L7 * L7 + f * L8 * L8 + 2 * (b * L6 * L7 + c * L6 * L8 + e * L7 * L8)) * inv2 + MIN_VAR;
+      const W01 = (a * L0 * L3 + d * L1 * L4 + f * L2 * L5 + b * (L0 * L4 + L1 * L3) + c * (L0 * L5 + L2 * L3) + e * (L1 * L5 + L2 * L4)) * inv2;
+      const W02 = (a * L0 * L6 + d * L1 * L7 + f * L2 * L8 + b * (L0 * L7 + L1 * L6) + c * (L0 * L8 + L2 * L6) + e * (L1 * L8 + L2 * L7)) * inv2;
+      const W12 = (a * L3 * L6 + d * L4 * L7 + f * L5 * L8 + b * (L3 * L7 + L4 * L6) + c * (L3 * L8 + L5 * L6) + e * (L4 * L8 + L5 * L7)) * inv2;
+      const det = W00 * (W11 * W22 - W12 * W12) - W01 * (W01 * W22 - W12 * W02) + W02 * (W01 * W12 - W11 * W02);
+      if (!(det > 1e-9)) { centerBin(cx, cy, cz, op); continue; }
+      const idet = 1 / det; // inverse covariance (symmetric) → the anisotropic distance metric
+      const I00 = (W11 * W22 - W12 * W12) * idet, I11 = (W00 * W22 - W02 * W02) * idet, I22 = (W00 * W11 - W01 * W01) * idet;
+      const I01 = (W02 * W12 - W01 * W22) * idet, I02 = (W01 * W12 - W02 * W11) * idet, I12 = (W01 * W02 - W00 * W12) * idet;
+      const rx = Math.min(MAX_R, Math.ceil(SIGMA * Math.sqrt(W00))), ry = Math.min(MAX_R, Math.ceil(SIGMA * Math.sqrt(W11))), rz = Math.min(MAX_R, Math.ceil(SIGMA * Math.sqrt(W22)));
+      const vxc = Math.floor(cx), vyc = Math.floor(cy), vzc = Math.floor(cz);
+      // pass A: Gaussian weight at each footprint voxel → wbuf; sum for mass normalisation
+      let sw = 0, n = 0;
+      for (let dx = -rx; dx <= rx; dx++) {
+        const vx = vxc + dx, ddx = vx + 0.5 - cx, inx = vx >= 0 && vx < gx;
+        for (let dy = -ry; dy <= ry; dy++) {
+          const vy = vyc + dy, ddy = vy + 0.5 - cy, iny = inx && vy >= 0 && vy < gy;
+          for (let dz = -rz; dz <= rz; dz++) {
+            const vz = vzc + dz, ddz = vz + 0.5 - cz;
+            if (!iny || vz < 0 || vz >= gz) { wbuf[n++] = 0; continue; } // outside grid → no mass
+            const s = I00 * ddx * ddx + I11 * ddy * ddy + I22 * ddz * ddz + 2 * (I01 * ddx * ddy + I02 * ddx * ddz + I12 * ddy * ddz);
+            const w = s > 12 ? 0 : Math.exp(-0.5 * s);
+            wbuf[n++] = w; sw += w;
+          }
+        }
+      }
+      if (sw <= 0) { centerBin(cx, cy, cz, op); continue; }
+      // pass B: distribute opacity by the normalised weights (voxels with w>0 are in-grid)
+      const scale = op / sw; n = 0;
+      for (let dx = -rx; dx <= rx; dx++) {
+        const vx = vxc + dx;
+        for (let dy = -ry; dy <= ry; dy++) {
+          const vy = vyc + dy;
+          for (let dz = -rz; dz <= rz; dz++) {
+            const w = wbuf[n++];
+            if (w > 0) dens[(vx * gy + vy) * gz + (vzc + dz)] += w * scale;
+          }
+        }
+      }
+    }
+    return dens;
   };
-  // linear (rotation × uniform-scale) part of the world matrix, row-major 3×3
-  const L0 = m[0], L1 = m[4], L2 = m[8], L3 = m[1], L4 = m[5], L5 = m[9], L6 = m[2], L7 = m[6], L8 = m[10];
-  const inv2 = 1 / (vs * vs); // world → voxel² scale for the covariance
-  // Floor each world-axis variance to a small epsilon (voxel²). This keeps the
-  // covariance invertible for razor-flat splats WITHOUT inflating the surface
-  // perpendicular: at 0.05 a flat splat spreads ~1 voxel thick (√0.05·σ), not the
-  // ±2-voxel slab a larger floor produced (which made floors/items hover & bloat).
-  const MIN_VAR = 0.05;
-  const MAX_R = 3, SIGMA = 2.5;
-  const wbuf = new Float32Array((2 * MAX_R + 1) ** 3); // per-splat weights, reused pass A → pass B
-  for (let i = 0; i < count; i++) {
-    const cx = (wx(i) - minX) / vs, cy = (wy(i) - minY) / vs, cz = (wz(i) - minZ) / vs;
-    const op = opacity[i];
-    if (!cov) { centerBin(cx, cy, cz, op); continue; }
-    const a = cov[i * 6], b = cov[i * 6 + 1], c = cov[i * 6 + 2], d = cov[i * 6 + 3], e = cov[i * 6 + 4], f = cov[i * 6 + 5];
-    // world covariance in voxel units = (L·Σ·Lᵀ)/vs², inlined (hot loop). Each Wab is
-    // rowA(L)ᵀ · Σ · rowB(L) for the symmetric local Σ [a,b,c; b,d,e; c,e,f].
-    const W00 = (a * L0 * L0 + d * L1 * L1 + f * L2 * L2 + 2 * (b * L0 * L1 + c * L0 * L2 + e * L1 * L2)) * inv2 + MIN_VAR;
-    const W11 = (a * L3 * L3 + d * L4 * L4 + f * L5 * L5 + 2 * (b * L3 * L4 + c * L3 * L5 + e * L4 * L5)) * inv2 + MIN_VAR;
-    const W22 = (a * L6 * L6 + d * L7 * L7 + f * L8 * L8 + 2 * (b * L6 * L7 + c * L6 * L8 + e * L7 * L8)) * inv2 + MIN_VAR;
-    const W01 = (a * L0 * L3 + d * L1 * L4 + f * L2 * L5 + b * (L0 * L4 + L1 * L3) + c * (L0 * L5 + L2 * L3) + e * (L1 * L5 + L2 * L4)) * inv2;
-    const W02 = (a * L0 * L6 + d * L1 * L7 + f * L2 * L8 + b * (L0 * L7 + L1 * L6) + c * (L0 * L8 + L2 * L6) + e * (L1 * L8 + L2 * L7)) * inv2;
-    const W12 = (a * L3 * L6 + d * L4 * L7 + f * L5 * L8 + b * (L3 * L7 + L4 * L6) + c * (L3 * L8 + L5 * L6) + e * (L4 * L8 + L5 * L7)) * inv2;
-    const det = W00 * (W11 * W22 - W12 * W12) - W01 * (W01 * W22 - W12 * W02) + W02 * (W01 * W12 - W11 * W02);
-    if (!(det > 1e-9)) { centerBin(cx, cy, cz, op); continue; }
-    const idet = 1 / det; // inverse covariance (symmetric) → the anisotropic distance metric
-    const I00 = (W11 * W22 - W12 * W12) * idet, I11 = (W00 * W22 - W02 * W02) * idet, I22 = (W00 * W11 - W01 * W01) * idet;
-    const I01 = (W02 * W12 - W01 * W22) * idet, I02 = (W01 * W12 - W02 * W11) * idet, I12 = (W01 * W02 - W00 * W12) * idet;
-    const rx = Math.min(MAX_R, Math.ceil(SIGMA * Math.sqrt(W00))), ry = Math.min(MAX_R, Math.ceil(SIGMA * Math.sqrt(W11))), rz = Math.min(MAX_R, Math.ceil(SIGMA * Math.sqrt(W22)));
-    const vxc = Math.floor(cx), vyc = Math.floor(cy), vzc = Math.floor(cz);
-    // pass A: Gaussian weight at each footprint voxel → wbuf; sum for mass normalisation
-    let sw = 0, n = 0;
-    for (let dx = -rx; dx <= rx; dx++) {
-      const vx = vxc + dx, ddx = vx + 0.5 - cx, inx = vx >= 0 && vx < gx;
-      for (let dy = -ry; dy <= ry; dy++) {
-        const vy = vyc + dy, ddy = vy + 0.5 - cy, iny = inx && vy >= 0 && vy < gy;
-        for (let dz = -rz; dz <= rz; dz++) {
-          const vz = vzc + dz, ddz = vz + 0.5 - cz;
-          if (!iny || vz < 0 || vz >= gz) { wbuf[n++] = 0; continue; } // outside grid → no mass
-          const s = I00 * ddx * ddx + I11 * ddy * ddy + I22 * ddz * ddz + 2 * (I01 * ddx * ddy + I02 * ddx * ddz + I12 * ddy * ddz);
-          const w = s > 12 ? 0 : Math.exp(-0.5 * s);
-          wbuf[n++] = w; sw += w;
-        }
-      }
-    }
-    if (sw <= 0) { centerBin(cx, cy, cz, op); continue; }
-    // pass B: distribute opacity by the normalised weights (voxels with w>0 are in-grid)
-    const scale = op / sw; n = 0;
-    for (let dx = -rx; dx <= rx; dx++) {
-      const vx = vxc + dx;
-      for (let dy = -ry; dy <= ry; dy++) {
-        const vy = vyc + dy;
-        for (let dz = -rz; dz <= rz; dz++) {
-          const w = wbuf[n++];
-          if (w > 0) dens[(vx * gy + vy) * gz + (vzc + dz)] += w * scale;
-        }
-      }
-    }
-  }
+  const dens = splatDensity(vs, gx, gy, gz, minX, minY, minZ, Math.max(1, Math.round(3 * per))); // spread over at most 3 units each way
 
   // isovalue: a fraction of the median density among voxels that hold real
-  // surface (>= ~1 opaque splat) — derived, so it scales to any scan.
+  // surface (>= ~1 opaque splat to a unit of area) — derived, so it scales to any scan.
+  // A surface's opacity is so much to an area, so a voxel's share of it goes with the
+  // voxel's face: these two thresholds are per unit of area.
   const strong: number[] = [];
-  for (let c = 0; c < dens.length; c++) if (dens[c] >= 1) strong.push(dens[c]);
+  for (let c = 0; c < dens.length; c++) if (dens[c] >= 1 / perArea) strong.push(dens[c]);
   strong.sort((a, b) => a - b);
-  const medianStrong = strong.length ? strong[strong.length >> 1] : 1;
-  const iso = Math.max(0.2, isoFactor * medianStrong);
+  const medianStrong = strong.length ? strong[strong.length >> 1] : 1 / perArea;
+  const iso = Math.max(0.2 / perArea, isoFactor * medianStrong);
 
   // binary occupancy (density above the isovalue) for the cleanup passes
   let occ: Uint8Array = new Uint8Array(dens.length);
   for (let c = 0; c < dens.length; c++) occ[c] = dens[c] >= iso ? 1 : 0;
-  if (despeckleMin > 0) despeckle(occ, gy, gz, despeckleMin);
-  for (let i = 0; i < closeIters; i++) occ = dilate(occ, gx, gy, gz);
-  for (let i = 0; i < closeIters; i++) occ = erode(occ, gx, gy, gz);
-  if (doFillFloor) fillFloorHoles(occ, gx, gy, gz);
+  if (despeckleMin > 0) despeckle(occ, gy, gz, Math.round(despeckleMin * perArea)); // (a speck is a scrap of surface: so many voxels to an area)
+  const closeVoxels = Math.round(closeIters * per);
+  for (let i = 0; i < closeVoxels; i++) occ = dilate(occ, gx, gy, gz);
+  for (let i = 0; i < closeVoxels; i++) occ = erode(occ, gx, gy, gz);
+  if (groundFill > 0) fillGround(occ, gx, gy, gz, -minX / vs, -minZ / vs, groundFill, per); // (the scan is centred on the world's origin)
   // ASSUMES a single, nav-confined room: this fills ANY enclosed vertical-panel hole
   // up to the area cap, so a real passage (doorway/window) of that size would be walled
   // off. Safe because the character can't reach such openings here; revisit for
@@ -225,17 +242,69 @@ export function voxelizeCore(
   // the real density (so the isosurface crossing lands sub-voxel on the actual
   // Gaussian surface). Synthesized voxels sit ~at the cell boundary.
   const EPS = 1e-3;
-  const field = new Float32Array(dens.length);
-  for (let c = 0; c < dens.length; c++) {
-    const d = dens[c] - iso;
-    field[c] = occ[c] ? Math.max(EPS, d) : Math.min(-EPS, d);
-  }
+  const fieldOf = (occ: Uint8Array, dens: Float32Array, iso: number) => {
+    const field = new Float32Array(dens.length);
+    for (let c = 0; c < dens.length; c++) {
+      const d = dens[c] - iso;
+      field[c] = occ[c] ? Math.max(EPS, d) : Math.min(-EPS, d);
+    }
+    return field;
+  };
 
   // pass 3: Surface Nets on the density field — one vertex per surface-straddling
   // cell, placed at the interpolated (sub-voxel) crossing of its edges, then
   // relaxed with Taubin smoothing into a smooth mesh that hugs the real surface.
-  const sn = surfaceNets(field, gx, gy, gz, minX, minY, minZ, vs);
-  taubinSmooth(sn.positions, sn.index, taubinIters);
+  //
+  // With `refine` > 1 that is done on a grid that many times finer, on a solid trimmed
+  // to it (refineSolid): what is solid was decided above, on the coarse grid, where a
+  // thinly scanned wall still adds up to a wall; where exactly its surface is, is then
+  // read off the finer one. Skipped if the finer grid would be too large to hold.
+  const fine = refineSolid(occ, gx, gy, gz, Math.max(1, Math.round(opts.refine ?? 1)), MAX_CELLS);
+  let sn: { positions: Float32Array; index: Uint32Array };
+  if (fine) {
+    const { s, x0, y0, z0, nx, ny, nz } = fine, fvs = vs / s, fx = minX + x0 * vs, fy = minY + y0 * vs, fz = minZ + z0 * vs;
+    const fdens = splatDensity(fvs, nx, ny, nz, fx, fy, fz, Math.max(1, Math.round(3 * per * s)));
+    // The trim reads the density evened out over neighbouring voxels. Voxel by voxel, a
+    // sparse scan's density on the fine grid is noise (that is why the coarse grid decides
+    // what is solid), and a trim that follows it stops at a different depth in every
+    // column: the mesh came out three times as bumpy as the coarse one.
+    // The ground is left out of it. It is put on its splats another way, below: flattened
+    // to the level its surface is found at. Trimmed as well, its surface steps up and down
+    // by a fine voxel about the edge of the band that is flattened, and whatever ends up
+    // just over that edge is left standing as a bump (Playroom's floor was dotted with them).
+    const flatten = (opts.floorFlat ?? 0.75) * unit;
+    const groundRows = flatten > 0 ? Math.ceil((flatten + vs - fy) / fvs) : 0; // the flattened band, and the coarse voxel over it that the ground's surface can reach into
+    const before = Uint8Array.from(fine.occ);
+    fine.trim(blur(fdens, nx, ny, nz, CALM_PASSES), iso / (s * s), groundRows); // (a voxel's share of a sheet's opacity goes with its face)
+    // Where the surface goes within its voxel:
+    //  - where nothing was trimmed, where the coarse grid's density puts it, read between
+    //    the coarse voxels: exactly the surface there would be without refining, on a
+    //    finer mesh. (Placed from the solid's shape there too, it sat at the voxel's edge,
+    //    half a voxel further out: Playroom's rug rose a grain, the step up to it from the
+    //    floor passed what can be walked, and the floor fell into two platforms.)
+    //  - where something was trimmed, from the trimmed solid's own shape, evened out: the
+    //    coarse density knows nothing of the trim, and the fine one is noise.
+    // Either way its sign follows the solid exactly, so placing can move the surface
+    // within a voxel but never open or close anything.
+    const gone = new Float32Array(before.length);
+    for (let c = 0; c < gone.length; c++) gone[c] = before[c] && !fine.occ[c] ? 1 : 0;
+    const near = blur(gone, nx, ny, nz, 1), soft = blur(Float32Array.from(fine.occ), nx, ny, nz, 1), field = new Float32Array(soft.length);
+    const coarseAt = (X: number, Y: number, Z: number) => { // (density − iso) / iso of the coarse grid at a fine voxel's centre
+      const px = Math.min(gx - 1, Math.max(0, x0 + (X + 0.5) / s - 0.5)), py = Math.min(gy - 1, Math.max(0, y0 + (Y + 0.5) / s - 0.5)), pz = Math.min(gz - 1, Math.max(0, z0 + (Z + 0.5) / s - 0.5));
+      const ax = Math.min(gx - 2, Math.floor(px)), ay = Math.min(gy - 2, Math.floor(py)), az = Math.min(gz - 2, Math.floor(pz)), tx = px - ax, ty = py - ay, tz = pz - az;
+      const c = (ax * gy + ay) * gz + az, sxc = gy * gz, l = (p: number, q: number, t: number) => p + (q - p) * t;
+      return l(l(l(dens[c], dens[c + 1], tz), l(dens[c + gz], dens[c + gz + 1], tz), ty), l(l(dens[c + sxc], dens[c + sxc + 1], tz), l(dens[c + sxc + gz], dens[c + sxc + gz + 1], tz), ty), tx) / iso - 1;
+    };
+    for (let X = 0; X < nx; X++) for (let Y = 0; Y < ny; Y++) for (let Z = 0; Z < nz; Z++) {
+      const c = (X * ny + Y) * nz + Z, v = near[c] > 0 ? soft[c] - 0.5 : coarseAt(X, Y, Z);
+      field[c] = fine.occ[c] ? Math.max(EPS, v) : Math.min(-EPS, v);
+    }
+    sn = surfaceNets(field, nx, ny, nz, fx, fy, fz, fvs);
+    taubinSmooth(sn.positions, sn.index, taubinIters * s); // the solid's steps are still the coarse grid's where nothing was trimmed: the same smoothing, in finer steps
+  } else {
+    sn = surfaceNets(fieldOf(occ, dens, iso), gx, gy, gz, minX, minY, minZ, vs);
+    taubinSmooth(sn.positions, sn.index, taubinIters);
+  }
 
   // Flatten the floor so walking is smooth. The density isosurface reconstructs the
   // floor slightly wavy AND — crucially — not exactly at y=0: leveling places y=0 at
@@ -244,7 +313,7 @@ export function voxelizeCore(
   // (the figurine would hover). Instead we detect the floor's actual level (the median
   // height of the low band) and flatten to THAT — flat and flush. The band stays
   // one-sided so low clutter above it (toys, box lips) keeps its real height.
-  const floorBand = (opts.floorFlat ?? 0.75) * vs;
+  const floorBand = (opts.floorFlat ?? 0.75) * unit;
   let floorLevel = 0;
   if (floorBand > 0) {
     const fv: number[] = [];
@@ -424,25 +493,284 @@ function erode(occ: Uint8Array, gx: number, gy: number, gz: number): Uint8Array 
 }
 
 /**
- * Fill enclosed holes in the floor. The floor is the most-occupied horizontal
- * row in the lower third of the grid; for it (and the row above) we flood-fill
- * the "outside" from the slice border through empty cells, then fill any empty
- * cell the flood never reached — i.e. a gap surrounded by floor. Restricting this
- * to the floor band is deliberate: a mid-height slice is mostly empty room
- * interior enclosed by walls, which a blind hole-fill would wrongly solidify.
+ * A coarse solid on a grid `s` times finer, ready to be trimmed to the splats.
+ *
+ * The coarse grid decides WHETHER there is surface: a voxel pools enough of a sparse
+ * scan's splats to call a thinly captured wall solid. But a voxel is solid all the way
+ * across, so the mesh round it stands about a voxel off the sheet of splats it is there
+ * for. On the finer grid the same solid can be cut back to where the splats are.
+ * `trim(density, iso)` takes fine voxels off its outside, layer by layer, under three rules:
+ *  - on a sheet, only one that is less dense than the voxel behind it, so a face walks in
+ *    to where the density peaks and stops there; on a lump, only one the finer grid does
+ *    not itself call solid (see mayGo);
+ *  - never one whose going would change the solid's shape in kind: open a hole through
+ *    it, split it, or join two gaps (a "simple point" test, the standard guarantee of
+ *    thinning). So a wall the coarse grid made whole stays whole, however little density
+ *    the finer grid finds in it: it only gets thinner;
+ *  - only through the solid's thickness, not along it: a voxel goes only along the axis
+ *    the solid is thinnest on there, so a sheet is thinned, and neither its free edge nor
+ *    a narrow strip of it is eaten back.
+ * The first version had the first rule only in spirit ("a denser voxel lies behind") and
+ * neither of the others. A thin wall was first cut to one voxel, alternating sides, and
+ * the next layers then went in through the steps that left: Playroom's walls came out
+ * full of holes, and its sight lines meeting no collision rose from 23% to 32%.
+ *
+ * Only the box round the solid is refined, not the whole grid. Returns null when `s` is
+ * 1, or that box would hold more than `maxCells`.
  */
-function fillFloorHoles(occ: Uint8Array, gx: number, gy: number, gz: number): void {
-  const sx = gy * gz, sy = gz;
-  const rowCount = new Int32Array(gy);
-  for (let x = 1; x < gx - 1; x++)
-    for (let y = 1; y < gy - 1; y++) {
-      let c = x * sx + y * sy + 1;
-      for (let z = 1; z < gz - 1; z++, c++) if (occ[c]) rowCount[y]++;
+const CALM_PASSES = 2;  // times the fine density is evened out between neighbouring voxels before the trim reads it
+
+/** `src` (a value per voxel) evened out: each voxel becomes ¼, ½, ¼ of itself and its two neighbours, along each axis in turn, `passes` times. */
+function blur(src: Float32Array, nx: number, ny: number, nz: number, passes: number): Float32Array {
+  let a: Float32Array = src, b: Float32Array = new Float32Array(src.length);
+  const sx = ny * nz, sy = nz;
+  for (let pass = 0; pass < passes; pass++)
+    for (const [step, n, stride] of [[sx, nx, 0], [sy, ny, 1], [1, nz, 2]]) {
+      for (let x = 0; x < nx; x++) for (let y = 0; y < ny; y++) for (let z = 0; z < nz; z++) {
+        const c = (x * ny + y) * nz + z, i = stride === 0 ? x : stride === 1 ? y : z;
+        b[c] = 0.5 * a[c] + 0.25 * (i > 0 ? a[c - step] : a[c]) + 0.25 * (i < n - 1 ? a[c + step] : a[c]);
+      }
+      const t = a === src ? new Float32Array(src.length) : a; a = b; b = t;
     }
-  const limit = Math.max(2, Math.floor(gy / 3));
-  let floorY = 1, best = -1;
-  for (let y = 1; y <= limit; y++) if (rowCount[y] > best) { best = rowCount[y]; floorY = y; }
-  for (let y = floorY; y <= Math.min(gy - 2, floorY + 1); y++) fillSlice(occ, gx, gy, gz, y);
+  return a;
+}
+
+const SHEET_MIN = 2;    // fine voxels: the least a sheet is thinned to
+const LUMP_LAYERS = 1;  // fine layers taken off a lump, at most. On a sparse scan most of a lump is under the finer grid's threshold (which is why the coarse grid decides what is solid): taken as deep as a sheet is, Counter lost a third of its walkable area
+const TRIM_DEPTH = 1.5; // coarse voxels: how many layers deep the trim may go, from each side. A slab two coarse voxels thick can come down to one fine one
+
+function refineSolid(coarse: Uint8Array, gx: number, gy: number, gz: number, s: number, maxCells: number): {
+  s: number; x0: number; y0: number; z0: number; nx: number; ny: number; nz: number; occ: Uint8Array; trim(density: Float32Array, iso: number, keepRows: number): void;
+} | null {
+  if (s <= 1) return null;
+  let x0 = gx, y0 = gy, z0 = gz, x1 = -1, y1 = -1, z1 = -1;
+  for (let x = 0; x < gx; x++) for (let y = 0; y < gy; y++) for (let z = 0; z < gz; z++) if (coarse[(x * gy + y) * gz + z]) {
+    if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; if (z < z0) z0 = z; if (z > z1) z1 = z;
+  }
+  if (x1 < 0) return null;
+  x0 = Math.max(0, x0 - 1); y0 = Math.max(0, y0 - 1); z0 = Math.max(0, z0 - 1); // a voxel of room round it, for the mesh to close in
+  x1 = Math.min(gx - 1, x1 + 1); y1 = Math.min(gy - 1, y1 + 1); z1 = Math.min(gz - 1, z1 + 1);
+  const nx = (x1 - x0 + 1) * s, ny = (y1 - y0 + 1) * s, nz = (z1 - z0 + 1) * s;
+  if (nx * ny * nz > maxCells) return null;
+  const occ = new Uint8Array(nx * ny * nz);
+  for (let x = 0; x < nx; x++) for (let y = 0; y < ny; y++) {
+    const from = ((x0 + Math.floor(x / s)) * gy + y0 + Math.floor(y / s)) * gz + z0, to = (x * ny + y) * nz;
+    for (let z = 0; z < nz; z++) occ[to + z] = coarse[from + Math.floor(z / s)];
+  }
+  const sx = ny * nz, sy = nz;
+  const solidAt = (x: number, y: number, z: number) => x >= 0 && y >= 0 && z >= 0 && x < nx && y < ny && z < nz && occ[(x * ny + y) * nz + z] === 1;
+  const depth = Math.round(TRIM_DEPTH * s), thin = 2 * depth + 1; // a run of solid this long or less is thickness; longer, the solid runs along that way
+
+  // Would taking (x, y, z) out leave the solid the same in kind? Yes if, in the 3 × 3 × 3
+  // block round it, the solid voxels that touch it by a face are one piece (joined by
+  // faces, through the block less its corners), and the empty ones are one piece too
+  // (touching by face, edge or corner). Solid counts as joined only across faces: the
+  // mesh drawn round two voxels that meet at an edge or a corner has a gap between them,
+  // and counting those as joined let a wall thin to a lattice that sight passed through
+  // (Playroom's sight lines meeting no collision: 23.1% to 24.9%).
+  const block = new Uint8Array(27), seen = new Uint8Array(27), stack = new Int8Array(27);
+  const pieces = (wanted: number, corners: boolean, byFaceOnly: boolean, countFaceTouchingOnly: boolean): number => {
+    seen.fill(0);
+    let n = 0;
+    for (let start = 0; start < 27; start++) {
+      if (start === 13 || seen[start] || block[start] !== wanted) continue;
+      const ax = Math.floor(start / 9) - 1, ay = Math.floor(start / 3) % 3 - 1, az = start % 3 - 1;
+      if (!corners && Math.abs(ax) + Math.abs(ay) + Math.abs(az) === 3) continue;
+      let touches = false, top = 0;
+      stack[top++] = start; seen[start] = 1;
+      while (top) {
+        const c = stack[--top], cx = Math.floor(c / 9) - 1, cy = Math.floor(c / 3) % 3 - 1, cz = c % 3 - 1;
+        if (Math.abs(cx) + Math.abs(cy) + Math.abs(cz) === 1) touches = true;
+        for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {
+          const steps = Math.abs(dx) + Math.abs(dy) + Math.abs(dz);
+          if (steps === 0 || (byFaceOnly && steps !== 1)) continue;
+          const qx = cx + dx, qy = cy + dy, qz = cz + dz;
+          if (qx < -1 || qx > 1 || qy < -1 || qy > 1 || qz < -1 || qz > 1) continue;
+          if (!corners && Math.abs(qx) + Math.abs(qy) + Math.abs(qz) === 3) continue;
+          const q = (qx + 1) * 9 + (qy + 1) * 3 + qz + 1;
+          if (q === 13 || seen[q] || block[q] !== wanted) continue;
+          seen[q] = 1; stack[top++] = q;
+        }
+      }
+      if (!countFaceTouchingOnly || touches) n++;
+    }
+    return n;
+  };
+  const simple = (x: number, y: number, z: number): boolean => {
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) block[(dx + 1) * 9 + (dy + 1) * 3 + dz + 1] = solidAt(x + dx, y + dy, z + dz) ? 1 : 0;
+    return pieces(1, false, true, true) === 1 && pieces(0, true, false, false) === 1;
+  };
+  /** How many solid voxels in a row (x, y, z) is part of along an axis, counted up to `thin` + 1. */
+  const run = (x: number, y: number, z: number, dx: number, dy: number, dz: number): number => {
+    let n = 1;
+    for (let k = 1; n <= thin && solidAt(x + dx * k, y + dy * k, z + dz * k); k++) n++;
+    for (let k = 1; n <= thin && solidAt(x - dx * k, y - dy * k, z - dz * k); k++) n++;
+    return n;
+  };
+  const trim = (density: Float32Array, iso: number, keepRows: number) => {
+    /** May (x, y, z) go? It needs one face open and the opposite one backed, along some
+     *  axis, with the voxel that backs it denser than it is: that walks a face in to where
+     *  the density peaks, the sheet of splats itself, and no further. (Solid with no
+     *  density in it, filled ground or a filled panel, has nothing denser behind
+     *  anything, and stays as it is.) That is for a sheet (a wall, a floor, a tabletop),
+     *  and only across it: along it is the way it runs, and going that way narrows it and
+     *  widens whatever gaps it has. A lump has no such peak to walk to: the evened-out
+     *  density of a small thing is greatest in its middle, and walking in to that ate
+     *  Playroom's toys down to a core. A lump's voxel goes, from any side, only while the
+     *  finer grid does not call it solid (density under `iso`). */
+    // Which way is thickness is settled once, from the solid as the coarse grid left it.
+    // (Asked afresh each pass, it changes as the trim goes: a layer comes off unevenly, the
+    // scraps of it left standing are narrower than they are tall, "thinnest" turns sideways,
+    // and they can no longer be taken from above. Playroom's floor and rug were left
+    // dotted with them.)
+    const axes = new Uint8Array(occ.length); // bits 1, 2, 4: may go along x, y, z
+    for (let x = 0; x < nx; x++) for (let y = 0; y < ny; y++) for (let z = 0; z < nz; z++) {
+      const c = (x * ny + y) * nz + z;
+      if (!occ[c] || y < keepRows) continue; // (the lowest `keepRows` rows are not trimmed at all: the caller's ground)
+      const rx = run(x, y, z, 1, 0, 0), ry = run(x, y, z, 0, 1, 0), rz = run(x, y, z, 0, 0, 1), least = Math.min(rx, ry, rz);
+      // A sheet is thin one way and runs on the other two. Anything else (a toy, a cushion,
+      // a chair's leg) is a lump: it has no sheet to walk in to, and comes in from every
+      // side, but only as far as the finer grid says it is not solid (bit 8).
+      const long = (rx > thin ? 1 : 0) + (ry > thin ? 1 : 0) + (rz > thin ? 1 : 0);
+      // (What is neither, thin more than one way, is left alone: a strip of wall between
+      // two gaps in it, a rail. Taken as a lump, it loses a layer off its sides too, and
+      // every gap a sparse wall already has gets wider: Playroom's open sight lines 24.4% to 26.9%.)
+      axes[c] = least > thin ? 7 | 8 : long === 2 ? (rx === least ? 1 : ry === least ? 2 : 4) : 0;
+    }
+    const mayGo = (x: number, y: number, z: number, pass: number): boolean => {
+      const c = (x * ny + y) * nz + z, may = axes[c];
+      const lump = (may & 8) !== 0;
+      if (lump && (pass >= LUMP_LAYERS || density[c] >= iso)) return false;
+      // A sheet keeps SHEET_MIN voxels of thickness. Thinner, its two faces come out of the
+      // mesher touching or crossed, and what probes the mesh is misled: a spot on a tabletop
+      // finds the table's own underside over it and has no headroom, a wall is met from
+      // behind and cannot be climbed. (Counter lost a third of its walkable area that way,
+      // and Playroom a sixth of its climbing reach.)
+      const along = (step: number, ahead: boolean, behind: boolean, dx: number, dy: number, dz: number) => ahead !== behind
+        && (lump || (density[ahead ? c + step : c - step] > density[c] && run(x, y, z, dx, dy, dz) > SHEET_MIN));
+      return ((may & 1) !== 0 && along(sx, solidAt(x + 1, y, z), solidAt(x - 1, y, z), 1, 0, 0))
+        || ((may & 2) !== 0 && along(sy, solidAt(x, y + 1, z), solidAt(x, y - 1, z), 0, 1, 0))
+        || ((may & 4) !== 0 && along(1, solidAt(x, y, z + 1), solidAt(x, y, z - 1), 0, 0, 1));
+    };
+    for (let pass = 0; pass < depth; pass++) {
+      // this pass's layer: the voxels that could go as things stand, least dense first
+      const layer: number[] = [];
+      for (let x = 0; x < nx; x++) for (let y = 0; y < ny; y++) for (let z = 0; z < nz; z++) if (occ[(x * ny + y) * nz + z] && mayGo(x, y, z, pass)) layer.push((x * ny + y) * nz + z);
+      layer.sort((a, b) => density[a] - density[b]);
+      let gone = 0;
+      for (const c of layer) {
+        const x = Math.floor(c / sx), y = Math.floor((c % sx) / sy), z = c % sy;
+        if (mayGo(x, y, z, pass) && simple(x, y, z)) { occ[c] = 0; gone++; } // (asked again: its neighbours may have gone since)
+      }
+      if (!gone) break;
+    }
+  };
+  return { s, x0, y0, z0, nx, ny, nz, occ, trim };
+}
+
+const STAND_ROOM = 5;    // units of clear space over a surface for it to be somewhere to stand: about the figurine's height (a unit is a fifth of it)
+const START_NEAR = 10;   // units round the scan's centre in which the level the figurine starts on is looked for
+const RAISED = 0.05;     // a level with more than this share of the scan's solid voxels below it is raised, not the ground (rooms: none below their floor; Kitchen's table 13%, Counter's worktop 26%)
+
+/**
+ * Fill the gaps in the surface the figurine plays on.
+ *
+ * Which surface: the level it starts on, found the way the spawn search finds it (the
+ * lowest place with room to stand, near the scan's centre: findSpawn in collision.ts).
+ * In a room that is the floor; on a scan of a worktop it is the worktop, with the real
+ * floor somewhere below. (It used to be "the busiest row in the lower third", which on
+ * a worktop scan is that real floor, a layer the figurine never stands on.)
+ *
+ * Two kinds of gap are filled, in that level's row and the one over it:
+ *  - holes with the surface all round them, as before (fillSlice);
+ *  - where the level is the ground, and `width` is more than 1, bare stretches that
+ *    something `width` units across cannot get into from outside, when the surface and
+ *    whatever stands on it (walls, furniture) are in its way. A one-voxel flood leaks
+ *    through any crack; a wide one is kept out of bays between furniture, and still gets
+ *    in where a whole wall is missing.
+ * The second is for ground only. Beside a raised surface there can be open air (the
+ * aisle between two worktops); beside the ground there cannot. The level is raised when
+ * a fair share of the scan's solid voxels lie below it.
+ */
+function fillGround(occ: Uint8Array, gx: number, gy: number, gz: number, ox: number, oz: number, width: number, per: number): void {
+  const sx = gy * gz, sy = gz, n = gx * gz;
+  const room = Math.round(STAND_ROOM * per), slab = Math.max(1, Math.round(per)); // in voxels: room to stand, and how thick the level's surface is taken to be
+  /** The lowest row in column (x, z) with something solid and room to stand on it, or -1. */
+  const standRow = (x: number, z: number) => {
+    const c = x * sx + z;
+    for (let y = 0; y < gy; y++) {
+      if (!occ[c + y * sy]) continue;
+      let clear = true;
+      for (let u = y + 1; u <= Math.min(gy - 1, y + room); u++) if (occ[c + u * sy]) { clear = false; break; }
+      if (clear) return y;
+    }
+    return -1;
+  };
+  // the level the figurine starts on: the commonest such row near the centre (one toy there does not decide it), or anywhere if there is none
+  const tally = new Int32Array(gy);
+  let any = false;
+  for (const near of [START_NEAR * per, Infinity]) {
+    for (let x = 0; x < gx; x++)
+      for (let z = 0; z < gz; z++) {
+        if (Math.hypot(x - ox, z - oz) > near) continue;
+        const y = standRow(x, z);
+        if (y >= 0) { tally[y]++; any = true; }
+      }
+    if (any) break;
+  }
+  if (!any) return;
+  let top = 0;
+  for (let y = 1; y < gy; y++) if (tally[y] > tally[top]) top = y;
+  const rows: number[] = []; // the level, and what is over it to a unit's height, where the surface is that much higher
+  for (let y = top; y <= Math.min(gy - 1, top + slab); y++) rows.push(y);
+  for (const y of rows) fillSlice(occ, gx, gy, gz, y);
+  if (width <= 1) return;
+
+  let solid = 0, beneath = 0;
+  for (let x = 0; x < gx; x++) for (let y = 0; y < gy; y++) for (let z = 0; z < gz; z++) if (occ[x * sx + y * sy + z]) { solid++; if (y < top - slab) beneath++; }
+  if (beneath > RAISED * solid) return; // a raised surface
+
+  const here = new Uint8Array(n), wall = new Uint8Array(n), under = new Uint8Array(n);
+  for (let x = 0; x < gx; x++)
+    for (let z = 0; z < gz; z++) {
+      const k = x * gz + z, c = x * sx + z;
+      const over = rows[rows.length - 1];
+      for (const y of rows) if (occ[c + y * sy]) { here[k] = 1; break; }
+      for (let y = over + 1; y <= Math.min(gy - 1, over + room); y++) if (occ[c + y * sy]) { wall[k] = 1; break; }
+      for (let y = 0; y < top - slab; y++) if (occ[c + y * sy]) { under[k] = 1; break; }
+      if (here[k]) wall[k] = 1; // (from here on: everything in the flood's way)
+    }
+  // where something `width` across can get to from the grid's border without touching what is in its way...
+  const radius = (width * per) / 2, clear = distanceTo(wall, gx, gz), reached = new Uint8Array(n), queue = new Int32Array(n);
+  let tail = 0;
+  const enter = (x: number, z: number) => { const k = x * gz + z; if (!reached[k] && clear[k] >= radius) { reached[k] = 1; queue[tail++] = k; } };
+  for (let x = 0; x < gx; x++) { enter(x, 0); enter(x, gz - 1); }
+  for (let z = 0; z < gz; z++) { enter(0, z); enter(gx - 1, z); }
+  for (let h = 0; h < tail; h++) {
+    const x = Math.floor(queue[h] / gz), z = queue[h] % gz;
+    if (x > 0) enter(x - 1, z); if (x < gx - 1) enter(x + 1, z); if (z > 0) enter(x, z - 1); if (z < gz - 1) enter(x, z + 1);
+  }
+  // ...and everything it covers there is outside. The rest of the level is ground, unless the scan has something beneath it.
+  const outside = distanceTo(reached, gx, gz);
+  for (let k = 0; k < n; k++) {
+    if (here[k] || under[k] || outside[k] <= radius) continue;
+    const c = Math.floor(k / gz) * sx + (k % gz);
+    for (const y of rows) occ[c + y * sy] = 1;
+  }
+}
+
+/** Per column, the distance in voxels to the nearest set column of `mask` (3-4 chamfer: within a few percent of straight-line). */
+function distanceTo(mask: Uint8Array, gx: number, gz: number): Float32Array {
+  const d = new Float32Array(gx * gz);
+  for (let k = 0; k < d.length; k++) d[k] = mask[k] ? 0 : Infinity;
+  const relax = (k: number, x: number, z: number, dx: number, dz: number, cost: number) => {
+    const X = x + dx, Z = z + dz;
+    if (X >= 0 && X < gx && Z >= 0 && Z < gz && d[X * gz + Z] + cost < d[k]) d[k] = d[X * gz + Z] + cost;
+  };
+  for (let x = 0; x < gx; x++) for (let z = 0; z < gz; z++) { const k = x * gz + z; relax(k, x, z, -1, 0, 3); relax(k, x, z, 0, -1, 3); relax(k, x, z, -1, -1, 4); relax(k, x, z, -1, 1, 4); }
+  for (let x = gx - 1; x >= 0; x--) for (let z = gz - 1; z >= 0; z--) { const k = x * gz + z; relax(k, x, z, 1, 0, 3); relax(k, x, z, 0, 1, 3); relax(k, x, z, 1, 1, 4); relax(k, x, z, 1, -1, 4); }
+  for (let k = 0; k < d.length; k++) d[k] /= 3;
+  return d;
 }
 
 /** Flood the outside of one horizontal (y=vy) slice from its border, then fill unreached empties. */
@@ -479,7 +807,7 @@ function fillSlice(occ: Uint8Array, gx: number, gy: number, gz: number, vy: numb
  * enclosed empty region up to `maxCells` in area. The area cap keeps it honest — a
  * door-sized gap fills; larger openings (which in a single-room scene can only be
  * windows/doorways the character never uses) stay open. Horizontal panels (floor,
- * tabletops) are handled by fillFloorHoles.
+ * tabletops) are handled by fillGround.
  */
 function fillVerticalPanelHoles(occ: Uint8Array, gx: number, gy: number, gz: number, maxCells: number): void {
   const dims = [gx, gy, gz], strides = [gy * gz, gz, 1];
