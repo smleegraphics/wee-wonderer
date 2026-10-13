@@ -24,7 +24,8 @@ splat centres + opacity → density field (voxels) → cleanup, ground gaps → 
 
 ## Measuring it: `scripts/collisioncheck.mjs`
 
-`node scripts/collisioncheck.mjs` loads the four demo rooms and prints how sound each
+`node scripts/collisioncheck.mjs` loads the four demo rooms and Marishka (a dog on a
+blanket: nothing in it is flat or hard-edged, which is what the rooms cannot test) and prints how sound each
 one's collision is as ground for a game, then fails if any guarded number is worse than
 `scripts/collision-baseline.json`. Run it after any change to the voxelizer, its
 settings, the NavGrid, or how the figurine moves. When a change is meant to improve a
@@ -36,34 +37,35 @@ numbers repeat exactly. `--with key=value` tries a setting without saving it (an
 Lengths and areas are in grains (see "Sizes are in grains" below), not cells of whatever
 grid is in use, so numbers compare across grid sizes.
 
-Baseline (SCHEMA g26, default settings, mesh detail 2):
+Baseline (SCHEMA g31, default settings; Playroom is built at mesh detail 2, the rest at 1):
 
-| | Living Room | Counter | Kitchen | Playroom |
-|---|---|---|---|---|
-| Walkable area (grains²) | 10,257 | 4,726 | 4,745 | 16,440 |
-| Platforms (of 40 grains² or more) | 88 (27) | 68 (17) | 66 (9) | 103 (34) |
-| Cells on small perches | 8.6% | 17.5% | 17.8% | 6.3% |
-| Cells reached from spawn by walking | 45.9% | 43.4% | 60.8% | 59.3% |
-| ...and jumping or dropping | 47.0% | 53.9% | 74.1% | 67.6% |
-| ...and climbing the mesh's faces | 99.4% | 55.3% | 74.1% | 99.1% |
-| ...if every meeting of surfaces had a face | 99.6% | 55.3% | 74.1% | 100.0% |
-| Real platforms no face could join | 0 | 12 | 4 | 0 |
-| Holes in the spawn surface | 1.1% | 2.5% | 0.4% | 3.3% |
-| Spawn surface cells on an edge | 12.3% | 14.2% | 8.5% | 11.9% |
-| Spawn surface fills its convex outline | 66.8% | 88.7% | 87.8% | 85.2% |
-| Spawn surface roughness (slope) | 0.16 | 0.53 | 0.39 | 0.36 |
-| Triangles | 463,588 | 220,208 | 180,468 | 744,456 |
-| Mesh pieces | 34 | 39 | 53 | 32 |
-| Mesh bumpiness | 0.056 | 0.075 | 0.076 | 0.039 |
-| Mesh to nearest opaque splat, median / 90th pct (grains) | 0.60 / 1.09 | 0.57 / 0.92 | 0.59 / 1.06 | 0.47 / 0.92 |
-| Opaque splats with no mesh within 2 grains | 7.5% | 10.0% | 12.1% | 2.4% |
-| Sight lines that meet no collision | 31.7% | 41.9% | 43.8% | 21.8% |
+| | Living Room | Counter | Kitchen | Playroom | Marishka |
+|---|---|---|---|---|---|
+| Walkable area (grains²) | 9,672 | 4,458 | 4,586 | 16,614 | 10,964 |
+| Platforms (of 40 grains² or more) | 85 (25) | 72 (15) | 67 (16) | 121 (38) | 19 (8) |
+| Cells on small perches | 9.3% | 19.8% | 15.9% | 7.6% | 1.5% |
+| Cells reached from spawn by walking | 46.6% | 44.2% | 55.9% | 54.8% | 81.3% |
+| ...and jumping or dropping | 46.8% | 52.5% | 75.8% | 65.1% | 82.5% |
+| ...and climbing the mesh's faces | 99.4% | 55.3% | 75.8% | 99.2% | 99.9% |
+| ...if every meeting of surfaces had a face | 99.6% | 55.3% | 75.8% | 100.0% | 99.9% |
+| Real platforms no face could join | 0 | 12 | 5 | 0 | 0 |
+| Area a climb can start from (grains²) | 1,085 | 448 | 222 | 2,253 | 358 |
+| Holes in the spawn surface | 1.1% | 4.5% | 4.4% | 3.3% | 0.4% |
+| Spawn surface cells on an edge | 12.8% | 20.3% | 14.6% | 11.1% | 5.9% |
+| Spawn surface fills its convex outline | 67.5% | 86.1% | 81.2% | 82.7% | 90.4% |
+| Spawn surface roughness (slope) | 0.05 | 0.34 | 0.18 | 0.04 | 0.60 |
+| Triangles | 107,692 | 50,480 | 42,796 | 744,456 | 102,900 |
+| Mesh pieces | 34 | 39 | 53 | 32 | 13 |
+| Mesh bumpiness | 0.091 | 0.130 | 0.098 | 0.090 | 0.101 |
+| Mesh to nearest opaque splat, median / 90th pct (grains) | 0.60 / 1.05 | 0.56 / 0.95 | 0.60 / 1.33 | 0.42 / 0.84 | 0.54 / 0.81 |
+| Opaque splats with no mesh within 2 grains | 8.1% | 10.8% | 13.6% | 2.5% | 12.4% |
+| Sight lines that meet no collision | 32.0% | 42.2% | 43.7% | 21.7% | 43.5% |
 
 How far each number can be trusted:
 
 - **The script checks its own arithmetic first.** It runs the measuring on a made-up
   room (a floor with a hole, a ledge too high to jump to, a floor too far to jump to)
-  where all 22 numbers can be counted by hand, and measures nothing if one is wrong. Add
+  where all 23 numbers can be counted by hand, and measures nothing if one is wrong. Add
   a case there when adding a number.
 - **Reach is a model of the movement, not the controller.** Its jump was checked against
   the game: a real jump rises 0.24 and carries about 1.3 at a run, the model's
@@ -95,9 +97,15 @@ How far each number can be trusted:
 - **Mesh-to-splat distance rises when ground is filled in**, since filled ground has
   no splats by it (Living Room's 90th percentile 0.89 to 1.13). That is the fill's cost
   showing, not the mesh loosening: read the median for looseness.
-- **"Mesh bumpiness"** is how differently the triangles round each vertex face,
-  averaged. Real corners count, so compare a room with itself. It caught what the eye
-  did: a trim that follows noise read three times the coarse mesh's figure.
+- **"Mesh bumpiness"** is how far the mesh is from flat inside each grain-sized box of
+  space (the share of the triangles' orientation that is not along the box's main
+  direction, by area). It must be measured over a fixed size. The first version
+  measured it per vertex, and a finer mesh reads smoother that way only for being
+  finer: it said mesh detail 2 halved the bumpiness when detail 2 is 40 to 70% bumpier
+  on every scan, and it was believed for a day.
+- **"Area a climb can start from"** runs the game's own start test (`climbStartsHere`,
+  which `tryStartClimb` acts on) from every walkable cell in eight directions. It is the
+  number for "is climbing harder to start".
 - **"Sight lines that meet no collision"** looks out in 400 directions from cells of
   the start surface 6 grains apart, on a lattice fixed in the world, and counts the
   lines that hit nothing. It is what notices a wall with holes in it, which nothing else
@@ -184,11 +192,31 @@ Rules the trim keeps, each there because its absence broke something measured:
 - **The ground is left alone**: `floorFlat` already puts it on its splats, and trimmed
   as well it steps about the edge of the flattened band and leaves bumps over it.
 
-What it gives (detail 1 → 2): bumpiness about halved (Playroom 0.065 → 0.039); walkable
-area, reach and sight lines unchanged; the mesh 3 to 8% nearer the splats (Playroom
-0.51 → 0.47). So it buys a cleaner, finer mesh, not much of a closer one. It costs four
-to five times the triangles and a slower first build (Kitchen 1.0 → 2.2 s, Playroom
-4.2 → 9.1 s, cached after); frame time while walking did not change.
+**Each scan gets the detail it has the splats for**, up to the `refine` setting (the
+slider's "up to"): the finer grid is used only while there are at least 3 splats to each
+of its solid voxels (`SPLATS_PER_FINE_VOXEL`). Its density is only worth reading with
+several splats to a voxel; with fewer it is noise, and a mesh trimmed to noise is pitted.
+
+| | Splats per solid voxel | Per voxel twice as fine | Gets |
+|---|---|---|---|
+| Playroom | 36.7 | 4.6 | 2 |
+| Kitchen | 16.7 | 2.1 | 1 |
+| Counter | 10.0 | 1.3 | 1 |
+| Living Room | 4.9 | 0.6 | 1 |
+| Marishka | 4.5 | 0.6 | 1 |
+
+What detail 2 does, measured with the floor flatten below in place (detail 1 / 2):
+Playroom's floor roughness 0.14 / 0.04 and fit 0.46 / 0.42, which is why it gets it;
+bumpiness up 40 to 70% on every scan (Playroom 0.061 / 0.090, Marishka 0.101 / 0.170);
+Marishka visibly pitted all over; Kitchen's floor rougher (0.18 / 0.27). Reach and sight
+lines are the same at both. It costs four to five times the triangles and a slower first
+build (Playroom 4.2 → 9.1 s, cached after); frame time while walking did not change.
+
+The rule is drawn from five scans with one on the "yes" side: the threshold sits in the
+gap between Playroom (4.6) and Kitchen (2.1), and a scan landing in that gap is untested.
+Opaque splats per voxel and opacity per voxel were tried and do not separate the two.
+(Detail 2 was the default for every scan for a day, on the strength of the bumpiness
+number that turned out to be wrong.)
 
 **Bump `SCHEMA` on every change to the trim.** The cache key holds the settings, not
 the code: a browser that has built a room at detail 2 goes on showing that mesh. Headless
@@ -218,11 +246,63 @@ Tried and rejected, for a closer fit:
 Open:
 
 - **Closer fit is still wanted**, most of all on small objects.
-- One `climbfuzz` run on Playroom (seed 3) reported a violation at detail 2 that the
-  same seed did not repeat, at either detail.
-- Walking surfaces measure rougher at detail 2 on three rooms (Playroom 0.28 → 0.36).
+- `climbfuzz` is not repeatable: the same scan, seed and settings report a violation on
+  one run and none on the next (Playroom seed 3; Living Room seeds 1 and 5, with the
+  settings from before any of this as well). So an occasional violation predates this
+  work and is not traced; and a clean run proves less than it seems.
 - A scan whose finer grid would pass the voxelizer's memory cap is built at detail 1.
   None of the four rooms is.
+
+## The ground: its level, flattening it, and starting on it
+
+"The ground" is the level the figurine plays on: a room's floor, a table's top. The
+voxelizer finds its row once (`groundRow`: the commonest lowest-place-with-room-to-stand
+near the scan's centre) and three things use it: the gap fill below, the flatten, and
+where the figurine starts.
+
+**Flattening (`floorFlat`, "Floor flatten" in the Debug card).** The mesh within 1.5
+grains of the ground's splats is snapped onto their level, which is where the scan's
+opacity peaks near the ground's row.
+
+- **It used to be measured from y = 0 and from the mesh**: everything under 0.75 grains
+  over y = 0 went to the median height of those vertices. y = 0 is a low percentile of
+  the scan's heights and the floor's splats lie a little over it, so the cut ran through
+  the floor's own top surface. Part was flattened, to a level the slab's underside
+  dragged below the splats; the rest was left as it came, up to a grain and a half above
+  them. Playroom had 2,390 floor cells at −0.5 grains and 6,350 spread over +0.75 to
+  +1.75, with its splats at +0.25. Living Room the same. The ridges along Playroom's rug
+  were the edge between the two layers.
+- **It is not floaters.** Rebuilt from Playroom with 80% of its splats stripped, the two
+  layers were still there, the same size. Having collision ignore splats under 20%
+  opaque moved the floor's roughness from 0.36 to 0.34.
+- **Only flat ground is flattened**: where at least 1.5% of the opacity near the ground
+  is splats that themselves lie flat at one height (Playroom 15%, the other rooms and
+  tables 4%, Marishka under 0.5%). Flattened regardless, Marishka's blanket was cut into
+  terraces and its climbing reach fell from 99.9% to 81.9%.
+- **The band reaches as far under the level as over it and no further.** Taking in
+  everything below is right for a floor and pulls what is under a table up into it.
+- **Under a raised ground the real floor near y = 0 is still flattened the old way**
+  (`FLOOR_UNDER`). Left as it comes, its scraps are places to stand.
+- Result (floor roughness, before → after): Playroom 0.29 → 0.04, Living Room
+  0.15 → 0.05, Kitchen 0.25 → 0.18, Counter 0.40 → 0.34, Marishka unchanged.
+- Cost: anything lower than the band is floor. The puzzle board on Playroom's rug is.
+
+**Starting (`resetToSpawn`).** The figurine starts on the walkable cell nearest the
+scan's centre that is at the ground's height (`VoxelSurface.groundY`). `findSpawn`'s
+"lowest place near the centre with room to stand" is the fallback. On Counter that
+place is the inside of a glass bowl: it always was, and a bumpy worktop used to make a
+ramp out of it.
+
+## Playroom cannot be cleaned by the floater cleaner
+
+`scripts/clean-scan.mjs` was run on `room2.ply` with each of its rules alone. Every one
+makes holes in a room that has none (see-through pixels, mesh behind / nothing):
+standard settings 33% / 11% (keeping 19% of the splats); opacity floor 0.02, 16% / 9%;
+opacity 0.1 with no size cap, 10% / 2.5%; density alone at its gentlest, removing 4% of
+the splats, 8% / 2.5%. Playroom's plain walls, cabinets and floor are drawn by a few
+large faint splats each, which is what every rule takes a floater to be. It is not
+"80% floaters": 80% of its splats are faint, and most of those are the room. What made
+its collision untidy was the flatten above.
 
 ## Small platforms are perches, not debris
 
@@ -342,9 +422,9 @@ filled where a capsule fits.
 **Figurine hovering above the floor has had three separate causes.**
 1. Perpendicular puff from the splat variance floor. Fixed by `MIN_VAR` 0.25 → 0.05.
 2. `floorFlat` snapped floor vertices up to a hard-coded y=0, but the isosurface
-   reconstructs the floor slightly below it. Fixed by flattening to the detected
-   floor level. Fixing leveling instead does nothing; the gap is datum versus
-   isosurface.
+   reconstructs the floor slightly below it. Then it flattened to the median of the low
+   vertices, which left most of the floor a grain above its splats. Now it flattens
+   onto the ground's splats: see "The ground".
 3. Slab-top offset: on unflattened surfaces (furniture) the mesh top sits about half
    a voxel above the real surface. Inherent to voxelizing a surface; not fixed.
 
@@ -381,7 +461,8 @@ on opacity, size, or local density, then level and crop to the room.
 
 - Production parameters: `alphaMin 0.35`, `minMass 4`, `scaleCapMul 4` (about half
   the splats kept).
-- Playroom (`room2.ply`) is about 80% floaters even though it is not pre-cleaned.
+- Playroom (`room2.ply`) is not pre-cleaned and cannot be: see "Playroom cannot be
+  cleaned by the floater cleaner".
 - Kitchen and Counter are tabletop scans, not walk-around rooms. Living Room and
   Playroom are the real rooms.
 - The cleanup's occupancy grid and leveling are the same infrastructure collision

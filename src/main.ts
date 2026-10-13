@@ -63,8 +63,8 @@ const VOXEL_OPTS = {
   panelFill: num('panelfill', 2.5), // fill enclosed holes in vertical panels up to this area, in NORMALIZED scan units² (~room-relative, not metres — every scan is scaled to TARGET_RADIUS); blank cabinet doors/walls; 0 = off
   smooth: num('smooth', 0),      // majority occupancy passes (Taubin handles smoothing)
   taubin: num('taubin', 6),      // Taubin mesh-smoothing iterations
-  floorFlat: num('floorflat', 0.75), // snap mesh within this many grains of y=0 flat
-  refine: num('refine', 2),      // build the mesh on a grid this many times finer than the one that decides what is solid, trimmed in to the splats (1 = the same grid). 2: half as bumpy as 1 and about a tenth tighter, for four to five times the triangles (context/collision.md)
+  floorFlat: num('floorflat', 1.5), // flatten the mesh onto the ground's splats within this many grains of them. At 1 the top of Playroom's and Living Room's floor is left out (cells at 1.25 to 1.75 grains); at 2 a little more is flat and more low clutter is floor
+  refine: num('refine', 2),      // build the mesh on a grid up to this many times finer than the one that decides what is solid, trimmed in to the splats. Each scan gets what it has the splats for (of the demo scans, only Playroom gets 2)
 };
 // Walkable surfaces are de-quantized to the real splat height in the voxelizer,
 // so no ground offset is needed; ?sink stays as a manual override (default 0).
@@ -90,6 +90,7 @@ let showPlatforms = q.get('platforms') === '1';
 let platformDebug: THREE.InstancedMesh | null = null;
 let platformCheckbox: HTMLInputElement | null = null;
 let lastVoxelSize = GRAIN;
+let groundY: number | null = null; // the height of the ground the figurine plays on in this scan (the voxelizer's), or null
 const PLATFORM_OPTS = { stepFactor: 0.35, minCells: 6, climbDeg: 70, bridge: 2, fill: 3 }; // climbDeg: surfaces steeper than this (from horizontal) are walls to climb, gentler ones are ground to walk. minCells: an area, in grains². bridge, fill: how wide a gap in a surface is bridged, and how wide a hole in it filled, in grains
 const STEP_DOWN_MAX = 0.6; // hop straight down a drop up to this (char-heights); taller → climb down the face
 // Spike 2: the reliable ground. The controller stands on the NavGrid (no
@@ -533,6 +534,7 @@ function onLoaded(gltf: GLTF): void {
   console.log(`character: ${charH.toFixed(3)} tall, ${gltf.animations.length} clips`);
 }
 
+const spawnAt = new THREE.Vector3();
 /** Put the figurine on the floor at the spawn point and re-frame the camera behind it. */
 function resetToSpawn(): void {
   // pick a clear floor spot for this scan (unless overridden with ?fx=&fz=)
@@ -544,8 +546,16 @@ function resetToSpawn(): void {
   } else {
     player.position.set(0, 0, 0);
   }
-  // align the spawn with the NavGrid so the reliability layer picks it up cleanly
-  if (navGrid) {
+  // Start on the ground: the walkable spot nearest the scan's centre that is at the level
+  // the scan's ground is (a room's floor, a table's top). findSpawn above takes the lowest
+  // place near the centre with room to stand, which need not be that: on Counter it is
+  // the inside of a glass bowl, a step up from the worktop. It is kept for when the
+  // walkable cells are not there yet, or none of them is at that level.
+  const onGround = !q.has('fx') && !q.has('fz') && navGrid && groundY !== null
+    && navGrid.nearest(0, 0, groundY, spawnAt, charH * PLATFORM_OPTS.stepFactor);
+  if (onGround) player.position.copy(spawnAt);
+  else if (navGrid) {
+    // align the spawn with the NavGrid so the reliability layer picks it up cleanly
     const s = navGrid.surfaceNear(player.position.x, player.position.z, player.position.y, charH);
     if (s !== null) player.position.y = s;
   }
@@ -693,10 +703,11 @@ async function buildCollision(file: string, token: number, centers: THREE.Buffer
   scene.add(mesh);
   collisionDebug = mesh;
   lastVoxelSize = surf.voxelSize;
+  groundY = surf.groundY ?? null; // (?? : a surface cached before this was recorded has none)
   rebuildPlatformOverlay();
   console.log(
     `collision${cached ? ' (cached)' : ''}: ${surf.occupiedCount.toLocaleString()} voxels, ` +
-    `${surf.triangleCount.toLocaleString()} tris @ ${surf.voxelSize.toFixed(3)}u ` +
+    `${surf.triangleCount.toLocaleString()} tris @ ${surf.voxelSize.toFixed(3)}u, detail ${surf.detail ?? 1} ` +
     `in ${(performance.now() - t0).toFixed(0)}ms — press V to toggle overlay`,
   );
 }
@@ -1224,20 +1235,31 @@ function climbGround(y: number, dx: number, dz: number): THREE.Vector3 | null {
 /** True if a wall is right in front (in the `dx,dz` direction); if so, enter the climb
  *  at `feetY` — the ground we're standing on, or wherever the feet are when a jump
  *  carries us into the wall. */
+/** Is there a wall to start climbing, standing at (x, feetY, z) and facing `dir` (unit,
+ *  level)? The one test of that: tryStartClimb acts on it, and the collision health check
+ *  counts the places it passes. Leaves the nearer hit's distance and slope in climbStart. */
+const climbStart = { dist: 0, up: 0 };
+function climbStartsHere(x: number, feetY: number, z: number, dir: THREE.Vector3): boolean {
+  const reach = (CAPSULE_RADIUS + CLIMB.startReach) * charH;
+  // Require a wall at chest AND head — proves it's tall enough to scale (not a low
+  // bump), and that the climb won't top out the instant it starts.
+  climbStart.dist = Infinity;
+  for (let i = 0; i < 2; i++) {
+    const w = climbWall(climbProbe.set(x, feetY + charH * (i ? CLIMB.head : CLIMB.chest), z), dir, reach);
+    if (!w || !isWall(w)) return false;
+    if (w.distance < climbStart.dist) { climbStart.dist = w.distance; climbStart.up = w.up; }
+  }
+  return true;
+}
+
 function tryStartClimb(dx: number, dz: number, feetY = supportY): boolean {
   if (!collision || !actions['climb']) return false;
   climbTry.set(dx, 0, dz);
   if (climbTry.lengthSq() < 1e-9) return false;
   climbTry.normalize();
-  const p = player.position, reach = (CAPSULE_RADIUS + CLIMB.startReach) * charH;
-  // Require a wall at chest AND head — proves it's tall enough to scale (not a low
-  // bump), and that the climb won't top out the instant it starts.
-  let dist = Infinity, up = 0;
-  for (let i = 0; i < 2; i++) {
-    const w = climbWall(climbProbe.set(p.x, feetY + charH * (i ? CLIMB.head : CLIMB.chest), p.z), climbTry, reach);
-    if (!w || !isWall(w)) return false;
-    if (w.distance < dist) { dist = w.distance; up = w.up; }
-  }
+  const p = player.position;
+  if (!climbStartsHere(p.x, feetY, p.z, climbTry)) return false;
+  const { dist, up } = climbStart;
   const midAir = state === 'air';
   climbDir.copy(climbTry);
   climbCling = false;
@@ -1715,6 +1737,7 @@ if (TEL) (window as unknown as { __collisionHealth?: () => Promise<unknown> })._
     climbable: climbableFace,
     blocked: (ox, oy, oz, dx, dy, dz) => !!collision && collision.wallAhead(faceFrom.set(ox, oy, oz), faceDir.set(dx, dy, dz), TARGET_RADIUS * 4) !== null, // (further than any scan reaches)
     eyeHeight: charH * 0.5,
+    climbStarts: (x, y, z, dx, dz) => climbStartsHere(x, y, z, faceDir.set(dx, 0, dz)),
   });
 };
 
@@ -1914,12 +1937,13 @@ function setupDebugMenu(): void {
      'closing gaps up to ~2× this many voxels. Higher fills bigger holes but welds ' +
      'objects to the floor / webs surfaces (a looser "seal"); big holes are better ' +
      'handled by the floor/panel fills. Default 1 keeps the seal tight.');
-  surface.addSlider('Mesh detail', VOXEL_OPTS.refine, 1, 3, 1, (v) => {
+  surface.addSlider('Mesh detail (up to)', VOXEL_OPTS.refine, 1, 3, 1, (v) => {
     VOXEL_OPTS.refine = v;
     rebuildCollision();
   }, 'What is solid is decided on the coarse collision grid, where a thinly scanned wall still adds up to a wall. ' +
-     'At 2 or 3 the mesh is then built on a grid that many times finer and trimmed in to the splats, so it hugs ' +
-     'objects more closely. More triangles, and a slower first build. 1 = the coarse grid only.');
+     'The mesh can then be built on a grid 2 or 3 times finer and trimmed in to the splats. Each scan gets as fine a ' +
+     'grid as it has splats for, up to this: a sparse scan stays at 1 whatever is set here, since a finer grid would ' +
+     'only read its noise. The console line for each build says which detail it got.');
   surface.addSlider('Ground gap fill (voxels)', VOXEL_OPTS.fillFloor, 0, 40, 1, (v) => {
     VOXEL_OPTS.fillFloor = v;
     rebuildCollision();
@@ -1933,12 +1957,13 @@ function setupDebugMenu(): void {
      'splatting captured too faintly) up to this area, in normalized scan units² ' +
      '(~room-relative — not metres). Bigger fills larger blank panels but can start ' +
      'closing real openings (doorways/windows); 0 = off. Default 2.5.');
-  surface.addSlider('Floor flatten (voxels)', VOXEL_OPTS.floorFlat, 0, 2, 0.05, (v) => {
+  surface.addSlider('Floor flatten (grains)', VOXEL_OPTS.floorFlat, 0, 3, 0.25, (v) => {
     VOXEL_OPTS.floorFlat = v;
     rebuildCollision();
-  }, 'Height of the band above the floor (in voxels) snapped perfectly flat. ' +
-     'Higher = flatter floor but low clutter (toys) gets absorbed; ' +
-     'lower = keeps low clutter but more floor waviness returns. 0 = off.');
+  }, 'The collision within this many grains of the ground is flattened onto the level the ground is drawn at ' +
+     '(a grain is about a fifth of the figurine). Higher = flatter, and more low clutter (a rug, a board, the foot ' +
+     'of a toy) becomes floor; lower leaves the top of the floor uneven. Only ground that is flat is flattened: ' +
+     'a blanket is left as it is. 0 = off.');
 
   // cleanup tunables for imported scans (re-clean + reload the active upload)
   const cleanup = hud.debug.section('Import cleanup');

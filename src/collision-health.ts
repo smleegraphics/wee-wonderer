@@ -19,6 +19,8 @@ export interface HealthInput {
   /** Does a straight line from (ox, oy, oz) along the unit direction (dx, dy, dz) meet the collision mesh (backstop plane included)? */
   blocked: (ox: number, oy: number, oz: number, dx: number, dy: number, dz: number) => boolean;
   eyeHeight: number; // how far above a walkable cell to look out from
+  /** Would a climb start for a figurine standing at (x, y, z) and walking in the level unit direction (dx, dz)? The game's own test. */
+  climbStarts: (x: number, y: number, z: number, dx: number, dz: number) => boolean;
 }
 
 export interface CollisionHealth {
@@ -32,6 +34,7 @@ export interface CollisionHealth {
   reachShare: number;     // ...and by climbing, where the mesh has a face to climb (higher is better)
   reachBound: number;     // ...and by climbing wherever two surfaces meet, seen from above, face or no face: the most a better mesh could give
   islands: number;        // real platforms that even that does not get to: no change to the mesh's faces will join them
+  climbSpots: number;     // walkable area (units²) from which a climb can be started, walking one of eight ways: how much there is to climb, as the game sees it (higher is more)
   // --- the shape of that surface
   holeShare: number;      // enclosed holes in it, as a share of its area with them filled (lower is better)
   edgeShare: number;      // share of its cells that are on an edge: raggedness (lower is better)
@@ -42,7 +45,7 @@ export interface CollisionHealth {
   pieces: number;         // connected pieces of mesh
   smallPieces: number;    // ...of fewer than SMALL_PIECE triangles: floating bits
   looseShare: number;     // share of triangles in those (lower is better)
-  bumpiness: number;      // how much the triangles round a vertex face different ways, averaged over the mesh: 0 is flat everywhere, and real corners count too, so compare a scan with itself (lower is smoother)
+  bumpiness: number;      // how far the mesh is from flat within each unit-sized box, by area: 0 is flat everywhere, and real corners and curves count too, so compare a scan with itself (lower is smoother)
   // --- how well the mesh fits the scan
   offMedian: number;      // from the mesh to the nearest opaque splat, in units: median...
   offP90: number;         // ...and 90th percentile (lower is tighter)
@@ -60,7 +63,7 @@ const LOOKOUT_SPACING = 6, DIRECTIONS = 400;
 const NEIGHBOURS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 
 export function collisionHealth(input: HealthInput): CollisionHealth {
-  return { ...standing(input), ...reach(input), ...meshPieces(input), ...fit(input), ...openness(input) };
+  return { ...standing(input), ...reach(input), ...climbing(input), ...meshPieces(input), ...fit(input), ...openness(input) };
 }
 
 /** The surface the figurine starts on: that of the cell nearest its feet (-1 if there are no cells). */
@@ -194,6 +197,15 @@ function hullArea(cells: [number, number][]): number {
   return Math.abs(twice) / 2;
 }
 
+function climbing({ walk, climbStarts, unit }: HealthInput): Pick<CollisionHealth, 'climbSpots'> {
+  let spots = 0;
+  for (let i = 0; i < walk.platformId.length; i++) {
+    const x = walk.positions[i * 3], y = walk.positions[i * 3 + 1], z = walk.positions[i * 3 + 2];
+    for (let k = 0; k < 8; k++) if (climbStarts(x, y, z, Math.cos((k * Math.PI) / 4), Math.sin((k * Math.PI) / 4))) { spots++; break; }
+  }
+  return { climbSpots: spots * (walk.sampleStep / unit) ** 2 };
+}
+
 /** How much of what can be seen from where the figurine stands is not collision at all.
  *  Lines of sight go out from cells of the surface it starts on, LOOKOUT_SPACING units
  *  apart, in DIRECTIONS directions spread evenly over the sphere (in opposite pairs). */
@@ -221,7 +233,7 @@ function openness(input: HealthInput): Pick<CollisionHealth, 'openShare'> {
   return { openShare: lines ? open / lines : 0 };
 }
 
-function meshPieces({ mesh }: HealthInput): Pick<CollisionHealth, 'triangles' | 'pieces' | 'smallPieces' | 'looseShare' | 'bumpiness'> {
+function meshPieces({ mesh, unit }: HealthInput): Pick<CollisionHealth, 'triangles' | 'pieces' | 'smallPieces' | 'looseShare' | 'bumpiness'> {
   const triangles = mesh.index.length / 3 - 2, vertices = mesh.positions.length / 3;
   // triangles sharing a vertex are one piece (union-find over the vertices)
   const parent = new Int32Array(vertices).map((_, i) => i);
@@ -234,18 +246,37 @@ function meshPieces({ mesh }: HealthInput): Pick<CollisionHealth, 'triangles' | 
   for (let t = 0; t < triangles; t++) { const p = find(mesh.index[t * 3]); inPiece.set(p, (inPiece.get(p) ?? 0) + 1); }
   let small = 0, loose = 0;
   for (const n of inPiece.values()) if (n < SMALL_PIECE) { small++; loose += n; }
-  // bumpiness: per vertex, 1 − the length of the mean of its triangles' unit normals (0 when they all face one way)
-  const sum = new Float32Array(vertices * 3), faces = new Uint16Array(vertices), P = mesh.positions;
+  // Bumpiness: how far the mesh is from flat within each unit-sized box of space. Per box,
+  // the triangles' normals (by area, either way round) are summed as an orientation
+  // tensor; the share of it NOT along its main direction is 0 for a flat patch, whichever
+  // way it faces and however many triangles draw it. It is measured per box of a fixed
+  // size, not per vertex: per vertex, a finer mesh reads smoother only for being finer
+  // (Marishka at mesh detail 2 read 0.070 against 0.112 and was plainly rougher).
+  const P = mesh.positions, boxes = new Map<string, Float64Array>(); // per box: xx, xy, xz, yy, yz, zz, area
   for (let t = 0; t < triangles; t++) {
     const a = mesh.index[t * 3] * 3, b = mesh.index[t * 3 + 1] * 3, c = mesh.index[t * 3 + 2] * 3;
     const ux = P[b] - P[a], uy = P[b + 1] - P[a + 1], uz = P[b + 2] - P[a + 2], vx = P[c] - P[a], vy = P[c + 1] - P[a + 1], vz = P[c + 2] - P[a + 2];
-    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx, len = Math.hypot(nx, ny, nz);
-    if (!(len > 0)) continue;
-    for (const k of [a, b, c]) { sum[k] += nx / len; sum[k + 1] += ny / len; sum[k + 2] += nz / len; faces[k / 3]++; }
+    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx, twice = Math.hypot(nx, ny, nz);
+    if (!(twice > 0)) continue;
+    const key = `${Math.floor((P[a] + P[b] + P[c]) / 3 / unit)},${Math.floor((P[a + 1] + P[b + 1] + P[c + 1]) / 3 / unit)},${Math.floor((P[a + 2] + P[b + 2] + P[c + 2]) / 3 / unit)}`;
+    let m = boxes.get(key);
+    if (!m) boxes.set(key, m = new Float64Array(7));
+    const w = 1 / twice; // (n nᵀ of the unit normal, times the area: n nᵀ / |n|, halved all round)
+    m[0] += nx * nx * w; m[1] += nx * ny * w; m[2] += nx * nz * w; m[3] += ny * ny * w; m[4] += ny * nz * w; m[5] += nz * nz * w; m[6] += twice;
   }
-  let bumps = 0, counted = 0;
-  for (let v = 0; v < vertices; v++) if (faces[v]) { bumps += 1 - Math.hypot(sum[v * 3], sum[v * 3 + 1], sum[v * 3 + 2]) / faces[v]; counted++; }
-  return { triangles, pieces: inPiece.size, smallPieces: small, looseShare: triangles ? loose / triangles : 0, bumpiness: counted ? bumps / counted : 0 };
+  let bumps = 0, area = 0;
+  for (const m of boxes.values()) {
+    // the tensor's largest eigenvalue, by power iteration
+    let x = 1, y = 1, z = 1, top = 0;
+    for (let it = 0; it < 24; it++) {
+      const X = m[0] * x + m[1] * y + m[2] * z, Y = m[1] * x + m[3] * y + m[4] * z, Z = m[2] * x + m[4] * y + m[5] * z;
+      top = Math.hypot(X, Y, Z);
+      if (!(top > 0)) break;
+      x = X / top; y = Y / top; z = Z / top;
+    }
+    bumps += m[6] - top; area += m[6]; // (the tensor's trace is the box's area, in the same units as `top`)
+  }
+  return { triangles, pieces: inPiece.size, smallPieces: small, looseShare: triangles ? loose / triangles : 0, bumpiness: area ? bumps / area : 0 };
 }
 
 function fit({ mesh, splats, unit: voxel }: HealthInput): Pick<CollisionHealth, 'offMedian' | 'offP90' | 'missedShare'> {

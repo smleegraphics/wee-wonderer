@@ -78,7 +78,7 @@ export class NavGrid {
 
   /** Nearest walkable point to (x,z) with height near `targetY`, searched in
    *  expanding rings — recovery when the player has left every platform. */
-  nearest(x: number, z: number, targetY: number, out: THREE.Vector3): boolean {
+  nearest(x: number, z: number, targetY: number, out: THREE.Vector3, band = Infinity): boolean {
     const ix0 = Math.floor((x - this.minX) / this.step);
     const iz0 = Math.floor((z - this.minZ) / this.step);
     for (let r = 0; r < Math.max(this.nx, this.nz); r++) {
@@ -90,6 +90,7 @@ export class NavGrid {
           if (ix < 0 || ix >= this.nx || iz < 0 || iz >= this.nz) continue;
           for (let e = this.head[ix * this.nz + iz]; e !== -1; e = this.nextE[e]) {
             const d = Math.abs(this.ey[e] - targetY);
+            if (d > band) continue; // not at the height asked for
             if (d < bestD) { bestD = d; by = this.ey[e]; bx = this.minX + (ix + 0.5) * this.step; bz = this.minZ + (iz + 0.5) * this.step; found = true; }
           }
         }
