@@ -13,14 +13,14 @@
 // The thresholded field is also cleaned as a binary grid before meshing:
 //   despeckle — drop solid components smaller than K voxels (dense stray blobs)
 //   close     — dilate then erode (fills holes / small gaps in floors & walls)
-//   fillFloor — fill enclosed holes in the floor layer
+//   fillFloor — fill the gaps in the surface the figurine plays on (fillGround)
 // then Taubin smoothing relaxes the mesh (no occupancy drift).
 
 export interface VoxelOptions {
   iso?: number;        // isovalue as a fraction of the median surface density (default 0.35)
   despeckle?: number;  // remove solid components smaller than this many voxels (default 20; 0 = off)
   close?: number;      // morphological-close iterations, fills holes/gaps (default 1; 0 = off)
-  fillFloor?: number;  // fill enclosed holes in the floor layer (default 1; 0 = off)
+  fillFloor?: number;  // fill gaps in the surface the figurine plays on: 0 = off, 1 = enclosed holes only, more = on the ground, also bare stretches nothing this many voxels wide can get into (fillGround)
   panelFill?: number;  // fill enclosed holes in vertical panels up to this area, in NORMALIZED scan units² (~room-relative, not metres — world coords are scaled to TARGET_RADIUS); blank cabinet doors / walls; 0 = off (default 2.5)
   smooth?: number;     // majority-filter passes on occupancy (default 0; Taubin handles smoothing)
   taubin?: number;     // Taubin mesh-smoothing iterations (default 6; 0 = off)
@@ -78,7 +78,7 @@ export function voxelizeCore(
   const closeIters = opts.close ?? 1;
   const smoothPasses = opts.smooth ?? 0;
   const taubinIters = opts.taubin ?? 6;
-  const doFillFloor = (opts.fillFloor ?? 1) !== 0;
+  const groundFill = opts.fillFloor ?? 1;
   const panelArea = opts.panelFill ?? 2.5; // vertical-panel hole-fill cap, in normalized world units² (~room-relative; 0 = off)
 
   // affine transform of splat center i into world space (w = 1, no divide)
@@ -209,7 +209,7 @@ export function voxelizeCore(
   if (despeckleMin > 0) despeckle(occ, gy, gz, despeckleMin);
   for (let i = 0; i < closeIters; i++) occ = dilate(occ, gx, gy, gz);
   for (let i = 0; i < closeIters; i++) occ = erode(occ, gx, gy, gz);
-  if (doFillFloor) fillFloorHoles(occ, gx, gy, gz);
+  if (groundFill > 0) fillGround(occ, gx, gy, gz, -minX / vs, -minZ / vs, groundFill); // (the scan is centred on the world's origin)
   // ASSUMES a single, nav-confined room: this fills ANY enclosed vertical-panel hole
   // up to the area cap, so a real passage (doorway/window) of that size would be walled
   // off. Safe because the character can't reach such openings here; revisit for
@@ -423,26 +423,106 @@ function erode(occ: Uint8Array, gx: number, gy: number, gz: number): Uint8Array 
   return out;
 }
 
+const STAND_ROOM = 5;    // voxels of clear space over a surface for it to be somewhere to stand: about the figurine's height (a voxel is a fifth of it)
+const START_NEAR = 10;   // voxels round the scan's centre in which the level the figurine starts on is looked for
+const RAISED = 0.05;     // a level with more than this share of the scan's solid voxels below it is raised, not the ground (rooms: none below their floor; Kitchen's table 13%, Counter's worktop 26%)
+
 /**
- * Fill enclosed holes in the floor. The floor is the most-occupied horizontal
- * row in the lower third of the grid; for it (and the row above) we flood-fill
- * the "outside" from the slice border through empty cells, then fill any empty
- * cell the flood never reached — i.e. a gap surrounded by floor. Restricting this
- * to the floor band is deliberate: a mid-height slice is mostly empty room
- * interior enclosed by walls, which a blind hole-fill would wrongly solidify.
+ * Fill the gaps in the surface the figurine plays on.
+ *
+ * Which surface: the level it starts on, found the way the spawn search finds it (the
+ * lowest place with room to stand, near the scan's centre: findSpawn in collision.ts).
+ * In a room that is the floor; on a scan of a worktop it is the worktop, with the real
+ * floor somewhere below. (It used to be "the busiest row in the lower third", which on
+ * a worktop scan is that real floor, a layer the figurine never stands on.)
+ *
+ * Two kinds of gap are filled, in that level's row and the one over it:
+ *  - holes with the surface all round them, as before (fillSlice);
+ *  - where the level is the ground, and `width` is more than 1, bare stretches that
+ *    something `width` voxels across cannot get into from outside, when the surface and
+ *    whatever stands on it (walls, furniture) are in its way. A one-voxel flood leaks
+ *    through any crack; a wide one is kept out of bays between furniture, and still gets
+ *    in where a whole wall is missing.
+ * The second is for ground only. Beside a raised surface there can be open air (the
+ * aisle between two worktops); beside the ground there cannot. The level is raised when
+ * a fair share of the scan's solid voxels lie below it.
  */
-function fillFloorHoles(occ: Uint8Array, gx: number, gy: number, gz: number): void {
-  const sx = gy * gz, sy = gz;
-  const rowCount = new Int32Array(gy);
-  for (let x = 1; x < gx - 1; x++)
-    for (let y = 1; y < gy - 1; y++) {
-      let c = x * sx + y * sy + 1;
-      for (let z = 1; z < gz - 1; z++, c++) if (occ[c]) rowCount[y]++;
+function fillGround(occ: Uint8Array, gx: number, gy: number, gz: number, ox: number, oz: number, width: number): void {
+  const sx = gy * gz, sy = gz, n = gx * gz;
+  /** The lowest row in column (x, z) with something solid and room to stand on it, or -1. */
+  const standRow = (x: number, z: number) => {
+    const c = x * sx + z;
+    for (let y = 0; y < gy; y++) {
+      if (!occ[c + y * sy]) continue;
+      let clear = true;
+      for (let u = y + 1; u <= Math.min(gy - 1, y + STAND_ROOM); u++) if (occ[c + u * sy]) { clear = false; break; }
+      if (clear) return y;
     }
-  const limit = Math.max(2, Math.floor(gy / 3));
-  let floorY = 1, best = -1;
-  for (let y = 1; y <= limit; y++) if (rowCount[y] > best) { best = rowCount[y]; floorY = y; }
-  for (let y = floorY; y <= Math.min(gy - 2, floorY + 1); y++) fillSlice(occ, gx, gy, gz, y);
+    return -1;
+  };
+  // the level the figurine starts on: the commonest such row near the centre (one toy there does not decide it), or anywhere if there is none
+  const tally = new Int32Array(gy);
+  let any = false;
+  for (const near of [START_NEAR, Infinity]) {
+    for (let x = 0; x < gx; x++)
+      for (let z = 0; z < gz; z++) {
+        if (Math.hypot(x - ox, z - oz) > near) continue;
+        const y = standRow(x, z);
+        if (y >= 0) { tally[y]++; any = true; }
+      }
+    if (any) break;
+  }
+  if (!any) return;
+  let top = 0;
+  for (let y = 1; y < gy; y++) if (tally[y] > tally[top]) top = y;
+  const rows = [top, Math.min(gy - 1, top + 1)]; // the level, and the row over it, where the surface is a voxel higher
+  for (const y of new Set(rows)) fillSlice(occ, gx, gy, gz, y);
+  if (width <= 1) return;
+
+  let solid = 0, beneath = 0;
+  for (let x = 0; x < gx; x++) for (let y = 0; y < gy; y++) for (let z = 0; z < gz; z++) if (occ[x * sx + y * sy + z]) { solid++; if (y < top - 1) beneath++; }
+  if (beneath > RAISED * solid) return; // a raised surface
+
+  const here = new Uint8Array(n), wall = new Uint8Array(n), under = new Uint8Array(n);
+  for (let x = 0; x < gx; x++)
+    for (let z = 0; z < gz; z++) {
+      const k = x * gz + z, c = x * sx + z;
+      if (occ[c + rows[0] * sy] || occ[c + rows[1] * sy]) here[k] = 1;
+      for (let y = rows[1] + 1; y <= Math.min(gy - 1, rows[1] + STAND_ROOM); y++) if (occ[c + y * sy]) { wall[k] = 1; break; }
+      for (let y = 0; y < top - 1; y++) if (occ[c + y * sy]) { under[k] = 1; break; }
+      if (here[k]) wall[k] = 1; // (from here on: everything in the flood's way)
+    }
+  // where something `width` across can get to from the grid's border without touching what is in its way...
+  const radius = width / 2, clear = distanceTo(wall, gx, gz), reached = new Uint8Array(n), queue = new Int32Array(n);
+  let tail = 0;
+  const enter = (x: number, z: number) => { const k = x * gz + z; if (!reached[k] && clear[k] >= radius) { reached[k] = 1; queue[tail++] = k; } };
+  for (let x = 0; x < gx; x++) { enter(x, 0); enter(x, gz - 1); }
+  for (let z = 0; z < gz; z++) { enter(0, z); enter(gx - 1, z); }
+  for (let h = 0; h < tail; h++) {
+    const x = Math.floor(queue[h] / gz), z = queue[h] % gz;
+    if (x > 0) enter(x - 1, z); if (x < gx - 1) enter(x + 1, z); if (z > 0) enter(x, z - 1); if (z < gz - 1) enter(x, z + 1);
+  }
+  // ...and everything it covers there is outside. The rest of the level is ground, unless the scan has something beneath it.
+  const outside = distanceTo(reached, gx, gz);
+  for (let k = 0; k < n; k++) {
+    if (here[k] || under[k] || outside[k] <= radius) continue;
+    const c = Math.floor(k / gz) * sx + (k % gz);
+    for (const y of rows) occ[c + y * sy] = 1;
+  }
+}
+
+/** Per column, the distance in voxels to the nearest set column of `mask` (3-4 chamfer: within a few percent of straight-line). */
+function distanceTo(mask: Uint8Array, gx: number, gz: number): Float32Array {
+  const d = new Float32Array(gx * gz);
+  for (let k = 0; k < d.length; k++) d[k] = mask[k] ? 0 : Infinity;
+  const relax = (k: number, x: number, z: number, dx: number, dz: number, cost: number) => {
+    const X = x + dx, Z = z + dz;
+    if (X >= 0 && X < gx && Z >= 0 && Z < gz && d[X * gz + Z] + cost < d[k]) d[k] = d[X * gz + Z] + cost;
+  };
+  for (let x = 0; x < gx; x++) for (let z = 0; z < gz; z++) { const k = x * gz + z; relax(k, x, z, -1, 0, 3); relax(k, x, z, 0, -1, 3); relax(k, x, z, -1, -1, 4); relax(k, x, z, -1, 1, 4); }
+  for (let x = gx - 1; x >= 0; x--) for (let z = gz - 1; z >= 0; z--) { const k = x * gz + z; relax(k, x, z, 1, 0, 3); relax(k, x, z, 0, 1, 3); relax(k, x, z, 1, 1, 4); relax(k, x, z, 1, -1, 4); }
+  for (let k = 0; k < d.length; k++) d[k] /= 3;
+  return d;
 }
 
 /** Flood the outside of one horizontal (y=vy) slice from its border, then fill unreached empties. */
@@ -479,7 +559,7 @@ function fillSlice(occ: Uint8Array, gx: number, gy: number, gz: number, vy: numb
  * enclosed empty region up to `maxCells` in area. The area cap keeps it honest — a
  * door-sized gap fills; larger openings (which in a single-room scene can only be
  * windows/doorways the character never uses) stay open. Horizontal panels (floor,
- * tabletops) are handled by fillFloorHoles.
+ * tabletops) are handled by fillGround.
  */
 function fillVerticalPanelHoles(occ: Uint8Array, gx: number, gy: number, gz: number, maxCells: number): void {
   const dims = [gx, gy, gz], strides = [gy * gz, gz, 1];

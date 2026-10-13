@@ -7,7 +7,7 @@ handling, or scan cleanup.
 ## Pipeline
 
 ```
-splat centres + opacity → density field (voxels) → cleanup → Surface Nets isosurface
+splat centres + opacity → density field (voxels) → cleanup, ground gaps → Surface Nets isosurface
   → Taubin smoothing → three-mesh-bvh → controller queries
 ```
 
@@ -32,25 +32,25 @@ number, check it did, then `--save` the new baseline in the same PR. The measuri
 `src/collision-health.ts`, loaded only under `?tel=1`. Collision is seeded, so the
 numbers repeat exactly.
 
-Baseline (SCHEMA g15, default settings):
+Baseline (SCHEMA g16, default settings):
 
 | | Living Room | Counter | Kitchen | Playroom |
 |---|---|---|---|---|
-| Walkable cells | 8,247 | 4,584 | 4,657 | 15,290 |
-| Platforms (of 40 cells or more) | 89 (28) | 65 (16) | 62 (12) | 104 (32) |
-| Cells on scraps (smaller platforms) | 10.9% | 18.5% | 16.0% | 7.1% |
-| Cells reached from spawn by walking | 30.3% | 43.9% | 58.2% | 56.8% |
-| ...and jumping or dropping | 37.6% | 52.4% | 75.1% | 64.5% |
-| ...and climbing the mesh's faces | 99.3% | 54.4% | 75.1% | 98.8% |
-| ...if every meeting of surfaces had a face | 99.6% | 55.5% | 75.1% | 100.0% |
+| Walkable cells | 9,626 | 4,594 | 4,667 | 15,991 |
+| Platforms (of 40 cells or more) | 85 (25) | 65 (16) | 61 (12) | 103 (31) |
+| Cells on small perches (smaller platforms) | 9.3% | 18.4% | 15.7% | 6.8% |
+| Cells reached from spawn by walking | 46.3% | 43.9% | 58.5% | 59.9% |
+| ...and jumping or dropping | 46.9% | 52.3% | 75.2% | 66.0% |
+| ...and climbing the mesh's faces | 99.4% | 54.3% | 75.2% | 98.8% |
+| ...if every meeting of surfaces had a face | 99.6% | 55.5% | 75.2% | 100.0% |
 | Real platforms no face could join | 0 | 12 | 4 | 0 |
-| Holes in the spawn surface | 1.1% | 3.7% | 2.0% | 1.4% |
-| Spawn surface cells on an edge | 13.6% | 16.9% | 11.6% | 9.4% |
-| Spawn surface fills its convex outline | 75.5% | 87.2% | 83.1% | 85.9% |
-| Spawn surface roughness (voxels) | 0.15 | 0.42 | 0.25 | 0.29 |
-| Mesh pieces | 39 | 39 | 53 | 32 |
-| Mesh to nearest opaque splat, median / 90th pct (voxels) | 0.58 / 0.89 | 0.59 / 0.96 | 0.61 / 1.16 | 0.50 / 0.86 |
-| Opaque splats with no mesh within 2 voxels | 8.5% | 10.8% | 13.0% | 2.8% |
+| Holes in the spawn surface | 1.4% | 3.6% | 2.0% | 2.1% |
+| Spawn surface cells on an edge | 13.5% | 16.5% | 12.2% | 9.6% |
+| Spawn surface fills its convex outline | 66.2% | 87.3% | 83.7% | 86.7% |
+| Spawn surface roughness (voxels) | 0.14 | 0.40 | 0.25 | 0.28 |
+| Mesh pieces | 34 | 39 | 53 | 32 |
+| Mesh to nearest opaque splat, median / 90th pct (voxels) | 0.62 / 1.13 | 0.59 / 0.97 | 0.61 / 1.17 | 0.51 / 0.91 |
+| Opaque splats with no mesh within 2 voxels | 8.0% | 10.8% | 13.1% | 2.7% |
 
 How far each number can be trusted:
 
@@ -82,22 +82,26 @@ How far each number can be trusted:
   instead, which furniture standing on the floor also lowers.
 - **"Fills its convex outline" is shown but not guarded.** It is a share of the
   surface's own outline, so it falls when the surface grows into a less regular shape:
-  filling Living Room's bare floor in a trial took walkable cells from 8,247 to 9,626
-  and walking reach from 30% to 46%, and this number from 75.5% to 66.2%. Judge floor
-  changes by walkable cells and reach.
+  filling Living Room's bare floor took walkable cells from 8,247 to 9,626 and walking
+  reach from 30% to 46%, and this number from 75.5% to 66.2%. Judge floor changes by
+  walkable cells and reach.
+- **Mesh-to-splat distance rises when ground is filled in**, since filled ground has
+  no splats by it (Living Room's 90th percentile 0.89 to 1.13). That is the fill's cost
+  showing, not the mesh loosening: read the median for looseness.
 - **No small floating mesh pieces** on any room (`despeckle` works), so that guard only
   matters if it starts failing.
 
 What the baseline says:
 
-- **Walking alone reaches a third to a half of what is walkable.** Jumping adds little;
-  the rest depends on climbing.
+- **Walking alone reaches about half of what is walkable.** Jumping adds little; the
+  rest depends on climbing.
 - **Where surfaces meet, the mesh nearly always has a face to climb**: missing faces
   cost about 1% of reach on Counter, Living Room and Playroom, and nothing on Kitchen.
 - **Counter and Kitchen have real platforms nothing reaches** (12 and 4): other
   furniture across gaps the scan never covered. That, not faces, is what keeps their
   reach at 54% and 75%.
-- **A tenth to a fifth of walkable cells are scraps** on clutter.
+- **A tenth to a fifth of walkable cells are small perches**, which is not a fault: see
+  the next section.
 - **The mesh sits 0.5 to 0.6 voxel off the splats**, the looseness described below.
 
 Not measured:
@@ -106,6 +110,92 @@ Not measured:
   face between two surfaces does it show, in reach.
 - **Whether the mesh is right where it is**, only how far it is from splats.
 - **Headroom and narrow passages**, beyond what the NavGrid already requires to stand.
+
+## Small platforms are perches, not debris
+
+Each room has 60 to 100 platforms and only 12 to 31 of 40 cells or more, which looks
+like fragmentation to clean up. It is not. Measured against the surface the figurine
+starts on, as a share of all walkable cells:
+
+| Small platforms that are... | Living Room | Playroom | Counter | Kitchen |
+|---|---|---|---|---|
+| more than a figurine's height above it | 8.6% | 6.0% | 5.7% | 4.9% |
+| up to a figurine's height above it | 0.8% | 0.6% | 2.0% | 4.5% |
+| at its level (fragments of it) | 0.1% | 0.2% | 2.9% | 1.8% |
+| below it | 0% | 0% | 7.9% | 4.5% |
+
+- **In the rooms nearly all are small tops high on furniture**: real places to climb
+  to. Removing them would take those away to improve a number.
+- **Fragments of the floor are next to nothing**, now that `fillGround` joins its
+  pieces. There is nothing to merge.
+- **On Counter and Kitchen** the rest is the other furniture and real floor round the
+  table, most of it out of reach whatever is done here.
+
+So collision is left as it is, and "cells on small perches" is shown by the health
+check but not guarded. When a game feature needs real platforms only (placing things,
+paths for other characters), give the NavGrid a way to say which those are; do not
+delete the small ones.
+
+## Filling gaps in the ground: `fillGround`
+
+The scan leaves bare stretches of floor with no splats, so no collision: holes and
+ragged edges in the one surface everything else stands on. `fillGround`
+(`src/voxelize-core.ts`, the `fillFloor` setting, "Ground gap fill" in the Debug card)
+fills them in the voxel grid before meshing. The hole patching (`splat-fill.md`) follows
+by itself, since it tracks the walkable cells.
+
+- **It works at the level the figurine starts on**: the commonest "lowest place with
+  room to stand" near the scan's centre, the voxel-grid twin of `findSpawn`. In a room
+  that is the floor; on Counter and Kitchen it is the worktop and the table.
+- **Holes with the surface all round them are filled at any level** (as before).
+- **On the ground only, bare stretches are filled when nothing `fillFloor` voxels wide
+  can get into them from outside**, with the floor and anything within a figurine's
+  height above it (walls, furniture) in its way. Never where the scan has something
+  beneath the level.
+- **"The ground" means almost nothing of the scan lies below the level** (`RAISED`,
+  5% of solid voxels): rooms have none below their floor, Kitchen's table 13%,
+  Counter's worktop 26%. Beside a raised surface there can be open air (the aisle
+  between two worktops), and a wide flood would bridge it; beside the ground there
+  cannot.
+
+What it gained at the default of 20 voxels (the figurine is about 5 tall):
+
+| | Walkable cells | Reached by walking |
+|---|---|---|
+| Living Room | 8,247 → 9,626 | 30.3% → 46.3% |
+| Playroom | 15,290 → 15,991 | 56.8% → 59.9% |
+| Counter, Kitchen | unchanged (raised) | unchanged |
+
+Tried and rejected:
+
+- **"The busiest row in the lower third of the grid" as the floor**, which is what the
+  old `fillFloorHoles` used. On a worktop scan that row is the real floor under the
+  furniture, where the figurine never stands. (The same wrong assumption as the first
+  visual fill: that the surface that matters is near the bottom of the scan.)
+- **The wide flood at that row on Counter.** It made 1,400 to 1,950 cells of real floor
+  walkable, the spawn search then chose it (it takes the lowest standable surface), and
+  the figurine started under the counter with no way up: walking reach 44% to 18–23%.
+- **Widths of 8 and 12.** About 3% more walkable area on the rooms. Living Room's bare
+  patch only closes at 20.
+- **Filling the row below the level** instead of the one above it. Playroom's floor
+  got rougher (0.29 to 0.31): where its surface is a voxel higher, that is the row
+  with the holes in.
+
+Known limits:
+
+- **A floor open along a whole side stays open there** (Living Room toward its missing
+  wall). No width tells that from the edge of the room.
+- **Nothing here helps the furniture Counter and Kitchen cannot reach**: that needs
+  their real floor to be walkable, which is a decision about walking on ground that
+  was never scanned, not a setting.
+- **Filled ground is flat floor with nothing drawn on it** until the hole patching
+  covers it, and that is a smooth blur of the colour around.
+- **`STAND_ROOM` is 5 voxels**, about the figurine's height, fixed in the voxelizer:
+  collision is built before the figurine loads and is cached per scan, not per figurine.
+- `climbfuzz` on Living Room (seeds 1, 2, 4) reports no violations with the fill on.
+  Seed 1 has three samples with the climber's body more than half a radius into the
+  mesh, which seeds 2 and 4 do not, and which Counter also shows without the fill. Not
+  traced to a cause.
 
 ## Rebuilding from the Debug sliders
 
