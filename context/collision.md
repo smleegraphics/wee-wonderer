@@ -30,33 +30,40 @@ one's collision is as ground for a game, then fails if any guarded number is wor
 settings, the NavGrid, or how the figurine moves. When a change is meant to improve a
 number, check it did, then `--save` the new baseline in the same PR. The measuring is
 `src/collision-health.ts`, loaded only under `?tel=1`. Collision is seeded, so the
-numbers repeat exactly.
+numbers repeat exactly. `--with key=value` tries a setting without saving it (any
+`VOXEL_OPTS` key, or `vox`): `node scripts/collisioncheck.mjs --with refine=1`.
 
-Baseline (SCHEMA g16, default settings):
+Lengths and areas are in grains (see "Sizes are in grains" below), not cells of whatever
+grid is in use, so numbers compare across grid sizes.
+
+Baseline (SCHEMA g26, default settings, mesh detail 2):
 
 | | Living Room | Counter | Kitchen | Playroom |
 |---|---|---|---|---|
-| Walkable cells | 9,626 | 4,594 | 4,667 | 15,991 |
-| Platforms (of 40 cells or more) | 85 (25) | 65 (16) | 61 (12) | 103 (31) |
-| Cells on small perches (smaller platforms) | 9.3% | 18.4% | 15.7% | 6.8% |
-| Cells reached from spawn by walking | 46.3% | 43.9% | 58.5% | 59.9% |
-| ...and jumping or dropping | 46.9% | 52.3% | 75.2% | 66.0% |
-| ...and climbing the mesh's faces | 99.4% | 54.3% | 75.2% | 98.8% |
-| ...if every meeting of surfaces had a face | 99.6% | 55.5% | 75.2% | 100.0% |
+| Walkable area (grains²) | 10,257 | 4,726 | 4,745 | 16,440 |
+| Platforms (of 40 grains² or more) | 88 (27) | 68 (17) | 66 (9) | 103 (34) |
+| Cells on small perches | 8.6% | 17.5% | 17.8% | 6.3% |
+| Cells reached from spawn by walking | 45.9% | 43.4% | 60.8% | 59.3% |
+| ...and jumping or dropping | 47.0% | 53.9% | 74.1% | 67.6% |
+| ...and climbing the mesh's faces | 99.4% | 55.3% | 74.1% | 99.1% |
+| ...if every meeting of surfaces had a face | 99.6% | 55.3% | 74.1% | 100.0% |
 | Real platforms no face could join | 0 | 12 | 4 | 0 |
-| Holes in the spawn surface | 1.4% | 3.6% | 2.0% | 2.1% |
-| Spawn surface cells on an edge | 13.5% | 16.5% | 12.2% | 9.6% |
-| Spawn surface fills its convex outline | 66.2% | 87.3% | 83.7% | 86.7% |
-| Spawn surface roughness (voxels) | 0.14 | 0.40 | 0.25 | 0.28 |
+| Holes in the spawn surface | 1.1% | 2.5% | 0.4% | 3.3% |
+| Spawn surface cells on an edge | 12.3% | 14.2% | 8.5% | 11.9% |
+| Spawn surface fills its convex outline | 66.8% | 88.7% | 87.8% | 85.2% |
+| Spawn surface roughness (slope) | 0.16 | 0.53 | 0.39 | 0.36 |
+| Triangles | 463,588 | 220,208 | 180,468 | 744,456 |
 | Mesh pieces | 34 | 39 | 53 | 32 |
-| Mesh to nearest opaque splat, median / 90th pct (voxels) | 0.62 / 1.13 | 0.59 / 0.97 | 0.61 / 1.17 | 0.51 / 0.91 |
-| Opaque splats with no mesh within 2 voxels | 8.0% | 10.8% | 13.1% | 2.7% |
+| Mesh bumpiness | 0.056 | 0.075 | 0.076 | 0.039 |
+| Mesh to nearest opaque splat, median / 90th pct (grains) | 0.60 / 1.09 | 0.57 / 0.92 | 0.59 / 1.06 | 0.47 / 0.92 |
+| Opaque splats with no mesh within 2 grains | 7.5% | 10.0% | 12.1% | 2.4% |
+| Sight lines that meet no collision | 31.7% | 41.9% | 43.8% | 21.8% |
 
 How far each number can be trusted:
 
 - **The script checks its own arithmetic first.** It runs the measuring on a made-up
   room (a floor with a hole, a ledge too high to jump to, a floor too far to jump to)
-  where all 20 numbers can be counted by hand, and measures nothing if one is wrong. Add
+  where all 22 numbers can be counted by hand, and measures nothing if one is wrong. Add
   a case there when adding a number.
 - **Reach is a model of the movement, not the controller.** Its jump was checked against
   the game: a real jump rises 0.24 and carries about 1.3 at a run, the model's
@@ -88,6 +95,17 @@ How far each number can be trusted:
 - **Mesh-to-splat distance rises when ground is filled in**, since filled ground has
   no splats by it (Living Room's 90th percentile 0.89 to 1.13). That is the fill's cost
   showing, not the mesh loosening: read the median for looseness.
+- **"Mesh bumpiness"** is how differently the triangles round each vertex face,
+  averaged. Real corners count, so compare a room with itself. It caught what the eye
+  did: a trim that follows noise read three times the coarse mesh's figure.
+- **"Sight lines that meet no collision"** looks out in 400 directions from cells of
+  the start surface 6 grains apart, on a lattice fixed in the world, and counts the
+  lines that hit nothing. It is what notices a wall with holes in it, which nothing else
+  here did: a trim that ate through Playroom's walls read 8 points up, with every other
+  number fine. The same solid meshed two ways still reads up to 2 points apart, so its
+  guard has 3 points of slack. Open-sided scans score high; only the change matters.
+- **Shares of a total mislead when the total moves.** "Reached by walking" rose on
+  every room when a change shrank the walkable area. Read it beside the area.
 - **No small floating mesh pieces** on any room (`despeckle` works), so that guard only
   matters if it starts failing.
 
@@ -110,6 +128,101 @@ Not measured:
   face between two surfaces does it show, in reach.
 - **Whether the mesh is right where it is**, only how far it is from splats.
 - **Headroom and narrow passages**, beyond what the NavGrid already requires to stand.
+
+## Sizes are in grains, not voxels
+
+`GRAIN` (`main.ts`, `TARGET_RADIUS / 72`, about a fifth of the figurine's height) is the
+length collision's settings are counted in: the voxel size they were tuned at. The
+voxelizer takes it as `unit` beside `voxelSize` and turns each setting into voxels
+itself (`per`), so a setting means the same thing on any grid. The walkable cells are a
+grain apart whatever the grid (`navStep`), and the hole patching and health check count
+in grains too. At the default grid a grain is a voxel, and nothing changed when this
+went in (every health number identical).
+
+- **About the scan, so in grains**: `despeckle` and `minCells` (areas), `close`,
+  `fillFloor`, `floorFlat`, `STAND_ROOM`, how far a splat is spread, the NavGrid's
+  `bridge` and `fill`.
+- **About the grid, so in voxels**: `MIN_VAR`, Taubin passes.
+- **The density thresholds are per unit of area** (`iso`, and what counts as "strong"):
+  a sheet's opacity is so much to an area, so a voxel's share goes with its face.
+
+## Mesh detail: what is solid, and where its surface is, on two grids
+
+The mesh stands off the splats because a voxel is solid all the way across: any voxel
+a sheet of splats passes through is solid, and the mesh goes round the outside. Measured,
+a vertex is 0.3 to 1.8 voxels from where the density peaks (median 0.9), and a toy five
+voxels across comes out as a dome.
+
+`refine` ("Mesh detail" in the Debug card, default 2) builds the mesh on a grid that many
+times finer than the one that decides what is solid (`refineSolid`):
+
+1. Everything above runs as before on the coarse grid. That decides WHETHER there is
+   surface, where pooling over a large voxel is what a sparse scan needs.
+2. The solid is copied to the finer grid and trimmed toward the splats, reading the fine
+   density evened out between neighbours.
+3. The surface is placed within its voxel: where nothing was trimmed, by the coarse
+   density (exactly the detail-1 surface, on a finer mesh); where something was, by the
+   trimmed solid's own shape, evened out.
+
+Rules the trim keeps, each there because its absence broke something measured:
+
+- **A voxel goes only if the solid stays the same in kind** (a simple-point test, with
+  solid joined across faces only). Without it Playroom's walls were eaten through.
+  Joined across edges and corners too, walls thinned to a lattice the mesh draws gaps in.
+- **Which way is thickness is settled once**, before trimming. Asked afresh each pass
+  it flips as scraps are left standing, and they can no longer be taken off: the floor
+  was dotted with them.
+- **A sheet (thin one way, long the other two) is walked in to its density peak, across
+  itself only, and keeps 2 fine voxels.** Thinner, its faces touch or cross: a tabletop
+  loses its headroom to its own underside and a wall is met from behind (Counter lost a
+  third of its walkable area, Playroom a sixth of its climbing).
+- **A lump (thin no way) loses one layer at most, and only what the fine grid does not
+  call solid.** Walked to its "peak", a toy is eaten to a core: evened out, a small
+  thing's density is greatest in its middle.
+- **What is thin more than one way is left alone** (a strip of wall between two gaps, a
+  rail). Taken as a lump it loses its sides, and every gap a sparse wall has widens.
+- **The ground is left alone**: `floorFlat` already puts it on its splats, and trimmed
+  as well it steps about the edge of the flattened band and leaves bumps over it.
+
+What it gives (detail 1 → 2): bumpiness about halved (Playroom 0.065 → 0.039); walkable
+area, reach and sight lines unchanged; the mesh 3 to 8% nearer the splats (Playroom
+0.51 → 0.47). So it buys a cleaner, finer mesh, not much of a closer one. It costs four
+to five times the triangles and a slower first build (Kitchen 1.0 → 2.2 s, Playroom
+4.2 → 9.1 s, cached after); frame time while walking did not change.
+
+**Bump `SCHEMA` on every change to the trim.** The cache key holds the settings, not
+the code: a browser that has built a room at detail 2 goes on showing that mesh. Headless
+checks start with an empty cache and never see this.
+
+Tried and rejected, for a closer fit:
+
+- **Raising `iso`.** Tightens and drops faint surfaces (Counter 0.6: fit 0.59 → 0.53,
+  scan with no collision 10.8% → 17.4%).
+- **Moving each vertex along its normal to the splats over it** (after meshing, on the
+  coarse grid). Fit 0.62 → 0.40, but the mesh tears at creases, where a vertex's normal
+  is a compromise and its splats pull it somewhere neither face goes; walkable area fell
+  10 to 30%. Not tried on the finer, smoother mesh, where it might behave.
+- **A finer grid for everything** (`?vox=`, half the grain). Well-captured things come
+  out close (Kitchen 0.61 → 0.42), and sparse surfaces fall apart: a wall that pools to
+  solid in a coarse voxel does not in eight small ones. Living Room lost a quarter of
+  its walkable area and a fifth of its climbing. Lowering `iso` to mend that brings the
+  fatness back (0.54) at five times the triangles.
+- **A trim with fewer rules.** Each rule above gave back closeness: with only "a denser
+  voxel lies behind" the fit was 0.31 on Playroom and its walls had holes; with the
+  simple-point test and nothing else, 0.33 and its toys were gone. The safe version is
+  0.47. Closeness and safety pull against each other in a voxel trim, because voxels
+  cannot tell a toy from a wall from a strip without a rule for each.
+- **More Taubin passes** for a bumpy trim: no change at 2× or 4×. The bumps were the
+  solid's, not the mesh's.
+
+Open:
+
+- **Closer fit is still wanted**, most of all on small objects.
+- One `climbfuzz` run on Playroom (seed 3) reported a violation at detail 2 that the
+  same seed did not repeat, at either detail.
+- Walking surfaces measure rougher at detail 2 on three rooms (Playroom 0.28 → 0.36).
+- A scan whose finer grid would pass the voxelizer's memory cap is built at detail 1.
+  None of the four rooms is.
 
 ## Small platforms are perches, not debris
 
@@ -247,7 +360,7 @@ density threshold drops them, and the floater cleaner deletes them too.
   acceptable for a single confined room. A gentler cleaner that keeps faint coherent
   surfaces would be the real fix.
 
-**A loose "bubble" between mesh and splat** came from `close` (dilate then erode).
+**A loose "bubble" between mesh and splat** (see also "Mesh detail" above) came from `close` (dilate then erode).
 At 3 it welded objects to the floor with a fillet and webbed surfaces together. The
 default is now 1; large holes are handled by the floor and panel fills, which do not
 weld. The remaining uniform half-voxel offset is the `iso` threshold. Raising `iso`
