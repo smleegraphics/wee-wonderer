@@ -74,7 +74,8 @@ Visual and behavioural checks run headless in real Chrome through Playwright.
   room's collision as ground for a game (how much of the walkable area the figurine can
   reach, how ragged it is, how closely the mesh fits the splats) and fails if a number is worse than
   `scripts/collision-baseline.json`. Run it after any change to the voxelizer, its
-  settings or the NavGrid; `--save` a new baseline when a change is meant to move one.
+  settings or the NavGrid; `--save` a new baseline when a change is meant to move one,
+  and `--with key=value` tries a setting without saving.
 - **Climb regression check:** `node scripts/climbfuzz.mjs <scan> <seconds> <seed>`
   walks, jumps and climbs at random and reports any frame where the climber is
   inside a solid. Run a few seeds, at most three browsers at a time.
@@ -107,7 +108,12 @@ Visual and behavioural checks run headless in real Chrome through Playwright.
 - **The gap fill follows the walkable cells.** It runs after collision and again
   whenever `rebuildPlatformOverlay` rebuilds them; nothing else decides where it goes.
 - Scans are scaled to `TARGET_RADIUS`, so distances are in normalized scan units,
-  not metres. Express sizes relative to `charH`.
+  not metres. Express sizes relative to `charH`. Collision's own settings are in
+  grains (`GRAIN`, the voxel size they were tuned at), never in cells of the grid in
+  use: see `context/collision.md`.
+- **Bump `SCHEMA` on any change to how the collision mesh is built**, not only to its
+  settings: a browser that has cached a room keeps showing the old mesh, and the
+  headless checks, which start with an empty cache, will not notice.
 
 ## Code review
 

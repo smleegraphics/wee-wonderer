@@ -414,19 +414,33 @@ function fillPlatformHoles(
   clear: (ix: number, iz: number, y: number) => boolean,
 ): void {
   if (iters <= 0) return;
-  const N = nx * nz;
+  // Each platform is worked on inside its own bounds (with room for the dilation), not
+  // over the whole grid: there are a hundred or so platforms, most of them small, and on
+  // a fine grid the whole grid a hundred times over is seconds on the main thread.
+  const x0 = new Int32Array(platformCount).fill(nx), z0 = new Int32Array(platformCount).fill(nz), x1 = new Int32Array(platformCount).fill(-1), z1 = new Int32Array(platformCount).fill(-1);
+  for (let ix = 0; ix < nx; ix++)
+    for (let iz = 0; iz < nz; iz++)
+      for (let e = head[ix * nz + iz]; e !== -1; e = nextE[e]) {
+        const p = ep[e];
+        if (ix < x0[p]) x0[p] = ix; if (ix > x1[p]) x1[p] = ix; if (iz < z0[p]) z0[p] = iz; if (iz > z1[p]) z1[p] = iz;
+      }
+  const pad = iters + 1;
   for (let p = 0; p < platformCount; p++) {
-    const mask = new Uint8Array(N);
-    const h = new Float32Array(N); // a representative height per cell of this platform
-    for (let c = 0; c < N; c++)
-      for (let e = head[c]; e !== -1; e = nextE[e])
-        if (ep[e] === p) { mask[c] = 1; h[c] = ey[e]; break; }
+    if (x1[p] < 0) continue;
+    const ox = Math.max(0, x0[p] - pad), oz = Math.max(0, z0[p] - pad); // the corner of this platform's window on the grid
+    const wx = Math.min(nx - 1, x1[p] + pad) - ox + 1, wz = Math.min(nz - 1, z1[p] + pad) - oz + 1;
+    const mask = new Uint8Array(wx * wz);
+    const h = new Float32Array(wx * wz); // a representative height per cell of this platform
+    for (let ix = 0; ix < wx; ix++)
+      for (let iz = 0; iz < wz; iz++)
+        for (let e = head[(ix + ox) * nz + iz + oz]; e !== -1; e = nextE[e])
+          if (ep[e] === p) { mask[ix * wz + iz] = 1; h[ix * wz + iz] = ey[e]; break; }
     let cur: Uint8Array = mask;
-    for (let k = 0; k < iters; k++) cur = morph2D(cur, nx, nz, true);  // dilate
-    for (let k = 0; k < iters; k++) cur = morph2D(cur, nx, nz, false); // erode → net: fill holes
-    for (let ix = 0; ix < nx; ix++)
-      for (let iz = 0; iz < nz; iz++) {
-        const c = ix * nz + iz;
+    for (let k = 0; k < iters; k++) cur = morph2D(cur, wx, wz, true);  // dilate
+    for (let k = 0; k < iters; k++) cur = morph2D(cur, wx, wz, false); // erode → net: fill holes
+    for (let ix = 0; ix < wx; ix++)
+      for (let iz = 0; iz < wz; iz++) {
+        const c = ix * wz + iz;
         if (!cur[c] || mask[c]) continue; // only the newly enclosed cells
         let hy = NaN; // nearest original-mask height, searched in rings
         for (let r = 1; r <= iters + 1 && Number.isNaN(hy); r++)
@@ -434,10 +448,10 @@ function fillPlatformHoles(
             for (let dz = -r; dz <= r; dz++) {
               if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
               const jx = ix + dx, jz = iz + dz;
-              if (jx < 0 || jx >= nx || jz < 0 || jz >= nz) continue;
-              if (mask[jx * nz + jz]) { hy = h[jx * nz + jz]; break; }
+              if (jx < 0 || jx >= wx || jz < 0 || jz >= wz) continue;
+              if (mask[jx * wz + jz]) { hy = h[jx * wz + jz]; break; }
             }
-        if (!Number.isNaN(hy) && clear(ix, iz, hy)) addEntry(c, hy, p); // skip cells blocked by a wall
+        if (!Number.isNaN(hy) && clear(ix + ox, iz + oz, hy)) addEntry((ix + ox) * nz + iz + oz, hy, p); // skip cells blocked by a wall
       }
   }
 }

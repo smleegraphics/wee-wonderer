@@ -2,24 +2,28 @@
 // Measured by scripts/collisioncheck.mjs through window.__collisionHealth, which exists
 // only under ?tel=1: this module is loaded on demand and is never part of normal play.
 //
-// Three-free. Distances are in voxels (the collision grid's cell, also the walkable
-// cells' spacing), so the numbers compare across scans.
+// Three-free. Distances and areas are in `unit`s (the grain collision's settings are
+// counted in: GRAIN in main.ts), not in cells of whatever grid is in use, so the numbers
+// compare across scans and across grid sizes.
 
 export interface HealthInput {
   walk: { positions: Float32Array; platformId: Int32Array; platformCount: number; sampleStep: number }; // NavGrid.toField()
   mesh: { positions: ArrayLike<number>; index: ArrayLike<number> }; // the collision mesh, in the world; its last two triangles are the backstop plane
   splats: { centers: ArrayLike<number>; opacity: ArrayLike<number>; count: number; matrix: ArrayLike<number> }; // the scan's own splats, and their transform into the world
   spawn: [number, number, number]; // where the figurine starts
-  voxel: number;
+  unit: number; // the length (and its square, the area) the numbers are given in
   realCells: number; // a platform of at least this many cells is somewhere to be, not a scrap
   move: { jumpVel: number; gravity: number; runSpeed: number; climbOver: number }; // how the figurine moves, in world units: take-off speed, gravity (positive), speed in the air, and how far over a lip a climb steps
   /** Is there a face the figurine could climb from standing at (ax, ay, az) up to the surface at (bx, by, bz)? Asked of the collision mesh itself. */
   climbable: (ax: number, ay: number, az: number, bx: number, by: number, bz: number) => boolean;
+  /** Does a straight line from (ox, oy, oz) along the unit direction (dx, dy, dz) meet the collision mesh (backstop plane included)? */
+  blocked: (ox: number, oy: number, oz: number, dx: number, dy: number, dz: number) => boolean;
+  eyeHeight: number; // how far above a walkable cell to look out from
 }
 
 export interface CollisionHealth {
   // --- where the figurine can stand
-  cells: number;          // walkable cells
+  cells: number;          // walkable area, in units² (cells, when the grid's cell is a unit)
   platforms: number;      // separate walkable surfaces
   realPlatforms: number;  // ...of at least `realCells` cells
   scrapShare: number;     // share of walkable cells on smaller ones. Small perches, nearly all high up on furniture: a description of the room, not a fault to drive down
@@ -32,27 +36,31 @@ export interface CollisionHealth {
   holeShare: number;      // enclosed holes in it, as a share of its area with them filled (lower is better)
   edgeShare: number;      // share of its cells that are on an edge: raggedness (lower is better)
   solidity: number;       // its area as a share of the convex outline round it: 1 is a floor with no bays or missing stretches. Compare only between surfaces of the same extent: one that grows into a less regular shape scores lower
-  roughness: number;      // mean height difference between its neighbouring cells, in voxels: 0 is flat (lower is better)
+  roughness: number;      // mean slope between its neighbouring cells (rise over run): 0 is flat (lower is better)
   // --- the mesh
   triangles: number;      // without the backstop plane
   pieces: number;         // connected pieces of mesh
   smallPieces: number;    // ...of fewer than SMALL_PIECE triangles: floating bits
   looseShare: number;     // share of triangles in those (lower is better)
+  bumpiness: number;      // how much the triangles round a vertex face different ways, averaged over the mesh: 0 is flat everywhere, and real corners count too, so compare a scan with itself (lower is smoother)
   // --- how well the mesh fits the scan
-  offMedian: number;      // from the mesh to the nearest opaque splat, in voxels: median...
+  offMedian: number;      // from the mesh to the nearest opaque splat, in units: median...
   offP90: number;         // ...and 90th percentile (lower is tighter)
   missedShare: number;    // share of opaque splats with no mesh within MISSED voxels: scan with no collision (lower is better)
+  // --- how closed the room is
+  openShare: number;      // share of sight lines, from places the figurine can stand, that meet no collision at all: gaps in walls and ceiling. Compare a scan with itself: an open-sided scan has many, and what matters is that a change opens no more (lower is better)
 }
 
 const OPAQUE = 0.15;        // splats fainter than this are not surface (as in the voxelizer's bounds)
-const MISSED = 2;           // voxels
+const MISSED = 2;           // units
 const SMALL_PIECE = 100;    // triangles: about a fist-sized blob at one voxel per triangle edge
-const REACH = 3;            // how far, in voxels, a nearest neighbour is looked for: further counts as this far
+const REACH = 3;            // how far, in units, a nearest neighbour is looked for: further counts as this far
 const MESH_SAMPLES = 20000, SPLAT_SAMPLES = 50000;
+const LOOKOUT_SPACING = 6, DIRECTIONS = 400;
 const NEIGHBOURS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 
 export function collisionHealth(input: HealthInput): CollisionHealth {
-  return { ...standing(input), ...reach(input), ...meshPieces(input), ...fit(input) };
+  return { ...standing(input), ...reach(input), ...meshPieces(input), ...fit(input), ...openness(input) };
 }
 
 /** The surface the figurine starts on: that of the cell nearest its feet (-1 if there are no cells). */
@@ -66,13 +74,13 @@ function startPlatform({ walk, spawn }: HealthInput): number {
 }
 
 function standing(input: HealthInput): Pick<CollisionHealth, 'cells' | 'platforms' | 'realPlatforms' | 'scrapShare' | 'spawnShare' | 'holeShare' | 'edgeShare' | 'solidity' | 'roughness'> {
-  const { walk, realCells, voxel } = input;
-  const cells = walk.platformId.length, size = new Int32Array(walk.platformCount);
+  const { walk, realCells, unit } = input;
+  const cells = walk.platformId.length, size = new Int32Array(walk.platformCount), area = cells * (walk.sampleStep / unit) ** 2;
   for (let i = 0; i < cells; i++) size[walk.platformId[i]]++;
   let real = 0, scrap = 0;
   for (const s of size) { if (s >= realCells) real++; else scrap += s; }
   const start = startPlatform(input);
-  if (start < 0) return { cells, platforms: walk.platformCount, realPlatforms: real, scrapShare: 0, spawnShare: 0, holeShare: 0, edgeShare: 0, solidity: 0, roughness: 0 };
+  if (start < 0) return { cells: area, platforms: walk.platformCount, realPlatforms: real, scrapShare: 0, spawnShare: 0, holeShare: 0, edgeShare: 0, solidity: 0, roughness: 0 };
   // that surface as a grid of columns, with a border of empty ones round it
   let minX = Infinity, minZ = Infinity, maxX = -Infinity, maxZ = -Infinity;
   for (let i = 0; i < cells; i++) {
@@ -110,9 +118,9 @@ function standing(input: HealthInput): Pick<CollisionHealth, 'cells' | 'platform
       for (const o of [c + nz, c + 1]) if (has[o]) { steps++; stepSum += Math.abs(height[o] - height[c]); } // each pair of neighbours once
     }
   return {
-    cells, platforms: walk.platformCount, realPlatforms: real, scrapShare: scrap / cells, spawnShare: size[start] / cells,
+    cells: area, platforms: walk.platformCount, realPlatforms: real, scrapShare: scrap / cells, spawnShare: size[start] / cells,
     holeShare: holes / (own + holes), edgeShare: rim.length / own, solidity: Math.min(1, own / hullArea(rim)),
-    roughness: steps ? stepSum / steps / voxel : 0,
+    roughness: steps ? stepSum / steps / step : 0,
   };
 }
 
@@ -129,7 +137,7 @@ function standing(input: HealthInput): Pick<CollisionHealth, 'cells' | 'platform
  *  that better faces could reach (`reachBound`), and what even that leaves out is out of
  *  reach for certain (`islands`). */
 function reach(input: HealthInput): Pick<CollisionHealth, 'jumpShare' | 'reachShare' | 'reachBound' | 'islands'> {
-  const { walk, move, realCells, climbable } = input, cells = walk.platformId.length, start = startPlatform(input);
+  const { walk, move, realCells, climbable, unit } = input, cells = walk.platformId.length, start = startPlatform(input);
   if (start < 0) return { jumpShare: 0, reachShare: 0, reachBound: 0, islands: 0 };
   const step = walk.sampleStep, P = walk.positions;
   let minX = Infinity, minZ = Infinity, maxX = -Infinity, maxZ = -Infinity, minY = Infinity;
@@ -151,7 +159,7 @@ function reach(input: HealthInput): Pick<CollisionHealth, 'jumpShare' | 'reachSh
     reached[start] = 1;
     for (let h = 0; h < queue.length; h++)
       for (const a of members[queue[h]]) {
-        const ya = P[a * 3 + 1], far = Math.max(carry(minY - ya), move.climbOver + step), span = Math.ceil(far / step);
+        const ya = P[a * 3 + 1], far = Math.max(carry(minY - ya), move.climbOver + unit), span = Math.ceil(far / step);
         const ax = Math.round((P[a * 3] - minX) / step), az = Math.round((P[a * 3 + 2] - minZ) / step);
         for (let x = Math.max(0, ax - span); x <= Math.min(nx - 1, ax + span); x++)
           for (let z = Math.max(0, az - span); z <= Math.min(nz - 1, az + span); z++)
@@ -160,7 +168,7 @@ function reach(input: HealthInput): Pick<CollisionHealth, 'jumpShare' | 'reachSh
               if (reached[p]) continue;
               const dy = P[b * 3 + 1] - ya, away = Math.hypot(P[b * 3] - P[a * 3], P[b * 3 + 2] - P[a * 3 + 2]);
               const jump = dy <= rise && away <= carry(dy);
-              const climb = !jump && climbing !== 'no' && dy > 0 && away <= move.climbOver + step
+              const climb = !jump && climbing !== 'no' && dy > 0 && away <= move.climbOver + unit
                 && (climbing === 'anywhere' || climbable(P[a * 3], ya, P[a * 3 + 2], P[b * 3], P[b * 3 + 1], P[b * 3 + 2]));
               if (jump || climb) { reached[p] = 1; queue.push(p); }
             }
@@ -186,7 +194,34 @@ function hullArea(cells: [number, number][]): number {
   return Math.abs(twice) / 2;
 }
 
-function meshPieces({ mesh }: HealthInput): Pick<CollisionHealth, 'triangles' | 'pieces' | 'smallPieces' | 'looseShare'> {
+/** How much of what can be seen from where the figurine stands is not collision at all.
+ *  Lines of sight go out from cells of the surface it starts on, LOOKOUT_SPACING units
+ *  apart, in DIRECTIONS directions spread evenly over the sphere (in opposite pairs). */
+function openness(input: HealthInput): Pick<CollisionHealth, 'openShare'> {
+  const { walk, blocked, eyeHeight } = input, start = startPlatform(input);
+  const own: number[] = [];
+  for (let i = 0; i < walk.platformId.length; i++) if (walk.platformId[i] === start) own.push(i);
+  if (!own.length) return { openShare: 0 };
+  const dirs: number[] = [];
+  for (let k = 0; k < DIRECTIONS / 2; k++) { // a Fibonacci spiral over half the sphere, and each direction's opposite
+    const y = (k + 0.5) / (DIRECTIONS / 2), r = Math.sqrt(1 - y * y), a = k * Math.PI * (3 - Math.sqrt(5));
+    dirs.push(r * Math.cos(a), y, r * Math.sin(a), -r * Math.cos(a), -y, -r * Math.sin(a));
+  }
+  let lines = 0, open = 0;
+  // Lookouts are the cells nearest the points of a lattice fixed in the world, not every
+  // so-manyth cell: so two builds of the same room are looked out of from the same places,
+  // and differ only in what is seen. (Taken every so-manyth cell, the same solid meshed
+  // two ways read 2 points apart, and a larger floor 5.)
+  const every = LOOKOUT_SPACING * input.unit, at = (v: number) => Math.abs(v / every - Math.round(v / every)) * every < walk.sampleStep / 2;
+  for (const cell of own) {
+    const i = cell * 3;
+    if (!at(walk.positions[i]) || !at(walk.positions[i + 2])) continue;
+    for (let d = 0; d < dirs.length; d += 3) { lines++; if (!blocked(walk.positions[i], walk.positions[i + 1] + eyeHeight, walk.positions[i + 2], dirs[d], dirs[d + 1], dirs[d + 2])) open++; }
+  }
+  return { openShare: lines ? open / lines : 0 };
+}
+
+function meshPieces({ mesh }: HealthInput): Pick<CollisionHealth, 'triangles' | 'pieces' | 'smallPieces' | 'looseShare' | 'bumpiness'> {
   const triangles = mesh.index.length / 3 - 2, vertices = mesh.positions.length / 3;
   // triangles sharing a vertex are one piece (union-find over the vertices)
   const parent = new Int32Array(vertices).map((_, i) => i);
@@ -199,10 +234,21 @@ function meshPieces({ mesh }: HealthInput): Pick<CollisionHealth, 'triangles' | 
   for (let t = 0; t < triangles; t++) { const p = find(mesh.index[t * 3]); inPiece.set(p, (inPiece.get(p) ?? 0) + 1); }
   let small = 0, loose = 0;
   for (const n of inPiece.values()) if (n < SMALL_PIECE) { small++; loose += n; }
-  return { triangles, pieces: inPiece.size, smallPieces: small, looseShare: triangles ? loose / triangles : 0 };
+  // bumpiness: per vertex, 1 − the length of the mean of its triangles' unit normals (0 when they all face one way)
+  const sum = new Float32Array(vertices * 3), faces = new Uint16Array(vertices), P = mesh.positions;
+  for (let t = 0; t < triangles; t++) {
+    const a = mesh.index[t * 3] * 3, b = mesh.index[t * 3 + 1] * 3, c = mesh.index[t * 3 + 2] * 3;
+    const ux = P[b] - P[a], uy = P[b + 1] - P[a + 1], uz = P[b + 2] - P[a + 2], vx = P[c] - P[a], vy = P[c + 1] - P[a + 1], vz = P[c + 2] - P[a + 2];
+    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx, len = Math.hypot(nx, ny, nz);
+    if (!(len > 0)) continue;
+    for (const k of [a, b, c]) { sum[k] += nx / len; sum[k + 1] += ny / len; sum[k + 2] += nz / len; faces[k / 3]++; }
+  }
+  let bumps = 0, counted = 0;
+  for (let v = 0; v < vertices; v++) if (faces[v]) { bumps += 1 - Math.hypot(sum[v * 3], sum[v * 3 + 1], sum[v * 3 + 2]) / faces[v]; counted++; }
+  return { triangles, pieces: inPiece.size, smallPieces: small, looseShare: triangles ? loose / triangles : 0, bumpiness: counted ? bumps / counted : 0 };
 }
 
-function fit({ mesh, splats, voxel }: HealthInput): Pick<CollisionHealth, 'offMedian' | 'offP90' | 'missedShare'> {
+function fit({ mesh, splats, unit: voxel }: HealthInput): Pick<CollisionHealth, 'offMedian' | 'offP90' | 'missedShare'> {
   const m = splats.matrix, triangles = mesh.index.length / 3 - 2;
   // the opaque splats' centres in the world, and the mesh's vertices, each in a grid of voxel-sized boxes
   const centres: number[] = [];
