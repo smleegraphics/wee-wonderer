@@ -12,11 +12,25 @@ a slow frame is waiting for. The frame is waiting for the splats to be drawn.
 Playroom has 1.92 million splats (a 475 MB file). The cleaned demo scans have about a
 tenth of that (Kitchen 162 thousand, 40 MB).
 
+## Measuring it: `scripts/frametime.mjs`
+
+`node scripts/frametime.mjs [scan.ply ...] [--ratio 2] [--seconds 8]` walks and turns the
+figurine for 8 s at 1440 × 900 in headless Chrome on the machine's own graphics card
+(`--enable-gpu --use-angle=metal`), and prints the average time a frame took. With no
+scans named, Kitchen and Playroom.
+
+- **The numbers move between runs.** Playroom, three runs of the same code in a row:
+  47.8, 46.6 and 36.7 ms. Run it several times, and compare a change with what it
+  replaced in the same sitting, not with numbers from another day.
+- A real browser window gives different numbers again. Kitchen at 60 fps is the cap, not
+  its cost.
+- The rows below that switch off one thing (re-sorting, the colour pass) were measured by
+  patching the page for the run; the script does not do that.
+
 ## What was measured
 
-Walking and turning for 8 s, 1440 × 900 at pixel ratio 2, Apple GPU (Metal), headless
-Chrome on the GPU (`--enable-gpu --use-angle=metal`). A real window gives different
-absolute numbers; compare the rows with each other.
+All in one sitting, walking and turning for 8 s, 1440 × 900 at pixel ratio 2, Apple GPU
+(Metal). Compare the rows with each other, not with a later run.
 
 | Setup | ms a frame |
 |---|---|

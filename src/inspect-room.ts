@@ -9,7 +9,7 @@ import { GaussianSplatPLYLoader } from 'three/addons/loaders/GaussianSplatPLYLoa
 import { orientScan } from './orient-scan';
 
 const app = document.getElementById('app')!;
-const renderer = new WebGPURenderer({ antialias: true });
+const renderer = new WebGPURenderer({ antialias: true }); // unlike the game (context/frame-time.md): this page is for looking at the y = 0 grid's thin lines, and its frame rate does not matter
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 app.appendChild(renderer.domElement);

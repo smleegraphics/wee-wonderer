@@ -77,6 +77,9 @@ Visual and behavioural checks run headless in real Chrome through Playwright.
   `scripts/collision-baseline.json`. Run it after any change to the voxelizer, its
   settings or the NavGrid; `--save` a new baseline when a change is meant to move one,
   and `--with key=value` tries a setting without saving.
+- **Frame time:** `node scripts/frametime.mjs [scan ...]` prints how long a frame takes
+  while walking, on the real graphics card. The numbers move between runs; compare a
+  change with what it replaced in the same sitting (`context/frame-time.md`).
 - **Climb regression check:** `node scripts/climbfuzz.mjs <scan> <seconds> <seed>`
   walks, jumps and climbs at random and reports any frame where the climber is
   inside a solid. Run a few seeds, at most three browsers at a time.
