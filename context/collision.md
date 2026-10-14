@@ -246,10 +246,15 @@ Tried and rejected, for a closer fit:
 Open:
 
 - **Closer fit is still wanted**, most of all on small objects.
-- `climbfuzz` is not repeatable: the same scan, seed and settings report a violation on
-  one run and none on the next (Playroom seed 3; Living Room seeds 1 and 5, with the
-  settings from before any of this as well). So an occasional violation predates this
-  work and is not traced; and a clean run proves less than it seems.
+- **A climb violation on Living Room, not traced.** `climbfuzz` used to give different
+  results run to run (fixed in its own PR: it now drives in fixed steps and repeats
+  exactly; see `context/climb.md`). Run that way on this work, Living Room seeds 1 and 5
+  each report one violation, at the same place: the yellow footstool on the rug, around
+  (1.1, 0.25, −2.9), climbing its leg from mid-air under the seat (`up` −0.07, an
+  overhang) with a back face 0.10 ahead at chest height. On the code before this work,
+  seeds 1 to 5 report none, but the figurine starts elsewhere and takes other paths, so
+  that does not show this work caused it. Counter, Kitchen (seeds 1 to 3), Playroom and
+  Marishka (seed 1) report none.
 - A scan whose finer grid would pass the voxelizer's memory cap is built at detail 1.
   None of the four rooms is.
 
