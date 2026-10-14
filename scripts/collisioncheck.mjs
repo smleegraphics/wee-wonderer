@@ -8,7 +8,7 @@
 //   node scripts/collisioncheck.mjs --with fit=1 [...] try a setting: adds it to the page's address (the collision settings can
 //                                                      all be given there: VOXEL_OPTS in src/main.ts). Compared, never saved.
 //
-// With no scans named, the four demo rooms. Collision is seeded, so the numbers repeat
+// With no scans named, the four demo rooms and Marishka. Collision is seeded, so the numbers repeat
 // exactly from run to run: any change is a change in the code or its settings.
 //
 // Before any room, the measuring itself is checked: it is run on a small made-up room
@@ -24,7 +24,7 @@ const args = process.argv.slice(2), save = args.includes('--save');
 const trial = args.flatMap((a, i) => (args[i - 1] === '--with' ? [a] : [])); // settings to try, as key=value
 if (save && trial.length) { console.log('--save and --with do not go together: a trial is not the baseline'); process.exit(1); }
 const named = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--with');
-const scans = named.length ? named : ['livingroom-clean.ply', 'counter-clean.ply', 'kitchen-clean.ply', 'room2.ply'];
+const scans = named.length ? named : ['livingroom-clean.ply', 'counter-clean.ply', 'kitchen-clean.ply', 'room2.ply', 'Marishka-clean.ply']; // (Marishka: a dog on a blanket. Nothing in it is flat or hard-edged, which is what the rooms cannot test)
 
 // What is shown, and what is guarded: `worse` is the direction that is a regression, and
 // `slack` how far a number may move that way before it counts (shares are 0..1; offsets are voxels).
@@ -38,6 +38,7 @@ const METRICS = [
   { key: 'reachShare', label: '...and by climbing the mesh\'s faces', share: true, worse: 'down', slack: 0.01 },
   { key: 'reachBound', label: '...if every meeting had a face', share: true, worse: 'down', slack: 0.01 },
   { key: 'islands', label: 'real platforms no face could join', worse: 'up', slack: 0 },
+  { key: 'climbSpots', label: 'area a climb can start from (grains²)', worse: 'down', slack: 20 },
   { key: 'holeShare', label: 'holes in the spawn surface', share: true, worse: 'up', slack: 0.01 },
   { key: 'edgeShare', label: 'spawn surface cells on an edge', share: true, worse: 'up', slack: 0.01 },
   { key: 'solidity', label: 'spawn surface fills its outline', share: true }, // shown, not guarded: it falls when the surface grows into a less regular shape, which is an improvement
@@ -82,11 +83,12 @@ async function selfTest(page) {
       move: { jumpVel: Math.sqrt(18), gravity: 9, runSpeed: 5, climbOver: 1 },
       climbable: (ax, ay, az, bx) => bx === 10, // only surface 1 has a face
       blocked: (ox, oy, oz, dx, dy) => dy > 0, eyeHeight: 1, // the upward half of all directions meets something
+      climbStarts: (x, y, z, dx) => x === 9 && dx > 0.9, // a wall along the first floor's far edge: its 10 cells at x = 9
     });
   });
   const want = {
     cells: 152, platforms: 4, realPlatforms: 2, scrapShare: 6 / 152, spawnShare: 96 / 152, jumpShare: 96 / 152, reachShare: 99 / 152, reachBound: 102 / 152, islands: 1,
-    holeShare: 4 / 100, edgeShare: 44 / 96, solidity: 96 / 100, roughness: 0,
+    climbSpots: 10, holeShare: 4 / 100, edgeShare: 44 / 96, solidity: 96 / 100, roughness: 0,
     triangles: 2, pieces: 2, smallPieces: 2, looseShare: 1, bumpiness: 0, offMedian: 1, offP90: 1, missedShare: 1 / 3, openShare: 0.5,
   };
   let wrong = 0;

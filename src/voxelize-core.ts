@@ -24,8 +24,8 @@ export interface VoxelOptions {
   panelFill?: number;  // fill enclosed holes in vertical panels up to this area, in NORMALIZED scan units² (~room-relative, not metres — world coords are scaled to TARGET_RADIUS); blank cabinet doors / walls; 0 = off (default 2.5)
   smooth?: number;     // majority-filter passes on occupancy (default 0; Taubin handles smoothing)
   taubin?: number;     // Taubin mesh-smoothing iterations (default 6; 0 = off)
-  floorFlat?: number;  // snap mesh vertices within this many units of y=0 flat (default 0.75; 0 = off)
-  refine?: number;     // build the mesh on a grid this many times finer than the one that decides what is solid (default 1 = the same grid; refineSolid)
+  floorFlat?: number;  // flatten the mesh onto the ground's splats within this many units of them (default 1.5; 0 = off)
+  refine?: number;     // build the mesh on a grid up to this many times finer than the one that decides what is solid, if the scan has the splats for it (default 1 = the same grid; refineSolid)
 }
 
 export interface VoxelSurface {
@@ -33,6 +33,8 @@ export interface VoxelSurface {
   index: Uint32Array;      // triangle indices
   voxelSize: number;
   occupiedCount: number;
+  detail: number;          // how many times finer than the voxels the grid the mesh was built on is (1: the same; see `refine`)
+  groundY: number | null;  // the height (world) of the ground the figurine plays on: a room's floor, a table's top. null if the scan has nowhere to stand
   triangleCount: number;
 }
 
@@ -110,7 +112,7 @@ export function voxelizeCore(
     }
   }
   if (!Number.isFinite(minX)) // empty scan
-    return { positions: new Float32Array(0), index: new Uint32Array(0), voxelSize, occupiedCount: 0, triangleCount: 0 };
+    return { positions: new Float32Array(0), index: new Uint32Array(0), voxelSize, occupiedCount: 0, detail: 1, groundY: null, triangleCount: 0 };
 
   // choose the voxel size, coarsening it if the dense grid would be too large to
   // allocate — a hard cap against a pathological extent OOMing the worker.
@@ -226,7 +228,8 @@ export function voxelizeCore(
   const closeVoxels = Math.round(closeIters * per);
   for (let i = 0; i < closeVoxels; i++) occ = dilate(occ, gx, gy, gz);
   for (let i = 0; i < closeVoxels; i++) occ = erode(occ, gx, gy, gz);
-  if (groundFill > 0) fillGround(occ, gx, gy, gz, -minX / vs, -minZ / vs, groundFill, per); // (the scan is centred on the world's origin)
+  const ground = groundRow(occ, gx, gy, gz, -minX / vs, -minZ / vs, per); // (the scan is centred on the world's origin)
+  if (groundFill > 0 && ground >= 0) fillGround(occ, gx, gy, gz, ground, groundFill, per);
   // ASSUMES a single, nav-confined room: this fills ANY enclosed vertical-panel hole
   // up to the area cap, so a real passage (doorway/window) of that size would be walled
   // off. Safe because the character can't reach such openings here; revisit for
@@ -258,8 +261,55 @@ export function voxelizeCore(
   // With `refine` > 1 that is done on a grid that many times finer, on a solid trimmed
   // to it (refineSolid): what is solid was decided above, on the coarse grid, where a
   // thinly scanned wall still adds up to a wall; where exactly its surface is, is then
-  // read off the finer one. Skipped if the finer grid would be too large to hold.
-  const fine = refineSolid(occ, gx, gy, gz, Math.max(1, Math.round(opts.refine ?? 1)), MAX_CELLS);
+  // read off the finer one. Skipped if the finer grid would be too large to hold. How
+  // much finer: as fine as the scan has splats for, up to `refine` (below).
+  //
+  // First, the ground: the level the figurine plays on (the floor of a room, the top of a table),
+  // the height its splats are at, and how far either side of that the mesh is flattened
+  // onto it (below). The height is where the scan's opacity is greatest within
+  // GROUND_SEARCH of that level's row.
+  //
+  // Only ground that is flat is flattened. Whether it is, is read from its splats too: on
+  // a floor or a tabletop a fair share of the opacity near the ground is splats that
+  // themselves lie flat, at one height (Playroom 15%, the other rooms and tables 4%); on
+  // ground that is not flat there are next to none (Marishka, a dog on a blanket: under
+  // half a percent). Flattened regardless, such ground is cut into terraces.
+  const { level: groundLevel, flat: groundFlat } = (() => {
+    if (ground < 0) return { level: 0, flat: false };
+    const about = minY + (ground + 0.5) * vs, span = GROUND_SEARCH * unit, BINS = GROUND_BINS * GROUND_SEARCH * 2;
+    const hist = new Float64Array(BINS), lying = new Float64Array(BINS);
+    // the spread of splat i along two world axes (rows a and b of the matrix's linear part)
+    const spread = (i: number, a: number, b: number) => {
+      const a0 = m[a], a1 = m[4 + a], a2 = m[8 + a], b0 = m[b], b1 = m[4 + b], b2 = m[8 + b], c = i * 6;
+      return cov![c] * a0 * b0 + cov![c + 3] * a1 * b1 + cov![c + 5] * a2 * b2 + cov![c + 1] * (a0 * b1 + a1 * b0) + cov![c + 2] * (a0 * b2 + a2 * b0) + cov![c + 4] * (a1 * b2 + a2 * b1);
+    };
+    for (let i = 0; i < count; i++) {
+      const b = Math.floor(((wy(i) - about + span) / (2 * span)) * BINS);
+      if (b < 0 || b >= BINS) continue;
+      hist[b] += opacity[i];
+      if (cov && Math.sqrt(spread(i, 1, 1)) < LIES_FLAT_GROUND * Math.sqrt(Math.sqrt(Math.max(0, spread(i, 0, 0) * spread(i, 2, 2) - spread(i, 0, 2) ** 2)))) lying[b] += opacity[i];
+    }
+    const peak = (h: Float64Array) => { let best = 0, most = -1; for (let b = 1; b < BINS - 1; b++) { const v = h[b - 1] + 2 * h[b] + h[b + 1]; if (v > most) { most = v; best = b; } } return most > 0 ? best : -1; };
+    const best = peak(hist);
+    if (best < 0) return { level: about, flat: false };
+    let sum = 0, weight = 0; // the peak's own centre, between bins
+    for (let b = Math.max(0, best - 2); b <= Math.min(BINS - 1, best + 2); b++) { sum += hist[b] * (b + 0.5); weight += hist[b]; }
+    let all = 0, level = 0;
+    const at = peak(lying);
+    for (let b = 0; b < BINS; b++) { all += hist[b]; if (at >= 0 && Math.abs(b - at) <= GROUND_BINS / 2) level += lying[b]; } // (within half a unit of the flat-lying splats' own peak)
+    return { level: about + (sum / weight / BINS) * 2 * span - span, flat: !cov || level >= GROUND_FLAT * all }; // (with no shapes to go by, as before: taken as flat)
+  })();
+  const flatten = groundFlat ? (opts.floorFlat ?? 1.5) * unit : 0;
+
+  // How much finer the mesh's grid is. The finer grid's density is only worth reading where there are several splats to a
+  // fine voxel; with fewer it is noise, and a mesh trimmed to noise is pitted and rough.
+  // Of the five scans this was tried on, one has the splats for a grid twice as fine
+  // (Playroom: 37 to a solid voxel, so 4.6 to a fine one) and comes out better for it;
+  // the other four have 4 to 17 (0.6 to 2.1) and come out bumpier, at no gain.
+  const perVoxel = occupied ? count / occupied : 0;
+  let detail = 1;
+  for (let s = 2; s <= Math.round(opts.refine ?? 1) && perVoxel / (s * s * s) >= SPLATS_PER_FINE_VOXEL; s++) detail = s;
+  const fine = refineSolid(occ, gx, gy, gz, detail, MAX_CELLS);
   let sn: { positions: Float32Array; index: Uint32Array };
   if (fine) {
     const { s, x0, y0, z0, nx, ny, nz } = fine, fvs = vs / s, fx = minX + x0 * vs, fy = minY + y0 * vs, fz = minZ + z0 * vs;
@@ -272,10 +322,9 @@ export function voxelizeCore(
     // to the level its surface is found at. Trimmed as well, its surface steps up and down
     // by a fine voxel about the edge of the band that is flattened, and whatever ends up
     // just over that edge is left standing as a bump (Playroom's floor was dotted with them).
-    const flatten = (opts.floorFlat ?? 0.75) * unit;
-    const groundRows = flatten > 0 ? Math.ceil((flatten + vs - fy) / fvs) : 0; // the flattened band, and the coarse voxel over it that the ground's surface can reach into
+    const keepFrom = Math.floor((groundLevel - flatten - fy) / fvs), keepTo = Math.ceil((groundLevel + flatten - fy) / fvs); // the rows that are flattened
     const before = Uint8Array.from(fine.occ);
-    fine.trim(blur(fdens, nx, ny, nz, CALM_PASSES), iso / (s * s), groundRows); // (a voxel's share of a sheet's opacity goes with its face)
+    fine.trim(blur(fdens, nx, ny, nz, CALM_PASSES), iso / (s * s), flatten > 0 ? [keepFrom, keepTo] : [0, 0]); // (a voxel's share of a sheet's opacity goes with its face)
     // Where the surface goes within its voxel:
     //  - where nothing was trimmed, where the coarse grid's density puts it, read between
     //    the coarse voxels: exactly the surface there would be without refining, on a
@@ -310,16 +359,37 @@ export function voxelizeCore(
   // floor slightly wavy AND — crucially — not exactly at y=0: leveling places y=0 at
   // the floor SPLAT plane, but the reconstructed surface sits a bit below it, so
   // snapping to a hardcoded 0 would LIFT the collision floor above the real floor
-  // (the figurine would hover). Instead we detect the floor's actual level (the median
-  // height of the low band) and flatten to THAT — flat and flush. The band stays
-  // one-sided so low clutter above it (toys, box lips) keeps its real height.
-  const floorBand = (opts.floorFlat ?? 0.75) * unit;
-  let floorLevel = 0;
-  if (floorBand > 0) {
-    const fv: number[] = [];
-    for (let i = 1; i < sn.positions.length; i += 3) if (sn.positions[i] < floorBand) fv.push(sn.positions[i]);
-    if (fv.length) { fv.sort((a, b) => a - b); floorLevel = fv[fv.length >> 1]; }
-    for (let i = 1; i < sn.positions.length; i += 3) if (sn.positions[i] < floorBand) sn.positions[i] = floorLevel;
+  // (the figurine would hover). Instead the floor is flattened to the level its splats
+  // are at — flat and flush. Low clutter above the band (toys, box lips) keeps its real
+  // height.
+  //
+  // Both the level and the band are taken from the ground's own splats (groundLevel,
+  // above). They used to be taken from y = 0 and from the mesh: everything under
+  // 0.75 units over y = 0 went to the median height of those vertices. But y = 0 is only
+  // a low percentile of the scan's heights, and the floor's splats lie a little over it,
+  // so that cut ran through the floor's own top surface: part of it was flattened, and to
+  // a level the slab's underside dragged below the splats, and the rest was left as it
+  // came, up to a grain and a half above them. The floor was in two layers, neither where
+  // the floor is drawn (Playroom: 2,390 cells at −0.5 grains and 6,350 at +0.75 to +1.75,
+  // its splats at +0.25; Living Room the same).
+  //
+  // The band reaches as far under the level as over it, to take in the slab's underside,
+  // and no further: under a table there are chairs. (It used to take in everything
+  // below, which is right for a floor and pulls a table's surroundings up into it.)
+  if (flatten > 0) for (let i = 1; i < sn.positions.length; i += 3) if (Math.abs(sn.positions[i] - groundLevel) < flatten) sn.positions[i] = groundLevel;
+  // Where the ground is raised clear of y = 0 (a table, a worktop), what the scan has of
+  // the real floor down there is flattened too, as it always was: everything under
+  // FLOOR_UNDER, to its median height. Left as it comes, its scraps are places to stand,
+  // and the spawn search, which takes the lowest one with headroom, starts the figurine
+  // in a pocket under Counter's worktop. This is the real floor's, not the ground's, so it
+  // does not depend on the flatten: with the flatten off, or ground that is not flat
+  // (Marishka's blanket), ground at the bottom of the scan is left as it comes.
+  let floorLevel = groundLevel; // for the backstop plane, which goes just under the floor
+  if (ground >= 0 && groundLevel - flatten > FLOOR_UNDER * unit) {
+    const low: number[] = [];
+    for (let i = 1; i < sn.positions.length; i += 3) if (sn.positions[i] < FLOOR_UNDER * unit) low.push(sn.positions[i]);
+    floorLevel = low.length ? low.sort((a, b) => a - b)[low.length >> 1] : 0;
+    for (let i = 1; i < sn.positions.length; i += 3) if (sn.positions[i] < FLOOR_UNDER * unit) sn.positions[i] = floorLevel;
   }
 
   // Safety floor plane at y=0. Leveling puts the real floor there, and the
@@ -345,6 +415,8 @@ export function voxelizeCore(
     index: meshIdx,
     voxelSize: vs,
     occupiedCount: occupied,
+    detail: fine ? detail : 1,
+    groundY: ground >= 0 ? groundLevel : null,
     triangleCount: meshIdx.length / 3,
   };
 }
@@ -540,7 +612,7 @@ const LUMP_LAYERS = 1;  // fine layers taken off a lump, at most. On a sparse sc
 const TRIM_DEPTH = 1.5; // coarse voxels: how many layers deep the trim may go, from each side. A slab two coarse voxels thick can come down to one fine one
 
 function refineSolid(coarse: Uint8Array, gx: number, gy: number, gz: number, s: number, maxCells: number): {
-  s: number; x0: number; y0: number; z0: number; nx: number; ny: number; nz: number; occ: Uint8Array; trim(density: Float32Array, iso: number, keepRows: number): void;
+  s: number; x0: number; y0: number; z0: number; nx: number; ny: number; nz: number; occ: Uint8Array; trim(density: Float32Array, iso: number, keep: number[]): void;
 } | null {
   if (s <= 1) return null;
   let x0 = gx, y0 = gy, z0 = gz, x1 = -1, y1 = -1, z1 = -1;
@@ -607,7 +679,7 @@ function refineSolid(coarse: Uint8Array, gx: number, gy: number, gz: number, s: 
     for (let k = 1; n <= thin && solidAt(x - dx * k, y - dy * k, z - dz * k); k++) n++;
     return n;
   };
-  const trim = (density: Float32Array, iso: number, keepRows: number) => {
+  const trim = (density: Float32Array, iso: number, keep: number[]) => {
     /** May (x, y, z) go? It needs one face open and the opposite one backed, along some
      *  axis, with the voxel that backs it denser than it is: that walks a face in to where
      *  the density peaks, the sheet of splats itself, and no further. (Solid with no
@@ -626,7 +698,7 @@ function refineSolid(coarse: Uint8Array, gx: number, gy: number, gz: number, s: 
     const axes = new Uint8Array(occ.length); // bits 1, 2, 4: may go along x, y, z
     for (let x = 0; x < nx; x++) for (let y = 0; y < ny; y++) for (let z = 0; z < nz; z++) {
       const c = (x * ny + y) * nz + z;
-      if (!occ[c] || y < keepRows) continue; // (the lowest `keepRows` rows are not trimmed at all: the caller's ground)
+      if (!occ[c] || (y >= keep[0] && y < keep[1])) continue; // (rows keep[0] to keep[1] are not trimmed at all: the caller's ground)
       const rx = run(x, y, z, 1, 0, 0), ry = run(x, y, z, 0, 1, 0), rz = run(x, y, z, 0, 0, 1), least = Math.min(rx, ry, rz);
       // A sheet is thin one way and runs on the other two. Anything else (a toy, a cushion,
       // a chair's leg) is a lump: it has no sheet to walk in to, and comes in from every
@@ -668,14 +740,52 @@ function refineSolid(coarse: Uint8Array, gx: number, gy: number, gz: number, s: 
   return { s, x0, y0, z0, nx, ny, nz, occ, trim };
 }
 
+const FLOOR_UNDER = 0.75;  // units over y = 0: under a raised ground, the real floor's mesh below this is flattened (the band the floor flatten had before it followed the ground)
+const SPLATS_PER_FINE_VOXEL = 3; // the mesh is built on a finer grid only while the scan has at least this many splats to each of its solid voxels
+const GROUND_FLAT = 0.015; // ground is flat when at least this share of the opacity near it is splats lying flat at one height
+const LIES_FLAT_GROUND = 0.3; // a splat lies flat when it is thinner than this, up and down, as a share of its width
+const GROUND_SEARCH = 2;  // units either side of the ground's row in which its splats are looked for
+const GROUND_BINS = 8;    // to a unit: the height bins the ground's splats are counted in
 const STAND_ROOM = 5;    // units of clear space over a surface for it to be somewhere to stand: about the figurine's height (a unit is a fifth of it)
 const START_NEAR = 10;   // units round the scan's centre in which the level the figurine starts on is looked for
 const RAISED = 0.05;     // a level with more than this share of the scan's solid voxels below it is raised, not the ground (rooms: none below their floor; Kitchen's table 13%, Counter's worktop 26%)
 
+/** The row of the level the figurine starts on (see fillGround), or -1 if there is nowhere to stand. `ox`, `oz`: the scan's centre, in voxels. */
+function groundRow(occ: Uint8Array, gx: number, gy: number, gz: number, ox: number, oz: number, per: number): number {
+  const sx = gy * gz, sy = gz, room = Math.round(STAND_ROOM * per);
+  /** The lowest row in column (x, z) with something solid and room to stand on it, or -1. */
+  const standRow = (x: number, z: number) => {
+    const c = x * sx + z;
+    for (let y = 0; y < gy; y++) {
+      if (!occ[c + y * sy]) continue;
+      let clear = true;
+      for (let u = y + 1; u <= Math.min(gy - 1, y + room); u++) if (occ[c + u * sy]) { clear = false; break; }
+      if (clear) return y;
+    }
+    return -1;
+  };
+  // the commonest such row near the centre (one toy there does not decide it), or anywhere if there is none
+  const tally = new Int32Array(gy);
+  let any = false;
+  for (const near of [START_NEAR * per, Infinity]) {
+    for (let x = 0; x < gx; x++)
+      for (let z = 0; z < gz; z++) {
+        if (Math.hypot(x - ox, z - oz) > near) continue;
+        const y = standRow(x, z);
+        if (y >= 0) { tally[y]++; any = true; }
+      }
+    if (any) break;
+  }
+  if (!any) return -1;
+  let top = 0;
+  for (let y = 1; y < gy; y++) if (tally[y] > tally[top]) top = y;
+  return top;
+}
+
 /**
  * Fill the gaps in the surface the figurine plays on.
  *
- * Which surface: the level it starts on, found the way the spawn search finds it (the
+ * Which surface: `top`, the level it starts on (groundRow), found the way the spawn search finds it (the
  * lowest place with room to stand, near the scan's centre: findSpawn in collision.ts).
  * In a room that is the floor; on a scan of a worktop it is the worktop, with the real
  * floor somewhere below. (It used to be "the busiest row in the lower third", which on
@@ -692,35 +802,9 @@ const RAISED = 0.05;     // a level with more than this share of the scan's soli
  * aisle between two worktops); beside the ground there cannot. The level is raised when
  * a fair share of the scan's solid voxels lie below it.
  */
-function fillGround(occ: Uint8Array, gx: number, gy: number, gz: number, ox: number, oz: number, width: number, per: number): void {
+function fillGround(occ: Uint8Array, gx: number, gy: number, gz: number, top: number, width: number, per: number): void {
   const sx = gy * gz, sy = gz, n = gx * gz;
   const room = Math.round(STAND_ROOM * per), slab = Math.max(1, Math.round(per)); // in voxels: room to stand, and how thick the level's surface is taken to be
-  /** The lowest row in column (x, z) with something solid and room to stand on it, or -1. */
-  const standRow = (x: number, z: number) => {
-    const c = x * sx + z;
-    for (let y = 0; y < gy; y++) {
-      if (!occ[c + y * sy]) continue;
-      let clear = true;
-      for (let u = y + 1; u <= Math.min(gy - 1, y + room); u++) if (occ[c + u * sy]) { clear = false; break; }
-      if (clear) return y;
-    }
-    return -1;
-  };
-  // the level the figurine starts on: the commonest such row near the centre (one toy there does not decide it), or anywhere if there is none
-  const tally = new Int32Array(gy);
-  let any = false;
-  for (const near of [START_NEAR * per, Infinity]) {
-    for (let x = 0; x < gx; x++)
-      for (let z = 0; z < gz; z++) {
-        if (Math.hypot(x - ox, z - oz) > near) continue;
-        const y = standRow(x, z);
-        if (y >= 0) { tally[y]++; any = true; }
-      }
-    if (any) break;
-  }
-  if (!any) return;
-  let top = 0;
-  for (let y = 1; y < gy; y++) if (tally[y] > tally[top]) top = y;
   const rows: number[] = []; // the level, and what is over it to a unit's height, where the surface is that much higher
   for (let y = top; y <= Math.min(gy - 1, top + slab); y++) rows.push(y);
   for (const y of rows) fillSlice(occ, gx, gy, gz, y);

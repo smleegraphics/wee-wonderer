@@ -32,8 +32,9 @@ import { cameraPosition, cameraProjectionMatrixInverse, cameraWorldMatrix, cos, 
 const q = new URLSearchParams(location.search);
 const TEL = q.get('tel') === '1'; // debug telemetry: CLIMB-* console events + window.__dbg
 // demo scans for the switcher UI — config, not logic (each auto-levels at load).
-const SCANS: { file: string; label: string }[] = [
-  { file: 'room2.ply', label: 'Playroom' }, // already tightly bounded — no cleanup needed
+// `collision` is a scan's own collision settings, set by hand where the defaults do not suit it (useScanSettings).
+const SCANS: { file: string; label: string; collision?: Partial<VoxelSettings> }[] = [
+  { file: 'room2.ply', label: 'Playroom', collision: { floorFlat: 2 } }, // already tightly bounded — no cleanup needed. Its rug is uneven: ridges of it stand above the usual 1.5 grains and were left as bumps on the floor
   { file: 'livingroom-clean.ply', label: 'Living Room' }, // floater-stripped (scripts/clean-scan.mjs)
   { file: 'kitchen-clean.ply', label: 'Kitchen' },
   { file: 'counter-clean.ply', label: 'Counter' },
@@ -55,17 +56,35 @@ const navStep = () => Math.max(GRAIN, lastVoxelSize);
 /** How many walkable cells go to a grain (1, unless the cells had to be coarser). */
 const cellsPerGrain = () => GRAIN / navStep();
 const num = (key: string, def: number) => (q.has(key) ? Number(q.get(key)) : def);
-const VOXEL_OPTS = {
-  iso: num('iso', 0.35),         // isovalue as a fraction of median surface density (low → fills faint flat panels)
-  despeckle: num('despeckle', 20), // drop solid islands smaller than this (stray cubes / floaters the low iso admits)
-  close: num('close', 1),        // dilate→erode iterations (bridges tiny holes); kept low so it doesn't weld objects to the floor / web surfaces (loose "seal"). Big holes are handled by the enclosed floor/panel fills.
-  fillFloor: num('fillfloor', 20), // fill gaps in the surface the figurine plays on: on the ground, bare stretches nothing this many voxels wide can get into (1 = enclosed holes only). Living Room's bare floor closes at 20, not at 12
-  panelFill: num('panelfill', 2.5), // fill enclosed holes in vertical panels up to this area, in NORMALIZED scan units² (~room-relative, not metres — every scan is scaled to TARGET_RADIUS); blank cabinet doors/walls; 0 = off
-  smooth: num('smooth', 0),      // majority occupancy passes (Taubin handles smoothing)
-  taubin: num('taubin', 6),      // Taubin mesh-smoothing iterations
-  floorFlat: num('floorflat', 0.75), // snap mesh within this many grains of y=0 flat
-  refine: num('refine', 2),      // build the mesh on a grid this many times finer than the one that decides what is solid, trimmed in to the splats (1 = the same grid). 2: half as bumpy as 1 and about a tenth tighter, for four to five times the triangles (context/collision.md)
+/** The collision settings every scan starts from. */
+const VOXEL_DEFAULTS = {
+  iso: 0.35,      // isovalue as a fraction of median surface density (low → fills faint flat panels)
+  despeckle: 20,  // drop solid islands smaller than this (stray cubes / floaters the low iso admits)
+  close: 1,       // dilate→erode iterations (bridges tiny holes); kept low so it doesn't weld objects to the floor / web surfaces (loose "seal"). Big holes are handled by the enclosed floor/panel fills.
+  fillFloor: 20,  // fill gaps in the surface the figurine plays on: on the ground, bare stretches nothing this many voxels wide can get into (1 = enclosed holes only). Living Room's bare floor closes at 20, not at 12
+  panelFill: 2.5, // fill enclosed holes in vertical panels up to this area, in NORMALIZED scan units² (~room-relative, not metres — every scan is scaled to TARGET_RADIUS); blank cabinet doors/walls; 0 = off
+  smooth: 0,      // majority occupancy passes (Taubin handles smoothing)
+  taubin: 6,      // Taubin mesh-smoothing iterations
+  floorFlat: 1.5, // flatten the mesh onto the ground's splats within this many grains of them. At 1 the top of Playroom's and Living Room's floor is left out (cells at 1.25 to 1.75 grains); at 2 a little more is flat and more low clutter is floor (Playroom is given 2 in SCANS)
+  refine: 2,      // build the mesh on a grid up to this many times finer than the one that decides what is solid, trimmed in to the splats. Each scan gets what it has the splats for (of the demo scans, only Playroom gets 2)
 };
+type VoxelSettings = typeof VOXEL_DEFAULTS;
+const VOXEL_KEYS = Object.keys(VOXEL_DEFAULTS) as (keyof VoxelSettings)[];
+/** Settings given for this session, which hold whatever scan is loaded: in the address (the
+ *  setting's name in lower case: ?floorflat=2&iso=0.2), and after that by a Debug slider. */
+const voxelSet: Partial<VoxelSettings> = {};
+for (const key of VOXEL_KEYS) if (q.has(key.toLowerCase())) voxelSet[key] = Number(q.get(key.toLowerCase()));
+/** The settings collision is built with now (useScanSettings). */
+const VOXEL_OPTS: VoxelSettings = { ...VOXEL_DEFAULTS, ...voxelSet };
+const voxelSliders: Partial<Record<keyof VoxelSettings, (v: number) => void>> = {}; // each setting's Debug slider: call to show a value on it
+/** Make the collision settings those of scan `id`: the defaults, then what the scan list
+ *  gives for that scan, then whatever has been set for the session. An uploaded scan has
+ *  no entry in the list, so it gets the defaults. (This is the one place a scan's settings
+ *  are decided: settings measured from a scan would go between the defaults and the list's.) */
+function useScanSettings(id: string): void {
+  Object.assign(VOXEL_OPTS, VOXEL_DEFAULTS, SCANS.find((s) => s.file === id)?.collision, voxelSet);
+  for (const key of VOXEL_KEYS) voxelSliders[key]?.(VOXEL_OPTS[key]);
+}
 // Walkable surfaces are de-quantized to the real splat height in the voxelizer,
 // so no ground offset is needed; ?sink stays as a manual override (default 0).
 const GROUND_OFFSET = num('sink', 0);
@@ -90,6 +109,7 @@ let showPlatforms = q.get('platforms') === '1';
 let platformDebug: THREE.InstancedMesh | null = null;
 let platformCheckbox: HTMLInputElement | null = null;
 let lastVoxelSize = GRAIN;
+let groundY: number | null = null; // the height of the ground the figurine plays on in this scan (the voxelizer's), or null
 const PLATFORM_OPTS = { stepFactor: 0.35, minCells: 6, climbDeg: 70, bridge: 2, fill: 3 }; // climbDeg: surfaces steeper than this (from horizontal) are walls to climb, gentler ones are ground to walk. minCells: an area, in grains². bridge, fill: how wide a gap in a surface is bridged, and how wide a hole in it filled, in grains
 const STEP_DOWN_MAX = 0.6; // hop straight down a drop up to this (char-heights); taller → climb down the face
 // Spike 2: the reliable ground. The controller stands on the NavGrid (no
@@ -287,6 +307,7 @@ function loadStep(token: number, step: LoadStep | 'done', through = 0): void {
 function loadFromURL(url: string, id: string): void {
   const token = ++loadToken;
   currentFile = id;
+  useScanSettings(id);
   hud.setCurrentRoom(id);
   scanLoading = true;
   loadAbort?.abort(); // the load this one replaces, if it is still fetching
@@ -535,20 +556,26 @@ function onLoaded(gltf: GLTF): void {
 
 /** Put the figurine on the floor at the spawn point and re-frame the camera behind it. */
 function resetToSpawn(): void {
-  // pick a clear floor spot for this scan (unless overridden with ?fx=&fz=)
+  // Start on the ground (unless placed with ?fx=&fz=): the spot nearest the scan's centre,
+  // at the level the scan's ground is (a room's floor, a table's top), where the figurine
+  // fits. Without the level, findSpawn takes the lowest place near the centre with room
+  // to stand, which need not be the ground: on Counter it is the inside of a glass bowl, a
+  // step up from the worktop. That is kept for when nothing at the ground's level fits.
+  // (The walkable cell nearest the centre is not enough: a cell only has room overhead at
+  // one point, and Kitchen's nearest is the table under the Lego bulldozer, between its
+  // tracks, where the figurine is boxed in.)
   if (q.has('fx') || q.has('fz')) {
     player.position.set(Number(q.get('fx') ?? 0), 0, Number(q.get('fz') ?? 0));
   } else if (collision && charH > 0) {
     const radius = CAPSULE_RADIUS * charH, segLen = Math.max(0.02, charH - 2 * radius);
-    collision.findSpawn(radius, segLen, player.position);
+    if (groundY === null || !collision.findSpawn(radius, segLen, player.position, groundY, charH * PLATFORM_OPTS.stepFactor))
+      collision.findSpawn(radius, segLen, player.position);
   } else {
     player.position.set(0, 0, 0);
   }
   // align the spawn with the NavGrid so the reliability layer picks it up cleanly
-  if (navGrid) {
-    const s = navGrid.surfaceNear(player.position.x, player.position.z, player.position.y, charH);
-    if (s !== null) player.position.y = s;
-  }
+  const s = navGrid?.surfaceNear(player.position.x, player.position.z, player.position.y, charH) ?? null;
+  if (s !== null) player.position.y = s;
   player.rotation.set(0, 0, 0);
   velocity.set(0, 0, 0);
   wasGrounded = false;
@@ -693,10 +720,11 @@ async function buildCollision(file: string, token: number, centers: THREE.Buffer
   scene.add(mesh);
   collisionDebug = mesh;
   lastVoxelSize = surf.voxelSize;
+  groundY = surf.groundY ?? null; // (?? : a surface cached before this was recorded has none)
   rebuildPlatformOverlay();
   console.log(
     `collision${cached ? ' (cached)' : ''}: ${surf.occupiedCount.toLocaleString()} voxels, ` +
-    `${surf.triangleCount.toLocaleString()} tris @ ${surf.voxelSize.toFixed(3)}u ` +
+    `${surf.triangleCount.toLocaleString()} tris @ ${surf.voxelSize.toFixed(3)}u, detail ${surf.detail ?? 1} ` +
     `in ${(performance.now() - t0).toFixed(0)}ms — press V to toggle overlay`,
   );
 }
@@ -1221,6 +1249,23 @@ function climbGround(y: number, dx: number, dz: number): THREE.Vector3 | null {
   return null;
 }
 
+/** Is there a wall to start climbing, standing at (x, feetY, z) and facing `dir` (unit,
+ *  level)? The one test of that: tryStartClimb acts on it, and the collision health check
+ *  counts the places it passes. Leaves the nearer hit's distance and slope in climbStart. */
+const climbStart = { dist: 0, up: 0 };
+function climbStartsHere(x: number, feetY: number, z: number, dir: THREE.Vector3): boolean {
+  const reach = (CAPSULE_RADIUS + CLIMB.startReach) * charH;
+  // Require a wall at chest AND head — proves it's tall enough to scale (not a low
+  // bump), and that the climb won't top out the instant it starts.
+  climbStart.dist = Infinity;
+  for (let i = 0; i < 2; i++) {
+    const w = climbWall(climbProbe.set(x, feetY + charH * (i ? CLIMB.head : CLIMB.chest), z), dir, reach);
+    if (!w || !isWall(w)) return false;
+    if (w.distance < climbStart.dist) { climbStart.dist = w.distance; climbStart.up = w.up; }
+  }
+  return true;
+}
+
 /** True if a wall is right in front (in the `dx,dz` direction); if so, enter the climb
  *  at `feetY` — the ground we're standing on, or wherever the feet are when a jump
  *  carries us into the wall. */
@@ -1229,15 +1274,9 @@ function tryStartClimb(dx: number, dz: number, feetY = supportY): boolean {
   climbTry.set(dx, 0, dz);
   if (climbTry.lengthSq() < 1e-9) return false;
   climbTry.normalize();
-  const p = player.position, reach = (CAPSULE_RADIUS + CLIMB.startReach) * charH;
-  // Require a wall at chest AND head — proves it's tall enough to scale (not a low
-  // bump), and that the climb won't top out the instant it starts.
-  let dist = Infinity, up = 0;
-  for (let i = 0; i < 2; i++) {
-    const w = climbWall(climbProbe.set(p.x, feetY + charH * (i ? CLIMB.head : CLIMB.chest), p.z), climbTry, reach);
-    if (!w || !isWall(w)) return false;
-    if (w.distance < dist) { dist = w.distance; up = w.up; }
-  }
+  const p = player.position;
+  if (!climbStartsHere(p.x, feetY, p.z, climbTry)) return false;
+  const { dist, up } = climbStart;
   const midAir = state === 'air';
   climbDir.copy(climbTry);
   climbCling = false;
@@ -1715,6 +1754,7 @@ if (TEL) (window as unknown as { __collisionHealth?: () => Promise<unknown> })._
     climbable: climbableFace,
     blocked: (ox, oy, oz, dx, dy, dz) => !!collision && collision.wallAhead(faceFrom.set(ox, oy, oz), faceDir.set(dx, dy, dz), TARGET_RADIUS * 4) !== null, // (further than any scan reaches)
     eyeHeight: charH * 0.5,
+    climbStarts: (x, y, z, dx, dz) => climbStartsHere(x, y, z, faceDir.set(dx, 0, dz)),
   });
 };
 
@@ -1901,44 +1941,35 @@ function setupDebugMenu(): void {
     'ground you walk on. Lower = more things count as walls; higher = only near-vertical faces.');
 
   const surface = hud.debug.section('Collision surface');
-  surface.addSlider('Isovalue (fill)', VOXEL_OPTS.iso, 0.15, 0.7, 0.05, (v) => {
-    VOXEL_OPTS.iso = v;
-    rebuildCollision();
-  }, 'Surface threshold as a fraction of median density. LOWER fills faint flat ' +
+  /** A slider for one collision setting. Moving it sets that for the session (voxelSet) and rebuilds. */
+  const voxelSlider = (key: keyof VoxelSettings, label: string, min: number, max: number, step: number, help: string) => {
+    voxelSliders[key] = surface.addSlider(label, VOXEL_OPTS[key], min, max, step, (v) => {
+      voxelSet[key] = VOXEL_OPTS[key] = v;
+      rebuildCollision();
+    }, help);
+  };
+  voxelSlider('iso', 'Isovalue (fill)', 0.15, 0.7, 0.05, 'Surface threshold as a fraction of median density. LOWER fills faint flat ' +
      'panels (cabinet doors, distant walls) but eventually admits floater haze; ' +
      'higher hugs only well-scanned surfaces. Default 0.35 suits casual scans.');
-  surface.addSlider('Surface hole-fill', VOXEL_OPTS.close, 0, 5, 1, (v) => {
-    VOXEL_OPTS.close = v;
-    rebuildCollision();
-  }, 'Bridges holes in the collision mesh (walls / climbable faces / floor) by ' +
+  voxelSlider('close', 'Surface hole-fill', 0, 5, 1, 'Bridges holes in the collision mesh (walls / climbable faces / floor) by ' +
      'closing gaps up to ~2× this many voxels. Higher fills bigger holes but welds ' +
      'objects to the floor / webs surfaces (a looser "seal"); big holes are better ' +
      'handled by the floor/panel fills. Default 1 keeps the seal tight.');
-  surface.addSlider('Mesh detail', VOXEL_OPTS.refine, 1, 3, 1, (v) => {
-    VOXEL_OPTS.refine = v;
-    rebuildCollision();
-  }, 'What is solid is decided on the coarse collision grid, where a thinly scanned wall still adds up to a wall. ' +
-     'At 2 or 3 the mesh is then built on a grid that many times finer and trimmed in to the splats, so it hugs ' +
-     'objects more closely. More triangles, and a slower first build. 1 = the coarse grid only.');
-  surface.addSlider('Ground gap fill (voxels)', VOXEL_OPTS.fillFloor, 0, 40, 1, (v) => {
-    VOXEL_OPTS.fillFloor = v;
-    rebuildCollision();
-  }, 'Makes bare stretches of the ground walkable when nothing this many voxels wide could get into them from outside, ' +
+  voxelSlider('refine', 'Mesh detail (up to)', 1, 3, 1, 'What is solid is decided on the coarse collision grid, where a thinly scanned wall still adds up to a wall. ' +
+     'The mesh can then be built on a grid 2 or 3 times finer and trimmed in to the splats. Each scan gets as fine a ' +
+     'grid as it has splats for, up to this: a sparse scan stays at 1 whatever is set here, since a finer grid would ' +
+     'only read its noise. The console line for each build says which detail it got.');
+  voxelSlider('fillFloor', 'Ground gap fill (voxels)', 0, 40, 1, 'Makes bare stretches of the ground walkable when nothing this many voxels wide could get into them from outside, ' +
      'past the floor, walls and furniture round them (the figurine is about 5 voxels tall). Higher closes wider-mouthed ' +
      'bays; 1 fills only holes with floor all round; 0 = off. Only the ground: a worktop or table keeps its edges.');
-  surface.addSlider('Panel fill (area)', VOXEL_OPTS.panelFill, 0, 4, 0.25, (v) => {
-    VOXEL_OPTS.panelFill = v;
-    rebuildCollision();
-  }, 'Fills enclosed holes in flat vertical panels (blank cabinet doors / walls that ' +
+  voxelSlider('panelFill', 'Panel fill (area)', 0, 4, 0.25, 'Fills enclosed holes in flat vertical panels (blank cabinet doors / walls that ' +
      'splatting captured too faintly) up to this area, in normalized scan units² ' +
      '(~room-relative — not metres). Bigger fills larger blank panels but can start ' +
      'closing real openings (doorways/windows); 0 = off. Default 2.5.');
-  surface.addSlider('Floor flatten (voxels)', VOXEL_OPTS.floorFlat, 0, 2, 0.05, (v) => {
-    VOXEL_OPTS.floorFlat = v;
-    rebuildCollision();
-  }, 'Height of the band above the floor (in voxels) snapped perfectly flat. ' +
-     'Higher = flatter floor but low clutter (toys) gets absorbed; ' +
-     'lower = keeps low clutter but more floor waviness returns. 0 = off.');
+  voxelSlider('floorFlat', 'Floor flatten (grains)', 0, 3, 0.25, 'The collision within this many grains of the ground is flattened onto the level the ground is drawn at ' +
+     '(a grain is about a fifth of the figurine). Higher = flatter, and more low clutter (a rug, a board, the foot ' +
+     'of a toy) becomes floor; lower leaves the top of the floor uneven. Only ground that is flat is flattened: ' +
+     'a blanket is left as it is. 0 = off.');
 
   // cleanup tunables for imported scans (re-clean + reload the active upload)
   const cleanup = hud.debug.section('Import cleanup');

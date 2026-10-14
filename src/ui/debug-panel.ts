@@ -6,8 +6,9 @@ import { el } from './paper';
 export interface DebugSection {
   /** A checkbox row; returns the input so callers can keep it in sync. */
   addToggle(label: string, initial: boolean, onChange: (v: boolean) => void, help?: string): HTMLInputElement;
-  /** A labelled slider with a live value readout; fires `onChange` on release. */
-  addSlider(label: string, initial: number, min: number, max: number, step: number, onChange: (v: number) => void, help?: string): void;
+  /** A labelled slider with a live value readout; fires `onChange` on release. Returns a
+   *  function that shows a value on it, for a setting that changes without the slider moving. */
+  addSlider(label: string, initial: number, min: number, max: number, step: number, onChange: (v: number) => void, help?: string): (v: number) => void;
 }
 
 export interface DebugPanel {
@@ -79,6 +80,7 @@ export function createDebugPanel(): DebugPanel {
         row.append(el('span', '', label), readout, slider);
         describe(row, slider, help);
         add(row);
+        return (v) => { slider.value = String(v); readout.textContent = v.toFixed(decimals); };
       },
     };
   }

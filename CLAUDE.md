@@ -71,7 +71,7 @@ Visual and behavioural checks run headless in real Chrome through Playwright.
   It cannot judge the fill: for that, compare fill off and on by eye
   (`context/splat-fill.md`).
 - **Collision health check:** `node scripts/collisioncheck.mjs` measures each demo
-  room's collision as ground for a game (how much of the walkable area the figurine can
+  room's collision (and Marishka's, a soft scan with no flat ground) as ground for a game (how much of the walkable area the figurine can
   reach, how ragged it is, how closely the mesh fits the splats) and fails if a number is worse than
   `scripts/collision-baseline.json`. Run it after any change to the voxelizer, its
   settings or the NavGrid; `--save` a new baseline when a change is meant to move one,
@@ -92,9 +92,13 @@ Visual and behavioural checks run headless in real Chrome through Playwright.
 ## Conventions
 
 - **Debug tunables go in the on-screen Debug card** (`addToggle` / `addSlider` on a
-  section in `setupDebugMenu`), not new URL params. Collision sliders set `VOXEL_OPTS`
-  and call `rebuildCollision()`; gap-fill sliders set `WALK_FILL` and call
+  section in `setupDebugMenu`), not new URL params. Collision sliders (`voxelSlider`) set `VOXEL_OPTS`
+  for the session and call `rebuildCollision()`; gap-fill sliders set `WALK_FILL` and call
   `refillWalkable()`.
+- **A collision setting for one scan goes in that scan's `SCANS` entry**, with the reason
+  and the measured cost beside it (`context/collision.md`, "Settings for one scan").
+  Example scans only; never a branch on a scan's name in the pipeline. An uploaded scan
+  gets the defaults, so what it needs must be measured from the scan.
 - **`main.ts` does not build UI.** It talks to the `hud` handle; DOM and styles live
   in `src/ui/`, and every colour, font and size is a token in `ui.css`.
 - **The controller talks to collision only through the `Collision` interface**, so
@@ -128,7 +132,7 @@ When reviewing a change here, look for these, in this order:
    cannot state the root cause.
 3. **Hard-coding.** Sizes and distances should be relative to `charH`, the capsule
    radius or the nav step, with a reason. Flag bare numbers, per-scan or per-object
-   special cases, and thresholds repeated in more than one place.
+   special cases (other than a reasoned setting in `SCANS`), and thresholds repeated in more than one place.
 4. **Architecture and cleanliness.** One place for each decision (for example, all
    climb wall probes go through `climbWall`). Flag duplicated logic, state that two
    systems both write, functions doing several jobs, and comments that no longer
