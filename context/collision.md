@@ -261,8 +261,16 @@ near the scan's centre) and three things use it: the gap fill below, the flatten
 where the figurine starts.
 
 **Flattening (`floorFlat`, "Floor flatten" in the Debug card).** The mesh within 1.5
-grains of the ground's splats is snapped onto their level, which is where the scan's
-opacity peaks near the ground's row.
+grains of the ground's splats (2 in Playroom: see below) is snapped onto their level,
+which is where the scan's opacity peaks near the ground's row.
+
+- **Playroom is given 2 grains, by hand** (its entry in `SCANS`; "Settings for one scan"
+  below). Its rug is uneven, and ridges of it stood just above 1.5 grains as bumps on
+  the floor, at mesh detail 1 and 2 alike. At 2 its floor's roughness goes from 0.04 to
+  0 and its bumpiness from 0.090 to 0.077; the cost is that more low clutter becomes
+  floor (the area a climb can start from 2,253 → 2,150, and the small toy car is mostly
+  absorbed). 2 is not the default because the tabletop scans lose ground the figurine
+  can walk to: Kitchen 55.9% → 50.6% from spawn, Counter 44.2% → 40.7%.
 
 - **It used to be measured from y = 0 and from the mesh**: everything under 0.75 grains
   over y = 0 went to the median height of those vertices. y = 0 is a low percentile of
@@ -390,6 +398,27 @@ Known limits:
   mesh, which seeds 2 and 4 do not, and which Counter also shows without the fill. Not
   traced to a cause.
 
+## Settings for one scan
+
+`useScanSettings(id)` in `src/main.ts` decides the collision settings (`VOXEL_OPTS`) when
+a scan starts loading, from three layers, later ones winning:
+
+1. `VOXEL_DEFAULTS`: what every scan starts from.
+2. The scan's own, set by hand in its `SCANS` entry (`collision: { floorFlat: 2 }`). Only
+   the example scans have entries, so an uploaded scan gets the defaults.
+3. What has been set for the session (`voxelSet`): in the address, or by a Debug slider.
+   These hold across rooms, so a slider moved in one room stays where it was put in the
+   next, and `collisioncheck.mjs --with` overrides a scan's own value.
+
+The Debug sliders are moved to show the loaded scan's values. The cache key already
+includes every setting, so a scan's own value needs no `SCHEMA` bump.
+
+A hand-set value is for an example scan the defaults do not suit, with the reason and
+the measured cost written beside it. It does nothing for an uploaded scan. Settings an
+uploaded scan needs should be measured from the scan, the way mesh detail and whether
+the ground is flat already are (both inside the voxelizer, where the splats are); a
+measured layer would sit between 1 and 2.
+
 ## Rebuilding from the Debug sliders
 
 - **`rebuildCollision()` does nothing while a room is loading.** There is no settled
@@ -472,6 +501,11 @@ on opacity, size, or local density, then level and crop to the room.
 
 ## Ideas parked for later
 
+- Measuring more settings from the scan, for uploaded scans: the flatten band from how
+  uneven the ground is (the width of the peak the ground's level is read from; not yet
+  measured whether it tells Playroom from Kitchen and Counter), and the isovalue from how
+  faint a scan's plain surfaces are (Playroom's beanbag is a ring with open sides at
+  0.35 and nearly closed at 0.1, where the mesh is also fatter: median fit 0.42 → 0.67).
 - A cleaner continuous render of the nav surface as a debug mode (the `P` overlay
   already shows NavGrid tiles).
 - Letting the user paint a region as "one continuous surface" to bridge gaps the
