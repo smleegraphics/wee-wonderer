@@ -421,7 +421,9 @@ a scan starts loading, from three layers, later ones winning:
 
 1. `VOXEL_DEFAULTS`: what every scan starts from.
 2. The scan's own, set by hand in its `SCANS` entry (`collision: { floorFlat: 2 }`). Only
-   the example scans have entries, so an uploaded scan gets the defaults.
+   the example scans have entries, so an uploaded scan gets the defaults. An entry applies
+   whether or not the scan is `listed` in the Scans card: Playroom is unlisted (a local
+   test scan) but still loads with its own setting through `?scan=room2.ply`.
 3. What has been set for the session (`voxelSet`): in the address, or by a Debug slider.
    These hold across rooms, so a slider moved in one room stays where it was put in the
    next, and `collisioncheck.mjs --with` overrides a scan's own value.

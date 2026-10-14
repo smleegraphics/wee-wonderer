@@ -75,7 +75,7 @@ try {
   check('Escape folds the card', await page.evaluate(() => document.querySelector('.ww-debug').hidden));
 
   // --- switching rooms: the old one leaves gradually, the new one arrives
-  await page.getByRole('button', { name: 'Rooms', exact: true }).click();
+  await page.getByRole('button', { name: 'Scans', exact: true }).click();
   await page.locator('.ww-rooms').getByRole('button', { name: SECOND.label, exact: true }).click();
   const leaving = await soon(() => window.__dbg.reveal > 0 && window.__dbg.reveal < 1);
   check('the old room leaves gradually, with the loading note up', leaving && (await loading()) === 'true', `reveal=${(await dbg()).reveal}`);
@@ -83,14 +83,14 @@ try {
   check('` opens Debug while a room loads', await page.evaluate(() => !document.querySelector('.ww-debug').hidden));
   await page.keyboard.press('Escape');
   check(`${SECOND.label} loads and arrives`, await loaded() && await arrived() && logs.some((l) => l.startsWith(`loaded ${SECOND.file}`)));
-  await page.getByRole('button', { name: 'Rooms', exact: true }).click();
+  await page.getByRole('button', { name: 'Scans', exact: true }).click();
   check(`${SECOND.label} is marked current`, await page.evaluate(() => [...document.querySelectorAll('.ww-rooms [aria-current="true"]')].map((b) => b.textContent).join()) === SECOND.label);
 
   // --- picking a second room before the first has loaded: only the last one arrives
   const loadedLogs = () => logs.filter((l) => l.startsWith('loaded '));
   const loadedBefore = loadedLogs().length;
   await page.locator('.ww-rooms').getByRole('button', { name: FIRST.label, exact: true }).click();
-  await page.getByRole('button', { name: 'Rooms', exact: true }).click();
+  await page.getByRole('button', { name: 'Scans', exact: true }).click();
   await page.locator('.ww-rooms').getByRole('button', { name: SECOND.label, exact: true }).click();
   const settled = await loaded() && await arrived();
   const since = loadedLogs().slice(loadedBefore).map((l) => l.split(':')[0]);
@@ -98,7 +98,7 @@ try {
 
   // --- a collision slider moved while a room loads: the load still ends, with that room
   const before = logs.length;
-  await page.getByRole('button', { name: 'Rooms', exact: true }).click();
+  await page.getByRole('button', { name: 'Scans', exact: true }).click();
   await page.locator('.ww-rooms').getByRole('button', { name: FIRST.label, exact: true }).click();
   await page.getByLabel('Isovalue (fill)', { exact: true }).evaluate((el) => { el.value = '0.45'; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); });
   const ended = await loaded() && await arrived();

@@ -31,15 +31,19 @@ import { cameraPosition, cameraProjectionMatrixInverse, cameraWorldMatrix, cos, 
 
 const q = new URLSearchParams(location.search);
 const TEL = q.get('tel') === '1'; // debug telemetry: CLIMB-* console events + window.__dbg
-// demo scans for the switcher UI — config, not logic (each auto-levels at load).
-// `collision` is a scan's own collision settings, set by hand where the defaults do not suit it (useScanSettings).
-const SCANS: { file: string; label: string; collision?: Partial<VoxelSettings> }[] = [
-  { file: 'room2.ply', label: 'Playroom', collision: { floorFlat: 2 } }, // already tightly bounded — no cleanup needed. Its rug is uneven: ridges of it stand above the usual 1.5 grains and were left as bumps on the floor
-  { file: 'livingroom-clean.ply', label: 'Living Room' }, // floater-stripped (scripts/clean-scan.mjs)
-  { file: 'kitchen-clean.ply', label: 'Kitchen' },
-  { file: 'counter-clean.ply', label: 'Counter' },
+// Known scans — config, not logic (each auto-levels at load). The listed ones are the
+// rooms in the switcher, and the first of them opens by default; an unlisted scan is a
+// local test scan, loaded only by `?scan=` (CLAUDE.md). `collision` is a scan's own
+// collision settings, set by hand where the defaults do not suit it (useScanSettings).
+const SCANS: { file: string; label: string; listed: boolean; collision?: Partial<VoxelSettings> }[] = [
+  { file: 'kitchen-clean.ply', label: 'Kitchen', listed: true }, // Mip-NeRF 360, floater-stripped (scripts/clean-scan.mjs)
+  { file: 'livingroom-clean.ply', label: 'Living Room', listed: true },
+  { file: 'counter-clean.ply', label: 'Counter', listed: true },
+  { file: 'Marishka-clean.ply', label: 'Curled Up Dog', listed: true }, // a scan of our own: a dog on a blanket, the kind of capture a visitor brings
+  { file: 'room2.ply', label: 'Playroom', listed: false, collision: { floorFlat: 2 } }, // not shipped: its licence is unclear. Kept for the checks that measure on it. Already tightly bounded — no cleanup needed. Its rug is uneven: ridges of it stand above the usual 1.5 grains and were left as bumps on the floor
 ];
-const DEFAULT_SCAN = q.get('scan') ?? SCANS[0].file;
+const ROOMS = SCANS.filter((s) => s.listed);
+const DEFAULT_SCAN = q.get('scan') ?? ROOMS[0].file;
 const TARGET_RADIUS = 7; // normalize every scan to this world size (figurine ~0.45 tall)
 // Collision voxelization: build a cleaned blocky surface mesh from the splat and
 // show it as a debug overlay (toggle 'V', or ?voxel=1 to start visible).
@@ -140,7 +144,7 @@ const app = document.getElementById('app')!;
 // The on-screen UI (context/ui.md). Demo scans load by filename; an uploaded id
 // resolves to its blob URL in `uploads`.
 const hud = createHud({
-  rooms: SCANS.map((s) => ({ id: s.file, label: s.label })),
+  rooms: ROOMS.map((s) => ({ id: s.file, label: s.label })),
   onPickRoom: (id) => { const url = uploads.get(id); if (url) loadFromURL(url, id); else loadScan(id); },
   onImport: (file) => void importScan(file),
   onReset: () => { if (charLoaded) resetToSpawn(); }, // the way out of any spot the figurine gets stuck in

@@ -8,8 +8,9 @@ that unfold from them.
 
 ## What is on screen
 
-- **Tiles.** Rooms (top-right); Back to the start and Debug (bottom-right).
-- **Cards.** Rooms and Debug unfold beside the tile column. At most one is open;
+- **Tiles.** Scans (top-right); Back to the start and Debug (bottom-right). The Scans
+  card lists the `listed` entries of `SCANS` (`src/main.ts`), then "Import your own scan".
+- **Cards.** Scans and Debug unfold beside the tile column. At most one is open;
   `Escape` folds it. `` ` `` toggles Debug.
 - **Controls hint** (bottom-left), **status note** (top-centre).
 - **Loading view** while a scan is fetched and its collision built, and until the

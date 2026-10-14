@@ -43,7 +43,7 @@ try {
     } else if (op === 'tile') {
       await page.getByRole('button', { name: arg, exact: true }).click();
     } else if (op === 'room') {
-      await page.getByRole('button', { name: 'Rooms', exact: true }).click();
+      await page.getByRole('button', { name: 'Scans', exact: true }).click();
       await page.locator('.ww-rooms').getByRole('button', { name: arg, exact: true }).click();
     } else if (op === 'range') {
       const [label, value] = arg.split('='); // "Light strength=2" → that slider, set and released
