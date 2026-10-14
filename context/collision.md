@@ -291,6 +291,10 @@ which is where the scan's opacity peaks near the ground's row.
   everything below is right for a floor and pulls what is under a table up into it.
 - **Under a raised ground the real floor near y = 0 is still flattened the old way**
   (`FLOOR_UNDER`). Left as it comes, its scraps are places to stand.
+  Only there: this used to run as well whenever the flatten was off (at 0, or on ground
+  that is not flat), so "0 = off" still snapped the lowest 0.75 grains to their median.
+  Playroom at 0 read 0.35 roughness with that and 0.28 without. Marishka's numbers did
+  not change either way.
 - Result (floor roughness, before → after): Playroom 0.29 → 0.04, Living Room
   0.15 → 0.05, Kitchen 0.25 → 0.18, Counter 0.40 → 0.34, Marishka unchanged.
 - Cost: anything lower than the band is floor. The puzzle board on Playroom's rug is.

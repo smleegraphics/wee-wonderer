@@ -261,8 +261,10 @@ export function voxelizeCore(
   // With `refine` > 1 that is done on a grid that many times finer, on a solid trimmed
   // to it (refineSolid): what is solid was decided above, on the coarse grid, where a
   // thinly scanned wall still adds up to a wall; where exactly its surface is, is then
-  // read off the finer one. Skipped if the finer grid would be too large to hold.
-  // The ground: the level the figurine plays on (the floor of a room, the top of a table),
+  // read off the finer one. Skipped if the finer grid would be too large to hold. How
+  // much finer: as fine as the scan has splats for, up to `refine` (below).
+  //
+  // First, the ground: the level the figurine plays on (the floor of a room, the top of a table),
   // the height its splats are at, and how far either side of that the mesh is flattened
   // onto it (below). The height is where the scan's opacity is greatest within
   // GROUND_SEARCH of that level's row.
@@ -274,7 +276,7 @@ export function voxelizeCore(
   // half a percent). Flattened regardless, such ground is cut into terraces.
   const { level: groundLevel, flat: groundFlat } = (() => {
     if (ground < 0) return { level: 0, flat: false };
-    const about = minY + (ground + 0.5) * vs, span = GROUND_SEARCH * unit, BINS = 8 * GROUND_SEARCH * 2; // eight bins to a unit
+    const about = minY + (ground + 0.5) * vs, span = GROUND_SEARCH * unit, BINS = GROUND_BINS * GROUND_SEARCH * 2;
     const hist = new Float64Array(BINS), lying = new Float64Array(BINS);
     // the spread of splat i along two world axes (rows a and b of the matrix's linear part)
     const spread = (i: number, a: number, b: number) => {
@@ -294,14 +296,12 @@ export function voxelizeCore(
     for (let b = Math.max(0, best - 2); b <= Math.min(BINS - 1, best + 2); b++) { sum += hist[b] * (b + 0.5); weight += hist[b]; }
     let all = 0, level = 0;
     const at = peak(lying);
-    for (let b = 0; b < BINS; b++) { all += hist[b]; if (at >= 0 && Math.abs(b - at) <= 4) level += lying[b]; } // (within half a unit of the flat-lying splats' own peak)
+    for (let b = 0; b < BINS; b++) { all += hist[b]; if (at >= 0 && Math.abs(b - at) <= GROUND_BINS / 2) level += lying[b]; } // (within half a unit of the flat-lying splats' own peak)
     return { level: about + (sum / weight / BINS) * 2 * span - span, flat: !cov || level >= GROUND_FLAT * all }; // (with no shapes to go by, as before: taken as flat)
   })();
   const flatten = groundFlat ? (opts.floorFlat ?? 1.5) * unit : 0;
 
-  //
-  // How much finer is the scan's to say: as fine as it has splats for, up to `refine`.
-  // The finer grid's density is only worth reading where there are several splats to a
+  // How much finer the mesh's grid is. The finer grid's density is only worth reading where there are several splats to a
   // fine voxel; with fewer it is noise, and a mesh trimmed to noise is pitted and rough.
   // Of the five scans this was tried on, one has the splats for a grid twice as fine
   // (Playroom: 37 to a solid voxel, so 4.6 to a fine one) and comes out better for it;
@@ -360,8 +360,8 @@ export function voxelizeCore(
   // the floor SPLAT plane, but the reconstructed surface sits a bit below it, so
   // snapping to a hardcoded 0 would LIFT the collision floor above the real floor
   // (the figurine would hover). Instead the floor is flattened to the level its splats
-  // are at — flat and flush. The band stays one-sided so low clutter above it (toys,
-  // box lips) keeps its real height.
+  // are at — flat and flush. Low clutter above the band (toys, box lips) keeps its real
+  // height.
   //
   // Both the level and the band are taken from the ground's own splats (groundLevel,
   // above). They used to be taken from y = 0 and from the mesh: everything under
@@ -381,9 +381,11 @@ export function voxelizeCore(
   // the real floor down there is flattened too, as it always was: everything under
   // FLOOR_UNDER, to its median height. Left as it comes, its scraps are places to stand,
   // and the spawn search, which takes the lowest one with headroom, starts the figurine
-  // in a pocket under Counter's worktop.
+  // in a pocket under Counter's worktop. This is the real floor's, not the ground's, so it
+  // does not depend on the flatten: with the flatten off, or ground that is not flat
+  // (Marishka's blanket), ground at the bottom of the scan is left as it comes.
   let floorLevel = groundLevel; // for the backstop plane, which goes just under the floor
-  if (flatten === 0 || groundLevel - flatten > FLOOR_UNDER * unit) {
+  if (ground >= 0 && groundLevel - flatten > FLOOR_UNDER * unit) {
     const low: number[] = [];
     for (let i = 1; i < sn.positions.length; i += 3) if (sn.positions[i] < FLOOR_UNDER * unit) low.push(sn.positions[i]);
     floorLevel = low.length ? low.sort((a, b) => a - b)[low.length >> 1] : 0;
@@ -743,30 +745,11 @@ const SPLATS_PER_FINE_VOXEL = 3; // the mesh is built on a finer grid only while
 const GROUND_FLAT = 0.015; // ground is flat when at least this share of the opacity near it is splats lying flat at one height
 const LIES_FLAT_GROUND = 0.3; // a splat lies flat when it is thinner than this, up and down, as a share of its width
 const GROUND_SEARCH = 2;  // units either side of the ground's row in which its splats are looked for
+const GROUND_BINS = 8;    // to a unit: the height bins the ground's splats are counted in
 const STAND_ROOM = 5;    // units of clear space over a surface for it to be somewhere to stand: about the figurine's height (a unit is a fifth of it)
 const START_NEAR = 10;   // units round the scan's centre in which the level the figurine starts on is looked for
 const RAISED = 0.05;     // a level with more than this share of the scan's solid voxels below it is raised, not the ground (rooms: none below their floor; Kitchen's table 13%, Counter's worktop 26%)
 
-/**
- * Fill the gaps in the surface the figurine plays on.
- *
- * Which surface: the level it starts on, found the way the spawn search finds it (the
- * lowest place with room to stand, near the scan's centre: findSpawn in collision.ts).
- * In a room that is the floor; on a scan of a worktop it is the worktop, with the real
- * floor somewhere below. (It used to be "the busiest row in the lower third", which on
- * a worktop scan is that real floor, a layer the figurine never stands on.)
- *
- * Two kinds of gap are filled, in that level's row and the one over it:
- *  - holes with the surface all round them, as before (fillSlice);
- *  - where the level is the ground, and `width` is more than 1, bare stretches that
- *    something `width` units across cannot get into from outside, when the surface and
- *    whatever stands on it (walls, furniture) are in its way. A one-voxel flood leaks
- *    through any crack; a wide one is kept out of bays between furniture, and still gets
- *    in where a whole wall is missing.
- * The second is for ground only. Beside a raised surface there can be open air (the
- * aisle between two worktops); beside the ground there cannot. The level is raised when
- * a fair share of the scan's solid voxels lie below it.
- */
 /** The row of the level the figurine starts on (see fillGround), or -1 if there is nowhere to stand. `ox`, `oz`: the scan's centre, in voxels. */
 function groundRow(occ: Uint8Array, gx: number, gy: number, gz: number, ox: number, oz: number, per: number): number {
   const sx = gy * gz, sy = gz, room = Math.round(STAND_ROOM * per);
@@ -799,6 +782,26 @@ function groundRow(occ: Uint8Array, gx: number, gy: number, gz: number, ox: numb
   return top;
 }
 
+/**
+ * Fill the gaps in the surface the figurine plays on.
+ *
+ * Which surface: `top`, the level it starts on (groundRow), found the way the spawn search finds it (the
+ * lowest place with room to stand, near the scan's centre: findSpawn in collision.ts).
+ * In a room that is the floor; on a scan of a worktop it is the worktop, with the real
+ * floor somewhere below. (It used to be "the busiest row in the lower third", which on
+ * a worktop scan is that real floor, a layer the figurine never stands on.)
+ *
+ * Two kinds of gap are filled, in that level's row and the one over it:
+ *  - holes with the surface all round them, as before (fillSlice);
+ *  - where the level is the ground, and `width` is more than 1, bare stretches that
+ *    something `width` units across cannot get into from outside, when the surface and
+ *    whatever stands on it (walls, furniture) are in its way. A one-voxel flood leaks
+ *    through any crack; a wide one is kept out of bays between furniture, and still gets
+ *    in where a whole wall is missing.
+ * The second is for ground only. Beside a raised surface there can be open air (the
+ * aisle between two worktops); beside the ground there cannot. The level is raised when
+ * a fair share of the scan's solid voxels lie below it.
+ */
 function fillGround(occ: Uint8Array, gx: number, gy: number, gz: number, top: number, width: number, per: number): void {
   const sx = gy * gz, sy = gz, n = gx * gz;
   const room = Math.round(STAND_ROOM * per), slab = Math.max(1, Math.round(per)); // in voxels: room to stand, and how thick the level's surface is taken to be

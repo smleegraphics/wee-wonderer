@@ -266,17 +266,22 @@ function meshPieces({ mesh, unit }: HealthInput): Pick<CollisionHealth, 'triangl
   }
   let bumps = 0, area = 0;
   for (const m of boxes.values()) {
-    // the tensor's largest eigenvalue, by power iteration
-    let x = 1, y = 1, z = 1, top = 0;
-    for (let it = 0; it < 24; it++) {
-      const X = m[0] * x + m[1] * y + m[2] * z, Y = m[1] * x + m[3] * y + m[4] * z, Z = m[2] * x + m[4] * y + m[5] * z;
-      top = Math.hypot(X, Y, Z);
-      if (!(top > 0)) break;
-      x = X / top; y = Y / top; z = Z / top;
-    }
-    bumps += m[6] - top; area += m[6]; // (the tensor's trace is the box's area, in the same units as `top`)
+    bumps += m[6] - largestEigenvalue(m); area += m[6]; // (the tensor's trace is the box's area, in the same units as its eigenvalues)
   }
   return { triangles, pieces: inPiece.size, smallPieces: small, looseShare: triangles ? loose / triangles : 0, bumpiness: area ? bumps / area : 0 };
+}
+
+/** The largest eigenvalue of the symmetric 3 × 3 matrix [m0 m1 m2; m1 m3 m4; m2 m4 m5], in
+ *  closed form (the trigonometric solution of its characteristic cubic). Exact whichever way
+ *  its main direction lies: a search from a fixed starting direction finds nothing along a
+ *  direction square to that start. */
+function largestEigenvalue(m: Float64Array): number {
+  const off = m[1] * m[1] + m[2] * m[2] + m[4] * m[4], q = (m[0] + m[3] + m[5]) / 3;
+  const p2 = (m[0] - q) ** 2 + (m[3] - q) ** 2 + (m[5] - q) ** 2 + 2 * off;
+  if (!(p2 > 0)) return q; // a multiple of the identity: every direction alike
+  const p = Math.sqrt(p2 / 6), a = (m[0] - q) / p, b = m[1] / p, c = m[2] / p, d = (m[3] - q) / p, e = m[4] / p, f = (m[5] - q) / p;
+  const half = (a * (d * f - e * e) - b * (b * f - e * c) + c * (b * e - d * c)) / 2; // det of (m − qI) / p, halved
+  return q + 2 * p * Math.cos(Math.acos(Math.max(-1, Math.min(1, half))) / 3);
 }
 
 function fit({ mesh, splats, unit: voxel }: HealthInput): Pick<CollisionHealth, 'offMedian' | 'offP90' | 'missedShare'> {

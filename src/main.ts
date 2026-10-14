@@ -557,26 +557,22 @@ function onLoaded(gltf: GLTF): void {
 const spawnAt = new THREE.Vector3();
 /** Put the figurine on the floor at the spawn point and re-frame the camera behind it. */
 function resetToSpawn(): void {
-  // pick a clear floor spot for this scan (unless overridden with ?fx=&fz=)
-  if (q.has('fx') || q.has('fz')) {
-    player.position.set(Number(q.get('fx') ?? 0), 0, Number(q.get('fz') ?? 0));
-  } else if (collision && charH > 0) {
-    const radius = CAPSULE_RADIUS * charH, segLen = Math.max(0.02, charH - 2 * radius);
-    collision.findSpawn(radius, segLen, player.position);
+  // Start on the ground (unless placed with ?fx=&fz=): the walkable spot nearest the
+  // scan's centre that is at the level the scan's ground is (a room's floor, a table's
+  // top). findSpawn takes the lowest place near the centre with room to stand, which need
+  // not be that: on Counter it is the inside of a glass bowl, a step up from the worktop.
+  // It is kept for when the walkable cells are not there yet, or none is at that level.
+  const placed = q.has('fx') || q.has('fz');
+  if (!placed && navGrid && groundY !== null && navGrid.nearest(0, 0, groundY, spawnAt, charH * PLATFORM_OPTS.stepFactor)) {
+    player.position.copy(spawnAt);
   } else {
-    player.position.set(0, 0, 0);
-  }
-  // Start on the ground: the walkable spot nearest the scan's centre that is at the level
-  // the scan's ground is (a room's floor, a table's top). findSpawn above takes the lowest
-  // place near the centre with room to stand, which need not be that: on Counter it is
-  // the inside of a glass bowl, a step up from the worktop. It is kept for when the
-  // walkable cells are not there yet, or none of them is at that level.
-  const onGround = !q.has('fx') && !q.has('fz') && navGrid && groundY !== null
-    && navGrid.nearest(0, 0, groundY, spawnAt, charH * PLATFORM_OPTS.stepFactor);
-  if (onGround) player.position.copy(spawnAt);
-  else if (navGrid) {
+    if (placed) player.position.set(Number(q.get('fx') ?? 0), 0, Number(q.get('fz') ?? 0));
+    else if (collision && charH > 0) {
+      const radius = CAPSULE_RADIUS * charH, segLen = Math.max(0.02, charH - 2 * radius);
+      collision.findSpawn(radius, segLen, player.position);
+    } else player.position.set(0, 0, 0);
     // align the spawn with the NavGrid so the reliability layer picks it up cleanly
-    const s = navGrid.surfaceNear(player.position.x, player.position.z, player.position.y, charH);
+    const s = navGrid?.surfaceNear(player.position.x, player.position.z, player.position.y, charH) ?? null;
     if (s !== null) player.position.y = s;
   }
   player.rotation.set(0, 0, 0);
@@ -1252,9 +1248,6 @@ function climbGround(y: number, dx: number, dz: number): THREE.Vector3 | null {
   return null;
 }
 
-/** True if a wall is right in front (in the `dx,dz` direction); if so, enter the climb
- *  at `feetY` — the ground we're standing on, or wherever the feet are when a jump
- *  carries us into the wall. */
 /** Is there a wall to start climbing, standing at (x, feetY, z) and facing `dir` (unit,
  *  level)? The one test of that: tryStartClimb acts on it, and the collision health check
  *  counts the places it passes. Leaves the nearer hit's distance and slope in climbStart. */
@@ -1272,6 +1265,9 @@ function climbStartsHere(x: number, feetY: number, z: number, dir: THREE.Vector3
   return true;
 }
 
+/** True if a wall is right in front (in the `dx,dz` direction); if so, enter the climb
+ *  at `feetY` — the ground we're standing on, or wherever the feet are when a jump
+ *  carries us into the wall. */
 function tryStartClimb(dx: number, dz: number, feetY = supportY): boolean {
   if (!collision || !actions['climb']) return false;
   climbTry.set(dx, 0, dz);
