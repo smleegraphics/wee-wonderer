@@ -26,7 +26,16 @@ npm run build      # typecheck + production bundle
 ```
 
 Scans are not in the repo (`public/*.ply` is gitignored). `?scan=<file>` picks one;
-the default is `room2.ply` (Playroom). Cleaned demo scans are `*-clean.ply`.
+the default is `kitchen-clean.ply` (Kitchen). Cleaned demo scans are `*-clean.ply`.
+
+**Which scans ship.** `SCANS` in `src/main.ts` lists every known scan; only the
+`listed: true` ones appear in the Scans card, and the first of those is the default.
+The shipped scans are Kitchen, Living Room and Counter (Mip-NeRF 360, CC BY 4.0, which
+needs credit) and Curled Up Dog (`Marishka-clean.ply`, our own capture). **Playroom
+(`room2.ply`) is a local test scan only:** it comes from the Deep Blending dataset, whose licence is unstated, so it
+is unlisted and must not be uploaded or listed. It stays in `SCANS` because the checks
+below measure on it by file name and it has its own collision setting. Before listing a
+new scan, record where it came from and its licence.
 
 ## Where things are
 

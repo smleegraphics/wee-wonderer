@@ -25,7 +25,7 @@ scene.add(new THREE.GridHelper(20, 20, 0x44ff44, 0x338833)); // y=0 level refere
 const q = new URLSearchParams(location.search);
 const room = new THREE.Group();
 scene.add(room);
-const file = q.get('file') ?? 'room2.ply';
+const file = q.get('file') ?? 'kitchen-clean.ply'; // the app's default room (SCANS in main.ts)
 
 new GaussianSplatPLYLoader().load(`${import.meta.env.BASE_URL}${file}`, (geometry) => {
   const o = orientScan(geometry.getAttribute('position') as THREE.BufferAttribute);

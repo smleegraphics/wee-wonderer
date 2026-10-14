@@ -53,7 +53,7 @@ export function createHud(opts: HudOptions): Hud {
   const root = el('div', 'ww-ui');
 
   // --- tiles ---
-  const roomsTile = tile('rooms', 'Rooms', 0);
+  const roomsTile = tile('rooms', 'Scans', 0);
   const resetTile = tile('reset', 'Back to the start', 1);
   const debugTile = tile('debug', 'Debug', 2);
   const top = el('div', 'ww-corner ww-corner-top');
@@ -63,7 +63,7 @@ export function createHud(opts: HudOptions): Hud {
 
   // --- cards: at most one is unfolded at a time ---
   const roomsCard = el('section', 'ww-card ww-rooms');
-  roomsCard.appendChild(el('h2', 'ww-heading', 'Rooms'));
+  roomsCard.appendChild(el('h2', 'ww-heading', 'Scans'));
   const roomList = roomsCard.appendChild(el('ul'));
   const debug = createDebugPanel();
   const cards = [{ tile: roomsTile, card: roomsCard }, { tile: debugTile, card: debug.el }];
