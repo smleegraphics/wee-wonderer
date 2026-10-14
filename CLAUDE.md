@@ -82,7 +82,10 @@ Visual and behavioural checks run headless in real Chrome through Playwright.
   change with what it replaced in the same sitting (`context/frame-time.md`).
 - **Climb regression check:** `node scripts/climbfuzz.mjs <scan> <seconds> <seed>`
   walks, jumps and climbs at random and reports any frame where the climber is
-  inside a solid. Run a few seeds, at most three browsers at a time.
+  inside a solid. Run a few seeds, at most three browsers at a time. A run repeats
+  exactly (same scan, seed and code, same result): it drives the figurine through
+  `window.__step` (`?tel=1`), which moves it in fixed frames instead of by the clock.
+  `seconds` is game time. A script that needs a repeatable run should do the same.
 - **Drive it:** press keys with Playwright and poll `__dbg`. Do not judge movement
   from screenshots alone. `scripts/drive.mjs` also clicks UI by name: `tile:Debug`,
   `room:Kitchen`, `range:Isovalue (fill)=0.4`.

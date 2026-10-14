@@ -113,6 +113,15 @@ the upright climb read better. It is in history as a commit and its revert.
 - Counter (the plant, the clutter) and Kitchen (the Lego bulldozer) reach climbs
   from spawn. Playroom and Living Room get only a handful of climb samples per run,
   so walls there still need a human.
+- **A run repeats exactly.** It used to differ run to run, for two reasons: it started
+  driving while the room was still arriving (keys do nothing then), and it held keys
+  for real milliseconds while each frame's length came from the clock, so the same
+  hold carried the figurine a different distance each time (Kitchen, seed 1: the two
+  paths parted at the fourth sample). It now waits for the room (`reveal === 1`) and
+  drives through `window.__step(keys, seconds, jump)`, which, once called, runs the
+  controller, animation and camera only for the time asked for, in frames of
+  `STEP_DT`, and holds everything still between calls. Two runs of a seed give the same
+  path to the millimetre. A violation can now be rerun and looked at.
 
 ## Known limitations
 
