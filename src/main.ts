@@ -633,14 +633,40 @@ function keyEvent(e: KeyboardEvent, v: 0 | 1): void {
     case 'KeyA': move.l = v; break;
     case 'KeyD': move.r = v; break;
     case 'ShiftLeft': case 'ShiftRight': move.run = !!v; break;
-    case 'Space':
-      if (v && state === 'ground') startJump();
-      else if (v && state === 'climb') climbJumpOff();
-      e.preventDefault(); break;
+    case 'Space': if (v) jumpKey(); e.preventDefault(); break;
   }
 }
 addEventListener('keydown', (e) => keyEvent(e, 1));
 addEventListener('keyup', (e) => keyEvent(e, 0));
+
+/** The jump key: a jump from the ground, or off the wall when climbing. */
+function jumpKey(): void {
+  if (state === 'ground') startJump();
+  else if (state === 'climb') climbJumpOff();
+}
+
+// ?tel=1 only: drive the figurine in fixed steps, for a script whose run has to repeat
+// exactly (scripts/climbfuzz.mjs). Driven by real key presses, a run cannot repeat: each
+// frame is as long as the clock says, so a key held for the same 300 ms carries the
+// figurine a different distance every time. Once a script has called __step, time stops
+// coming from the clock: the figurine, its animation and the camera move only for the
+// `seconds` a call asks for, in frames STEP_DT long, with the keys it names held (and a
+// jump at the first). Between calls nothing moves, however long the script takes.
+const STEP_DT = 1 / 30; // seconds: within the 0.05 a real frame is clamped to
+let stepped = false, stepFrames = 0, stepDone: (() => void) | null = null;
+if (TEL) (window as unknown as { __step?: (keys: string[], seconds: number, jump?: boolean) => Promise<void> }).__step = (keys, seconds, jump = false) =>
+  new Promise<void>((done) => {
+    stepped = true;
+    for (const [code, k] of [['KeyW', 'f'], ['KeyS', 'b'], ['KeyA', 'l'], ['KeyD', 'r']] as const) {
+      const down = keys.includes(code) ? 1 : 0;
+      if (down && !move[k]) camBasisHeld = false; // a fresh press, as keyEvent has it
+      move[k] = down;
+    }
+    move.run = keys.includes('ShiftLeft');
+    if (jump) jumpKey();
+    stepFrames = Math.max(1, Math.round(seconds / STEP_DT));
+    stepDone = done;
+  });
 
 function startJump(): void {
   if (actions['jump_start']) { state = 'jump_start'; play('jump_start', 0.06); }
@@ -1752,9 +1778,10 @@ async function main(): Promise<void> {
   new GLTFLoader().load(`${import.meta.env.BASE_URL}character.glb`, onLoaded, undefined, (err) => hud.status(`character.glb load failed: ${String(err)}`, 'error'));
 
   renderer.setAnimationLoop(() => {
-    const dt = Math.min(clock.getDelta(), 0.05);
+    const still = stepped && stepFrames === 0; // (__step: between a script's calls)
+    const dt = stepped ? (still ? 0 : STEP_DT) : Math.min(clock.getDelta(), 0.05);
     const waiting = loadingViewOn();
-    if (charLoaded) { if (!waiting) updateController(dt); if (FREECAM) updateFreeCam(); else updateCamera(dt); }
+    if (charLoaded && !still) { if (!waiting) updateController(dt); if (FREECAM) updateFreeCam(); else updateCamera(dt); }
     mixer?.update(dt);
     if (charLoaded) { updateContactShadow(dt); updateScanLight(dt); updateScanDebug(); }
     // Everything about waiting follows from one number, how much of the room is in place,
@@ -1767,6 +1794,7 @@ async function main(): Promise<void> {
     surround.lerpColors(SURROUND.sky, SURROUND.beyond, THREE.MathUtils.smoothstep(arrived, SURROUND.darken[0], SURROUND.darken[1]));
     if (TEL) publishDebugState();
     if (TEL) applyMatteView();
+    if (stepFrames > 0 && --stepFrames === 0) { stepDone?.(); stepDone = null; }
     void renderer.renderAsync(scene, camera).then(() => {
       if (charLoaded && ++frames === 3) (window as unknown as { __wwReady?: boolean }).__wwReady = true;
     });

@@ -2,18 +2,22 @@
 // rule that a climber is never inside something solid (window.__dbg.probe — see
 // publishDebugState in src/main.ts). Needs the dev server running.
 //
-//   node scripts/climbfuzz.mjs [scan] [seconds] [seed] [loadWaitMs]
+//   node scripts/climbfuzz.mjs [scan] [seconds] [seed]
 //   node scripts/climbfuzz.mjs counter-clean.ply 90 1
 //
 // Prints each violation with the climb events that led up to it, then a summary
 // line, including how deep the climber's body sat in the mesh (`sunk`). Exits 1 if there were violations. Counter and Kitchen reach climbs from
-// spawn; Playroom needs loadWaitMs ≈ 20000. Run a few seeds, a few at a time.
+// spawn. Run a few seeds, a few at a time.
+//
+// A run repeats exactly: the same scan, seed and code take the same path and report the
+// same. It starts once the room has arrived, and drives the figurine through
+// window.__step (?tel=1), which moves it only for the time asked for, in fixed frames,
+// whatever the frame rate. `seconds` is that game time, not the time the run takes.
 import { chromium } from 'playwright';
 
 const scan = process.argv[2] ?? 'counter-clean.ply';
 const seconds = Number(process.argv[3] ?? 90);
 const seed0 = Number(process.argv[4] ?? 1);
-const loadWait = Number(process.argv[5] ?? 4000);
 const url = `http://localhost:5173/?scan=${scan}&tel=1`;
 
 let seed = seed0;
@@ -31,9 +35,7 @@ page.on('console', (m) => {
   if (t.startsWith('CLIMB')) { recent.push(t); if (recent.length > 6) recent.shift(); }
 });
 await page.goto(url, { waitUntil: 'load', timeout: 60000 });
-await page.waitForFunction(() => window.__wwReady === true, undefined, { timeout: 60000 }).catch(() => {});
-await page.waitForTimeout(loadWait);
-await page.mouse.click(640, 400);
+await page.waitForFunction(() => window.__wwReady === true && window.__dbg?.reveal === 1, undefined, { timeout: 280000 }); // the room has arrived: it is still loading until then, and keys do nothing
 
 let samples = 0, violations = 0, sunkSum = 0, sunkMax = 0, sunkDeep = 0;
 const DEEP = 0.5; // radii: the body is half a capsule radius into something
@@ -47,22 +49,20 @@ const check = async () => {
   // coincident, so a ray straight down can report either side of a floor it is above.
   if (![p.ahead, p.behind, p.above].some((v) => v.endsWith('B'))) return;
   violations++;
-  console.log(`VIOLATION inside a solid: y=${d.py} cling=${d.cling} probe=${JSON.stringify(p)}\n   after: ${recent.join(' | ')}`);
+  console.log(`VIOLATION inside a solid: at ${d.px}, ${d.py}, ${d.pz} cling=${d.cling} probe=${JSON.stringify(p)}\n   after: ${recent.join(' | ')}`);
 };
 
 const keys = ['KeyW', 'KeyA', 'KeyS', 'KeyD'];
-const t0 = Date.now();
-let held = [];
-while (Date.now() - t0 < seconds * 1000) {
-  for (const k of held) await page.keyboard.up(k);
-  held = [keys[Math.floor(rnd() * 4)]];
+let played = 0; // game seconds
+while (played < seconds) {
+  const held = [keys[Math.floor(rnd() * 4)]];
   if (rnd() < 0.3) held.push(keys[Math.floor(rnd() * 4)]);
   if (rnd() < 0.5) held.push('ShiftLeft');
-  for (const k of held) await page.keyboard.down(k);
   const hops = 2 + Math.floor(rnd() * 6);
   for (let i = 0; i < hops; i++) {
-    if (rnd() < 0.7) await page.keyboard.press('Space');
-    await page.waitForTimeout(200 + rnd() * 300);
+    const jump = rnd() < 0.7, wait = 0.2 + rnd() * 0.3;
+    await page.evaluate(([k, s, j]) => window.__step(k, s, j), [held, wait, jump]);
+    played += wait;
     await check();
   }
 }
