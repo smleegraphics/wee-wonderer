@@ -304,11 +304,18 @@ which is where the scan's opacity peaks near the ground's row.
   0.15 → 0.05, Kitchen 0.25 → 0.18, Counter 0.40 → 0.34, Marishka unchanged.
 - Cost: anything lower than the band is floor. The puzzle board on Playroom's rug is.
 
-**Starting (`resetToSpawn`).** The figurine starts on the walkable cell nearest the
-scan's centre that is at the ground's height (`VoxelSurface.groundY`). `findSpawn`'s
-"lowest place near the centre with room to stand" is the fallback. On Counter that
-place is the inside of a glass bowl: it always was, and a bumpy worktop used to make a
-ramp out of it.
+**Starting (`resetToSpawn`).** The figurine starts at the spot nearest the scan's
+centre that is at the ground's height (`VoxelSurface.groundY`, within a step) and where
+its whole capsule fits: `findSpawn` with a level. Without a level, `findSpawn` takes the
+"lowest place near the centre with room to stand"; that is the fallback, for when
+nothing at the ground's height fits. On Counter that lowest place is the inside of a
+glass bowl: it always was, and a bumpy worktop used to make a ramp out of it.
+
+- **A walkable cell is not a place the figurine fits.** A cell only has room overhead at
+  one point. Starting on the walkable cell nearest the centre put Kitchen's figurine on
+  the table under the Lego bulldozer, between its tracks, boxed in. The health check did
+  not see it: walking reach is counted over cells, which ignore the body's width, and that
+  cell joined the table.
 
 ## Playroom cannot be cleaned by the floater cleaner
 

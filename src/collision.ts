@@ -78,7 +78,7 @@ export class NavGrid {
 
   /** Nearest walkable point to (x,z) with height near `targetY`, searched in
    *  expanding rings — recovery when the player has left every platform. */
-  nearest(x: number, z: number, targetY: number, out: THREE.Vector3, band = Infinity): boolean {
+  nearest(x: number, z: number, targetY: number, out: THREE.Vector3): boolean {
     const ix0 = Math.floor((x - this.minX) / this.step);
     const iz0 = Math.floor((z - this.minZ) / this.step);
     for (let r = 0; r < Math.max(this.nx, this.nz); r++) {
@@ -90,7 +90,6 @@ export class NavGrid {
           if (ix < 0 || ix >= this.nx || iz < 0 || iz >= this.nz) continue;
           for (let e = this.head[ix * this.nz + iz]; e !== -1; e = this.nextE[e]) {
             const d = Math.abs(this.ey[e] - targetY);
-            if (d > band) continue; // not at the height asked for
             if (d < bestD) { bestD = d; by = this.ey[e]; bx = this.minX + (ix + 0.5) * this.step; bz = this.minZ + (iz + 0.5) * this.step; found = true; }
           }
         }
@@ -129,8 +128,11 @@ export interface Collision {
   wallAhead(origin: THREE.Vector3, dir: THREE.Vector3, max: number): WallHit | null;
   /** Find a sensible spawn near the content centre: stand on the lowest real
    *  up-facing surface with headroom (the floor in a room, the couch/table top in
-   *  a floorless scan), never the phantom backstop plane. Writes {x,y,z} to `out`. */
-  findSpawn(radius: number, segLength: number, out: THREE.Vector3): void;
+   *  a floorless scan), never the phantom backstop plane, where the capsule fits.
+   *  With `level`, only surfaces within `band` of that height count, and nothing is
+   *  written unless such a spot is found. Writes {x,y,z} to `out`; true if it found a
+   *  spot on real geometry where the capsule fits. */
+  findSpawn(radius: number, segLength: number, out: THREE.Vector3, level?: number, band?: number): boolean;
   /** Build the walkable NavGrid — the reliable, hole-filled ground the controller
    *  stands on and is confined to. */
   buildNavGrid(sampleStep: number, headroom: number, stepThreshold: number, minCells: number, slopeMin?: number, minY?: number, bridge?: number, fillIters?: number): NavGrid;
@@ -236,7 +238,7 @@ export class MeshCollision implements Collision {
     outCorrection.set(feet.x - ax, feet.y - ay, feet.z - az);
   }
 
-  findSpawn(radius: number, segLength: number, out: THREE.Vector3): void {
+  findSpawn(radius: number, segLength: number, out: THREE.Vector3, level = NaN, band = Infinity): boolean {
     // Spiral (x,z) outward from the ORIGIN — the scan's recentered content centre
     // (splat median), which sits inside the real content — and stand on the lowest
     // real surface there.
@@ -256,25 +258,28 @@ export class MeshCollision implements Collision {
       for (let a = 0; a < n; a++) {
         const ang = (a / n) * Math.PI * 2;
         const x = r * Math.cos(ang), z = r * Math.sin(ang);
-        const s = this.standSurface(x, z, capH); // lowest real up-facing surface with headroom
+        const s = this.standSurface(x, z, capH, level, band); // lowest real up-facing surface with headroom (at `level`, if given)
         if (!s) continue;
         const sy = s.y, onPlane = !s.real;
         const clear = this.isClearSpawn(x, sy, z, radius, segLength, capH);
         if (!onPlane) {
-          if (clear) { out.set(x, sy, z); return; }   // ideal: clear spot on real geometry
+          if (clear) { out.set(x, sy, z); return true; }   // ideal: clear spot on real geometry
           if (Number.isNaN(realFallbackY)) { realFallbackY = sy; realX = x; realZ = z; }
         } else if (clear && Number.isNaN(planeFallbackY)) { planeFallbackY = sy; planeX = x; planeZ = z; }
       }
     }
+    if (!Number.isNaN(level)) return false;                                        // nowhere at that level: the caller decides
     if (!Number.isNaN(realFallbackY)) out.set(realX, realFallbackY, realZ);       // on the content, cramped
     else if (!Number.isNaN(planeFallbackY)) out.set(planeX, planeFallbackY, planeZ); // only the backstop was clear
     else out.set(0, 0, 0);                                                        // nothing — origin
+    return false;
   }
 
   /** The lowest REAL up-facing surface at (x,z) with `needAbove` headroom (a floor,
    *  a couch seat, a table top…), or the backstop plane as a last resort, or null.
-   *  Casts a ray down through the whole scene and inspects every crossing. */
-  private standSurface(x: number, z: number, needAbove: number): { y: number; real: boolean } | null {
+   *  With `level`, only surfaces within `band` of it. Casts a ray down through the
+   *  whole scene and inspects every crossing. */
+  private standSurface(x: number, z: number, needAbove: number, level = NaN, band = Infinity): { y: number; real: boolean } | null {
     this.ray.origin.set(x, this.bounds.max.y + 1, z);
     this.ray.direction.copy(DOWN);
     const hits = this.bvh.raycast(this.ray, THREE.DoubleSide);
@@ -288,6 +293,7 @@ export class MeshCollision implements Collision {
       for (let j = 0; j < hits.length; j++) { const yj = hits[j].point.y; if (yj > h.point.y + 0.02 && yj < above) above = yj; }
       if (above - h.point.y < needAbove) continue; // no room to stand
       const y = h.point.y - this.groundOffset;
+      if (Math.abs(y - level) > band) continue; // not at the height asked for (never true without a level: NaN)
       if ((h.faceIndex ?? 0) < this.planeStartTri) return { y, real: true }; // lowest real walkable — done
       if (!plane) plane = { y, real: false }; // backstop plane, kept as a fallback
     }

@@ -554,27 +554,28 @@ function onLoaded(gltf: GLTF): void {
   console.log(`character: ${charH.toFixed(3)} tall, ${gltf.animations.length} clips`);
 }
 
-const spawnAt = new THREE.Vector3();
 /** Put the figurine on the floor at the spawn point and re-frame the camera behind it. */
 function resetToSpawn(): void {
-  // Start on the ground (unless placed with ?fx=&fz=): the walkable spot nearest the
-  // scan's centre that is at the level the scan's ground is (a room's floor, a table's
-  // top). findSpawn takes the lowest place near the centre with room to stand, which need
-  // not be that: on Counter it is the inside of a glass bowl, a step up from the worktop.
-  // It is kept for when the walkable cells are not there yet, or none is at that level.
-  const placed = q.has('fx') || q.has('fz');
-  if (!placed && navGrid && groundY !== null && navGrid.nearest(0, 0, groundY, spawnAt, charH * PLATFORM_OPTS.stepFactor)) {
-    player.position.copy(spawnAt);
-  } else {
-    if (placed) player.position.set(Number(q.get('fx') ?? 0), 0, Number(q.get('fz') ?? 0));
-    else if (collision && charH > 0) {
-      const radius = CAPSULE_RADIUS * charH, segLen = Math.max(0.02, charH - 2 * radius);
+  // Start on the ground (unless placed with ?fx=&fz=): the spot nearest the scan's centre,
+  // at the level the scan's ground is (a room's floor, a table's top), where the figurine
+  // fits. Without the level, findSpawn takes the lowest place near the centre with room
+  // to stand, which need not be the ground: on Counter it is the inside of a glass bowl, a
+  // step up from the worktop. That is kept for when nothing at the ground's level fits.
+  // (The walkable cell nearest the centre is not enough: a cell only has room overhead at
+  // one point, and Kitchen's nearest is the table under the Lego bulldozer, between its
+  // tracks, where the figurine is boxed in.)
+  if (q.has('fx') || q.has('fz')) {
+    player.position.set(Number(q.get('fx') ?? 0), 0, Number(q.get('fz') ?? 0));
+  } else if (collision && charH > 0) {
+    const radius = CAPSULE_RADIUS * charH, segLen = Math.max(0.02, charH - 2 * radius);
+    if (groundY === null || !collision.findSpawn(radius, segLen, player.position, groundY, charH * PLATFORM_OPTS.stepFactor))
       collision.findSpawn(radius, segLen, player.position);
-    } else player.position.set(0, 0, 0);
-    // align the spawn with the NavGrid so the reliability layer picks it up cleanly
-    const s = navGrid?.surfaceNear(player.position.x, player.position.z, player.position.y, charH) ?? null;
-    if (s !== null) player.position.y = s;
+  } else {
+    player.position.set(0, 0, 0);
   }
+  // align the spawn with the NavGrid so the reliability layer picks it up cleanly
+  const s = navGrid?.surfaceNear(player.position.x, player.position.z, player.position.y, charH) ?? null;
+  if (s !== null) player.position.y = s;
   player.rotation.set(0, 0, 0);
   velocity.set(0, 0, 0);
   wasGrounded = false;
