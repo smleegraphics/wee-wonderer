@@ -181,7 +181,7 @@ function clearRoom(): void {
   room.scale.setScalar(1);
 }
 
-const renderer = new WebGPURenderer({ antialias: true });
+const renderer = new WebGPURenderer({ antialias: false }); // no MSAA: every splat would be blended at several samples a pixel, which a soft splat gains nothing from (context/frame-time.md)
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 app.appendChild(renderer.domElement);

@@ -14,6 +14,7 @@ The two docs below are the ones to read before touching movement.
 - **Climbing, jumping onto walls, the follow camera, climb animation** → `context/climb.md`
 - **Lights, the environment map, the contact shadow, rendering the splats from another camera** → `context/lighting.md`
 - **Filling see-through ground with extra splats, or measuring how see-through a scan is** → `context/splat-fill.md`
+- **Frame rate, or anything that changes how much the graphics card draws** → `context/frame-time.md`
 - **Anything on screen that is not the 3D view: tiles, cards, the Debug card, title and loading screens, fonts, colours** → `context/ui.md`
 
 ## Commands
