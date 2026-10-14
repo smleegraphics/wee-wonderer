@@ -7,6 +7,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GaussianSplat } from 'three/addons/objects/GaussianSplat.js';
 import { GaussianSplatPLYLoader } from 'three/addons/loaders/GaussianSplatPLYLoader.js';
 import { orientScan } from './orient-scan';
+import { LISTED_SCANS, scanURL } from './scans';
 
 const app = document.getElementById('app')!;
 const renderer = new WebGPURenderer({ antialias: true }); // unlike the game (context/frame-time.md): this page is for looking at the y = 0 grid's thin lines, and its frame rate does not matter
@@ -25,9 +26,9 @@ scene.add(new THREE.GridHelper(20, 20, 0x44ff44, 0x338833)); // y=0 level refere
 const q = new URLSearchParams(location.search);
 const room = new THREE.Group();
 scene.add(room);
-const file = q.get('file') ?? 'kitchen-clean.ply'; // the app's default room (SCANS in main.ts)
+const file = q.get('file') ?? LISTED_SCANS[0].file; // the app's default scan
 
-new GaussianSplatPLYLoader().load(`${import.meta.env.BASE_URL}${file}`, (geometry) => {
+new GaussianSplatPLYLoader().load(scanURL(file), (geometry) => {
   const o = orientScan(geometry.getAttribute('position') as THREE.BufferAttribute);
   const splat = new GaussianSplat(geometry);
   splat.position.copy(o.center).multiplyScalar(-1);

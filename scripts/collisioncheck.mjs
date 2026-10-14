@@ -1,7 +1,7 @@
 // How sound each room's collision is as ground for a game, in numbers, and whether any
 // of them has got worse than the saved baseline (context/collision.md). The measuring is
 // in src/collision-health.ts, reached through window.__collisionHealth (?tel=1). Needs
-// the dev server running and the demo scans in public/.
+// the dev server running and the demo scans in scans/.
 //
 //   node scripts/collisioncheck.mjs [scan.ply ...]     compare with the baseline; exits 1 if a number got worse
 //   node scripts/collisioncheck.mjs --save [scan ...]  make what is measured now the baseline

@@ -1,6 +1,6 @@
 // Offline scan cleanup: strip floaters from a 3DGS .ply so scans render clean.
 //
-//   node scripts/clean-scan.mjs public/livingroom.ply [out.ply] [--opts]
+//   node scripts/clean-scan.mjs scans/livingroom.ply [out.ply] [--opts]
 //
 // Floaters in Gaussian-splat scans are low-opacity, oversized, and spatially
 // isolated; real surfaces are opaque and densely packed. A splat is dropped when

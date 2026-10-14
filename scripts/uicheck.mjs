@@ -1,5 +1,5 @@
 // Behaviour checks for the on-screen UI and the loading view (context/ui.md), headless
-// in the system Chrome. Needs the dev server running and the demo scans in public/.
+// in the system Chrome. Needs the dev server running and the demo scans in scans/.
 //
 //   node scripts/uicheck.mjs [baseUrl]
 //
