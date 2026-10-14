@@ -27,7 +27,7 @@ try {
   page.on('pageerror', (e) => console.log('[pageerror]', e.message));
   await page.addInitScript(() => localStorage.setItem('ww.titleSeen', '1'));
   await page.goto(`http://localhost:5173/?scan=${scan}&tel=1&az=0`, { waitUntil: 'load' });
-  await page.waitForFunction(() => window.__wwReady === true && window.__dbg?.reveal === 1, { timeout: 120000 });
+  await page.waitForFunction(() => window.__wwReady === true && window.__dbg?.reveal === 1, undefined, { timeout: 280000 });
   await page.addStyleTag({ content: 'body *{visibility:hidden!important} canvas{visibility:visible!important}' });
   await page.waitForTimeout(1500);
 

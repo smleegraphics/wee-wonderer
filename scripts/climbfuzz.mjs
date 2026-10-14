@@ -31,7 +31,7 @@ page.on('console', (m) => {
   if (t.startsWith('CLIMB')) { recent.push(t); if (recent.length > 6) recent.shift(); }
 });
 await page.goto(url, { waitUntil: 'load', timeout: 60000 });
-await page.waitForFunction(() => window.__wwReady === true, { timeout: 60000 }).catch(() => {});
+await page.waitForFunction(() => window.__wwReady === true, undefined, { timeout: 60000 }).catch(() => {});
 await page.waitForTimeout(loadWait);
 await page.mouse.click(640, 400);
 

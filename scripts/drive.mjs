@@ -17,7 +17,7 @@ try {
   // a fresh browser profile opens on the title screen, which takes the keyboard until Begin is pressed
   if (!startOnTitle) await page.addInitScript(() => localStorage.setItem('ww.titleSeen', '1'));
   await page.goto(url, { waitUntil: 'load', timeout: 15000 });
-  await page.waitForFunction(() => window.__wwReady === true, { timeout: 10000 }).catch(() => {});
+  await page.waitForFunction(() => window.__wwReady === true, undefined, { timeout: 10000 }).catch(() => {});
   if (!startOnTitle) await page.mouse.click(640, 400); // focus so key events land
 
   for (const s of steps) {

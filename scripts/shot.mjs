@@ -26,7 +26,7 @@ try {
 
   await page.goto(url, { waitUntil: 'load', timeout: 15000 });
   await page
-    .waitForFunction(() => window.__wwReady === true, { timeout: 10000 })
+    .waitForFunction(() => window.__wwReady === true, undefined, { timeout: 10000 })
     .catch(() => console.log('[shot] __wwReady never set — capturing anyway'));
   if (extraWait) await page.waitForTimeout(extraWait);
   await page.waitForTimeout(300); // let a couple more frames land
