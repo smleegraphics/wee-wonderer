@@ -9,7 +9,7 @@ that unfold from them.
 ## What is on screen
 
 - **Tiles.** Scans (top-right); Back to the start and Debug (bottom-right). The Scans
-  card lists the `listed` entries of `SCANS` (`src/scans.ts`), then "Import your own scan".
+  card lists the `listed` entries of `SCANS` (`src/scan-list.ts`), then "Import your own scan".
 - **Cards.** Scans and Debug unfold beside the tile column. At most one is open;
   `Escape` folds it. `` ` `` toggles Debug.
 - **Controls hint** (bottom-left), **status note** (top-centre).

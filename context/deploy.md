@@ -15,11 +15,14 @@ hosting involves it.
 
 ## Where scans come from
 
-- **`src/scans.ts`** holds the list (`SCANS`, `LISTED_SCANS`) and `scanURL(file)`, the
-  one place a scan's address is decided. It has no side effects, so
-  `scripts/upload-scans.mjs` reads the same list through Vite.
+- **`src/scan-list.ts`** holds the list (`SCANS`, `LISTED_SCANS`) and `SCAN_DIR`, as
+  plain data with no `import.meta.env`, so `vite.config.ts` and
+  `scripts/upload-scans.mjs` read the same list and folder name as the app.
+- **`src/scans.ts`** has `scanURL(file)`, the one place a scan's address is decided.
+- **Scan names are flat** (no folders), locally and on the scan host alike: both refuse
+  a name with a `/`, so what loads locally loads when deployed.
 - **Locally**, scans live in the gitignored **`scans/`** folder, and a plugin in
-  `vite.config.ts` serves it at `/scans/` on the dev and preview servers.
+  `vite.config.ts` serves it at `<base>scans/` on the dev and preview servers.
 - **A public build** sets **`VITE_SCAN_BASE`** to the scan host's address. `vite build`
   warns when it is unset, because such a build fetches from `/scans/`, which only
   `vite preview` serves.
@@ -33,13 +36,20 @@ hosting involves it.
 bucket `wee-scans`:
 
 - **Read-only:** GET and HEAD of one object by name. No listing (`/` is 404), no writes
-  (405), no paths with `/`.
-- **CORS:** only the origins in `ALLOWED_ORIGINS` get `Access-Control-Allow-Origin`.
+  (405), no names with `/`, and a malformed `%` escape is 404, not an error.
+- **CORS:** only origins matching `ALLOWED_ORIGINS` get `Access-Control-Allow-Origin`.
   Any other page's fetch is refused by the browser, and the app shows its scan-load
   error ("scan load failed: Failed to fetch"). The app's fetch is a simple GET, so
-  there is no preflight to answer.
+  there is no preflight to answer. An entry may hold `*`, which matches letters, digits
+  and hyphens but never a dot, for Vercel's per-build addresses
+  (`https://wee-wonderer-*-<scope>.vercel.app`); a dot would let another domain match.
+  A missing `ALLOWED_ORIGINS` allows nothing (no CORS header) rather than failing.
 - **Headers:** `Content-Length` (the load progress is measured against it), and the
   `Content-Type` and `Cache-Control` stored with the object at upload.
+- **Conditions and ranges are R2's:** the request's headers go to `get` as `onlyIf` and
+  `range`, so a revalidating browser gets 304 and a range request 206. R2 reports a
+  served range as `{ offset, length }`, a suffix range ("the last n bytes") included; its
+  `suffix` key is present but undefined, so testing `'suffix' in range` is wrong.
 - **Why a Worker and not the bucket's `r2.dev` address:** Cloudflare rate-limits
   `r2.dev` and says it is for testing. An R2 custom domain needs the domain's DNS on
   Cloudflare, and samanthamlee.com's DNS is on Vercel. Visitors never see the scan
@@ -52,7 +62,16 @@ bucket `wee-scans`:
 
 `node scripts/upload-scans.mjs` uploads every **listed** scan from `scans/` (it stops if
 one is missing). Unlisted scans are never uploaded: Playroom's licence is unclear
-(CLAUDE.md, "Which scans ship").
+(CLAUDE.md, "Which scans ship"). Wrangler is in the Worker's own package, so the app's
+install and Vercel's builds do not carry it: `npm install --prefix deploy/scans-worker`
+once.
+
+- A scan already in the bucket is downloaded and compared byte for byte (R2 does not
+  charge for downloads, and wrangler has no command that returns an object's hash):
+  the same bytes are skipped, different bytes stop the upload with exit code 1.
+- "Not in the bucket" is recognised by wrangler's message ("The specified key does not
+  exist.", measured on the local bucket). If the real bucket words it otherwise, the
+  script stops with the message rather than uploading over anything.
 
 - Uploads are `Cache-Control: public, max-age=31536000, immutable`. **A scan that
   changes gets a new file name**, never new bytes under the old one: browsers would
@@ -67,7 +86,7 @@ Wrangler emulates the bucket and the Worker locally:
 
 ```bash
 node scripts/upload-scans.mjs --local
-npx wrangler dev -c deploy/scans-worker/wrangler.toml --port 8787 --var ALLOWED_ORIGINS:http://localhost:4173
+deploy/scans-worker/node_modules/.bin/wrangler dev -c deploy/scans-worker/wrangler.toml --port 8787 --var ALLOWED_ORIGINS:http://localhost:4173
 VITE_SCAN_BASE=http://localhost:8787 npm run build && npx vite preview --port 4173
 ```
 
@@ -78,13 +97,17 @@ same build from another port (`--port 4174`) checks that a page not in
 ## First-time setup (done by hand, once)
 
 1. **Cloudflare:** make an account; under R2, create the bucket `wee-scans`. Then
-   `npx wrangler login`, `node scripts/upload-scans.mjs`, and
-   `npx wrangler deploy -c deploy/scans-worker/wrangler.toml`. The deploy prints the
-   Worker's address.
+   `npm install --prefix deploy/scans-worker`,
+   `deploy/scans-worker/node_modules/.bin/wrangler login`, `node scripts/upload-scans.mjs`,
+   and `npm run deploy --prefix deploy/scans-worker`. The deploy prints the Worker's address.
 2. **Vercel:** import the repo as a new project (Vite is detected), set
-   `VITE_SCAN_BASE` to the Worker's address, and add the domain `wee.samanthamlee.com`.
-   The DNS is already on Vercel, so the record is added there.
-3. If the app's address changes, update `ALLOWED_ORIGINS` and deploy the Worker again.
+   `VITE_SCAN_BASE` to the Worker's address **for both Production and Preview** (a build
+   without it fetches `/scans/`, which Vercel does not have), and add the domain
+   `wee.samanthamlee.com`. The DNS is already on Vercel, so the record is added there.
+3. **Allow Vercel's own addresses:** once the project exists, its builds are served at
+   `wee-wonderer-<id>-<scope>.vercel.app` (and the project at `<name>.vercel.app`). Add
+   `https://wee-wonderer-*-<scope>.vercel.app` and the project's address to
+   `ALLOWED_ORIGINS`, and deploy the Worker again. Same whenever the app's address changes.
 
 ## Known limitations
 

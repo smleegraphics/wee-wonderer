@@ -1,0 +1,12 @@
+{
+  "name": "wee-scans-worker",
+  "private": true,
+  "description": "The scan host: a Worker over the R2 bucket of example scans (context/deploy.md). Its own package so the app's install (and every Vercel build) does not pull in wrangler.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "4.144.0"
+  }
+}

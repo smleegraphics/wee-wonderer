@@ -295,8 +295,8 @@ function loadStep(token: number, step: LoadStep | 'done', through = 0): void {
   hud.loadProgress(LOAD_STEPS[step].says, before + LOAD_STEPS[step].share * through);
 }
 
-/** Load a scan from any URL (a bundled file or an uploaded blob). `id` is the
- *  stable identity used for the collision cache and status. */
+/** Load a scan from any URL (an example scan from the scan host, or an imported scan's
+ *  blob). `id` is the stable identity used for the collision cache and status. */
 function loadFromURL(url: string, id: string): void {
   const token = ++loadToken;
   currentFile = id;

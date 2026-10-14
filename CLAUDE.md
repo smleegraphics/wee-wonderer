@@ -26,12 +26,15 @@ npm run typecheck  # tsc --noEmit
 npm run build      # typecheck + production bundle
 ```
 
+After `npm install` (or any lockfile change), restart a running dev server: until then it
+answers 504 "Outdated Optimize Dep" for three.js and the app does not start.
+
 Scans are not in the repo: they live in the gitignored `scans/` folder, which the dev and
 preview servers serve at `/scans/` (never `public/`: Vite copies it into every build).
 `?scan=<file>` picks one;
 the default is `kitchen-clean.ply` (Kitchen). Cleaned demo scans are `*-clean.ply`.
 
-**Which scans ship.** `SCANS` in `src/scans.ts` lists every known scan; only the
+**Which scans ship.** `SCANS` in `src/scan-list.ts` lists every known scan; only the
 `listed: true` ones appear in the Scans card, and the first of those is the default.
 The shipped scans are Kitchen, Living Room and Counter (Mip-NeRF 360, CC BY 4.0, which
 needs credit) and Curled Up Dog (`Marishka-clean.ply`, our own capture). **Playroom
@@ -50,8 +53,8 @@ new scan, record where it came from and its licence.
 | `src/voxelize-core.ts` (+ `.worker.ts`, `voxelize.ts`) | Splat → density field → collision surface |
 | `src/room-reveal.ts`, `src/loading-scene.ts`, `src/paper-bits.ts`, `src/paper-figurine.ts` | How a room arrives after loading (the scan's points start as a sheet of paper dots and rise to their places, in the scan's shader), the stand-in dots before it has loaded, the formulas both share, and the figurine's paper look meanwhile |
 | `src/three-internals.ts` | Every private part of three.js the app touches (`GaussianSplat`'s fields, the renderer's material conversion); check it on a three.js upgrade |
-| `src/scans.ts` | The example scans (`SCANS`, which are listed) and `scanURL`, the one place a scan's address is decided (`VITE_SCAN_BASE`) |
-| `deploy/scans-worker/`, `scripts/upload-scans.mjs` | The scan host (a Worker over R2) and the upload of the listed scans to it |
+| `src/scan-list.ts`, `src/scans.ts` | The example scans (`SCANS`, which are listed, `SCAN_DIR`) as plain data the Vite config and scripts also read; and `scanURL`, the one place a scan's address is decided (`VITE_SCAN_BASE`) |
+| `deploy/scans-worker/`, `scripts/upload-scans.mjs` | The scan host (a Worker over R2, with its own `package.json` for wrangler) and the upload of the listed scans to it |
 | `src/load-scan.worker.ts` | Fetches and parses a scan's `.ply` off the main thread |
 | `src/worker-call.ts` | `workerCaller`: promise-based request/response for all three workers (a failed job rejects) |
 | `src/voxel-cache.ts` | IndexedDB cache of the built surface. **Bump `SCHEMA` when the surface algorithm changes.** |
