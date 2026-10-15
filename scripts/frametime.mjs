@@ -1,7 +1,7 @@
 // How long a frame takes while the figurine walks and turns, per scan (context/frame-time.md).
 // Runs Chrome on the machine's real graphics card, so the numbers are this machine's: compare
 // runs on one machine, before and after a change. Needs the dev server running and the scans
-// in public/.
+// in scans/.
 //
 //   node scripts/frametime.mjs [scan.ply ...] [--ratio 2] [--seconds 8]
 //

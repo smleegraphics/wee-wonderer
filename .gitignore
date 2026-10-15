@@ -4,8 +4,9 @@ dist/
 *.local
 .vite/
 
-# large room scans — test-only, not for git
-public/room.ply
-public/room2.ply
-public/central.ply
+# scans: tens to hundreds of MB, served from scans/ locally and from the scan host
+# when deployed (context/deploy.md). public/*.ply stays ignored so a scan dropped in
+# there by habit is not committed (or copied into every build).
+scans/
 public/*.ply
+.wrangler/

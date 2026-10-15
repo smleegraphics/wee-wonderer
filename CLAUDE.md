@@ -15,6 +15,7 @@ The two docs below are the ones to read before touching movement.
 - **Lights, the environment map, the contact shadow, rendering the splats from another camera** → `context/lighting.md`
 - **Filling see-through ground with extra splats, or measuring how see-through a scan is** → `context/splat-fill.md`
 - **Frame rate, or anything that changes how much the graphics card draws** → `context/frame-time.md`
+- **Where scans are served from, the scan host, uploading scans, deploying** → `context/deploy.md`
 - **Anything on screen that is not the 3D view: tiles, cards, the Debug card, title and loading screens, fonts, colours** → `context/ui.md`
 
 ## Commands
@@ -25,10 +26,15 @@ npm run typecheck  # tsc --noEmit
 npm run build      # typecheck + production bundle
 ```
 
-Scans are not in the repo (`public/*.ply` is gitignored). `?scan=<file>` picks one;
+After `npm install` (or any lockfile change), restart a running dev server: until then it
+answers 504 "Outdated Optimize Dep" for three.js and the app does not start.
+
+Scans are not in the repo: they live in the gitignored `scans/` folder, which the dev and
+preview servers serve at `/scans/` (never `public/`: Vite copies it into every build).
+`?scan=<file>` picks one;
 the default is `kitchen-clean.ply` (Kitchen). Cleaned demo scans are `*-clean.ply`.
 
-**Which scans ship.** `SCANS` in `src/main.ts` lists every known scan; only the
+**Which scans ship.** `SCANS` in `src/scan-list.ts` lists every known scan; only the
 `listed: true` ones appear in the Scans card, and the first of those is the default.
 The shipped scans are Kitchen, Living Room and Counter (Mip-NeRF 360, CC BY 4.0, which
 needs credit) and Curled Up Dog (`Marishka-clean.ply`, our own capture). **Playroom
@@ -47,6 +53,8 @@ new scan, record where it came from and its licence.
 | `src/voxelize-core.ts` (+ `.worker.ts`, `voxelize.ts`) | Splat → density field → collision surface |
 | `src/room-reveal.ts`, `src/loading-scene.ts`, `src/paper-bits.ts`, `src/paper-figurine.ts` | How a room arrives after loading (the scan's points start as a sheet of paper dots and rise to their places, in the scan's shader), the stand-in dots before it has loaded, the formulas both share, and the figurine's paper look meanwhile |
 | `src/three-internals.ts` | Every private part of three.js the app touches (`GaussianSplat`'s fields, the renderer's material conversion); check it on a three.js upgrade |
+| `src/scan-list.ts`, `src/scans.ts` | The example scans (`SCANS`, which are listed, `SCAN_DIR`) as plain data the Vite config and scripts also read; and `scanURL`, the one place a scan's address is decided (`VITE_SCAN_BASE`) |
+| `deploy/scans-worker/`, `scripts/upload-scans.mjs` | The scan host (a Worker over R2, with its own `package.json` for wrangler) and the upload of the listed scans to it |
 | `src/load-scan.worker.ts` | Fetches and parses a scan's `.ply` off the main thread |
 | `src/worker-call.ts` | `workerCaller`: promise-based request/response for all three workers (a failed job rejects) |
 | `src/voxel-cache.ts` | IndexedDB cache of the built surface. **Bump `SCHEMA` when the surface algorithm changes.** |
@@ -111,6 +119,8 @@ Visual and behavioural checks run headless in real Chrome through Playwright.
   section in `setupDebugMenu`), not new URL params. Collision sliders (`voxelSlider`) set `VOXEL_OPTS`
   for the session and call `rebuildCollision()`; gap-fill sliders set `WALK_FILL` and call
   `refillWalkable()`.
+- **A scan that changes gets a new file name.** Uploaded scans are cached as immutable
+  for a year, and the collision cache is keyed by name (`context/deploy.md`).
 - **A collision setting for one scan goes in that scan's `SCANS` entry**, with the reason
   and the measured cost beside it (`context/collision.md`, "Settings for one scan").
   Example scans only; never a branch on a scan's name in the pipeline. An uploaded scan

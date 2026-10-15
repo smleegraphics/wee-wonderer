@@ -30,13 +30,16 @@ npm run build      # typecheck + production bundle
 
 ### You need a scan
 
-Room scans are **not** in the repo — they're large (100–500 MB) and demo scans
-carry non-commercial licenses, so `public/*.ply` is gitignored. To run:
+Scans are **not** in the repo (they are tens to hundreds of MB), so `scans/` is
+gitignored. To run locally:
 
-1. Put a Gaussian-splat `.ply` in `public/` (standard 3DGS format — a Scaniverse
-   or Luma export, or a pretrained scene).
-2. Point the app at it: `http://localhost:5173/?scan=yourscan.ply`
-   (defaults to `room2.ply`).
+1. Put a Gaussian-splat `.ply` in `scans/` (standard 3DGS format — a Scaniverse
+   or Luma export, or a pretrained scene). The dev server serves it at `/scans/`.
+2. Open `http://localhost:5173/?scan=yourscan.ply`, or add it to `src/scans.ts`.
+   The default is `kitchen-clean.ply`.
+
+Which scans ship publicly, and why, is in [`CLAUDE.md`](./CLAUDE.md) ("Which scans
+ship"); how they are hosted is in [`context/deploy.md`](./context/deploy.md).
 
 The character asset **`public/character.glb`** _is_ committed (rigged chibi, 6
 clips; contract in `context/character-README.md`).
