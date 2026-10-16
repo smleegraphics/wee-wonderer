@@ -353,6 +353,10 @@ async function showScan(url: string, id: string, token: number, cancelled: Abort
   for (let i = 0; i < own; i++) opacity[i] = parsed.colors[i * 4 + 3] / 255;
   await buildCollision(id, token, ownCenters, opacity, parsed.covariances, toWorld);
   if (token !== loadToken) return; // superseded while building
+  // The spawn needs only the collision, and must be decided now, before the next frame:
+  // from here the camera tests the new room's mesh, and a figurine still at its old spot
+  // (the origin, or the last room's spawn) is inside it, which pulls the camera in close.
+  if (charLoaded) resetToSpawn();
   const tFill = performance.now();
   const walk = walkableNow(), cellsUsed = navVersion;
   const filled: FilledScan = walk ? await fillScan({ scan: parsed, matrix: Array.from(toWorld.elements), walk, opts: walkFillOptions() }, scanBuffers(parsed))
@@ -365,7 +369,7 @@ async function showScan(url: string, id: string, token: number, cancelled: Abort
   void refillWalkable();
   estimateScanFill(shown.centers, new THREE.BufferAttribute(filled.scan.colors.subarray(0, own * 4), 4, true), shown.cov, lastMatrix, scanFill);
   console.log(`loaded ${id}: radius ${o.radius.toFixed(2)} → scaled ${k.toFixed(2)}x`);
-  if (charLoaded) { resetToSpawn(); requestScanLight(); }
+  if (charLoaded) requestScanLight(); // (needs the splat in place)
 }
 
 /** Put a scan and its fill in the room as the splat object, at `position` in the room.
@@ -577,10 +581,33 @@ function resetToSpawn(): void {
   smoothFeetY = player.position.y;
   if (charModel) charModel.position.y = charFeetOffset;
   state = 'ground';
-  camera.position.copy(player.position).add(new THREE.Vector3(charH * 1.2, charH * 2.6, charH * 4.5));
   camPull = 1; camSwinging = false;
   orbit.target.set(player.position.x, player.position.y + charH * CAM_PIVOT, player.position.z);
+  // The opening shot, turned to a side of the figurine with a clear view of it. From a
+  // fixed side, a room with something solid there (Living Room) opened with the camera
+  // pulled in as close as it goes, filling the screen with the figurine's face. The
+  // figurine turns with the shot, so every room opens on the same framing.
+  const turn = clearStartTurn(orbit.target);
+  player.rotation.y = turn;
+  camera.position.copy(CAM_START).applyAxisAngle(WORLD_UP, turn).multiplyScalar(charH).add(orbit.target);
   orbit.update();
+}
+
+/** How far to turn the opening shot about the figurine, pivot at `pivot`: the side
+ *  nearest the unturned one whose arm meets nothing; failing that, the one that sees
+ *  furthest. Unturned when there is no collision yet to test against. */
+function clearStartTurn(pivot: THREE.Vector3): number {
+  if (!collision) return 0;
+  const len = CAM_START.length() * charH, step = (Math.PI * 2) / CAM_START_TURNS;
+  let best = 0, bestClear = -1;
+  for (let i = 0; i < CAM_START_TURNS; i++) {
+    const turn = (i % 2 ? 1 : -1) * Math.ceil(i / 2) * step; // 0, +1, -1, +2, -2 … steps: nearest the unturned shot first
+    camDir.copy(CAM_START).applyAxisAngle(WORLD_UP, turn).normalize();
+    const clear = collision.rayDistance(pivot, camDir, len);
+    if (clear >= len) return turn;
+    if (clear > bestClear) { best = turn; bestClear = clear; }
+  }
+  return best;
 }
 
 function setupMixer(gltf: GLTF, model: THREE.Object3D): void {
@@ -1119,6 +1146,11 @@ const camFwd = new THREE.Vector3(), camRight = new THREE.Vector3(), wishDir = ne
 const WORLD_UP = new THREE.Vector3(0, 1, 0), WORLD_DOWN = new THREE.Vector3(0, -1, 0);
 const camLook = new THREE.Vector3(), camDir = new THREE.Vector3();
 const CAM_PIVOT = 0.7; // the camera looks at the figurine this far up its height (about head centre)
+/** The opening shot (`resetToSpawn`): the camera's arm from the pivot, in figurine
+ *  heights. In front of the figurine (which faces +Z unturned), a little to one side,
+ *  looking down at it. */
+const CAM_START = new THREE.Vector3(1.2, 2.6 - CAM_PIVOT, 4.5);
+const CAM_START_TURNS = 16; // sides of the figurine the opening shot may be turned to: 22.5° apart
 
 // The follow camera is a spring arm from the pivot (the figurine) to the camera. The
 // arm's full length (`camWant`) is the user's zoom and belongs to OrbitControls; when

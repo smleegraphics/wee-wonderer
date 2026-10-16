@@ -114,7 +114,11 @@ the old room starts leaving and `roomGone` is a promise for when it has; the new
 is fetched and unpacked in the worker meanwhile; `showScan` awaits `roomGone` before
 putting the new room in; the render loop calls `clearRoom()` when the old one reaches
 0. The figurine stays where it stood until the new room's collision exists, then goes
-to its spawn point, and the reveal starts from there.
+to its spawn point, and the reveal starts from there. **Then means at once**, before the
+gap fill and before another frame: from that frame the follow camera tests the new mesh,
+and the figurine's old spot (the origin on a first load, the last room's spawn on a
+switch) is inside it, so the camera pulled in close and jumped back out when the spawn
+was set after the fill, about 0.2 s later.
 
 ## Gotchas
 
@@ -234,8 +238,9 @@ to its spawn point, and the reveal starts from there.
   levelling the scan and copying it to the collision worker, about 1.0 s building
   the NavGrid, about 0.4 s on the first frames with the room visible; headless
   numbers on Playroom). The waiting figurine hitches during them.
-- On a room switch the figurine and the camera jump to the new room's spawn point in
-  one frame, at the start of its arrival, when only the dots are on screen.
+- On a room switch (and on a first load, from the origin) the figurine and the camera
+  jump to the new room's spawn point in one frame, just before its arrival, when only
+  the dots are on screen.
 - The cost of the reveal's shader once a room has arrived is unmeasured on a real
   display (see Gotchas).
 - Splats are sorted by where they belong, not where they are drawn, so a few may
