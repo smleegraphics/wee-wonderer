@@ -56,7 +56,7 @@ new scan, record where it came from and its licence.
 | `src/three-internals.ts` | Every private part of three.js the app touches (`GaussianSplat`'s fields, the renderer's material conversion); check it on a three.js upgrade |
 | `src/scan-list.ts`, `src/scans.ts` | The example scans (`SCANS`, which are listed, `SCAN_DIR`) as plain data the Vite config and scripts also read; and `scanURL`, the one place a scan's address is decided (`VITE_SCAN_BASE`) |
 | `deploy/scans-worker/`, `scripts/upload-scans.mjs` | The scan host (a Worker over R2, with its own `package.json` for wrangler) and the upload of the listed scans to it |
-| `src/load-scan.worker.ts` | Fetches and parses a scan's `.ply` off the main thread |
+| `src/load-scan.worker.ts`, `src/parse-scan.ts` | Fetches and parses a scan off the main thread; `parseScan` picks PLY or SPZ by the file's bytes (also used by `inspect.html`) |
 | `src/worker-call.ts` | `workerCaller`: promise-based request/response for all three workers (a failed job rejects) |
 | `src/voxel-cache.ts` | IndexedDB cache of the built surface. **Bump `SCHEMA` when the surface algorithm changes.** |
 | `src/fill-scan-core.ts` (+ `.worker.ts`) | Walkable gap fill: flat splats added where the ground the figurine can stand on lets the backdrop through |

@@ -57,7 +57,7 @@ clips; contract in `context/character-README.md`).
 
 ### Tooling
 
-- **`inspect.html`** (`src/inspect-room.ts`) — a scan inspector: loads a `.ply`,
+- **`inspect.html`** (`src/inspect-room.ts`) — a scan inspector: loads a scan (`.ply` or `.spz`),
   auto-levels it, and shows it against a y=0 grid. `?file=…&ca=&ce=&cd=`.
 - **`scripts/shot.mjs`** / **`scripts/drive.mjs`** — headless Chrome (Playwright)
   screenshotting and keyboard/mouse driving, for verifying the 3D app from the

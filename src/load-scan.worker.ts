@@ -5,9 +5,8 @@
 // that is no longer wanted can be cancelled while it is fetching (not once unpacking
 // has begun: that is one call into three.js).
 
-import type { BufferAttribute, BufferGeometry } from 'three';
-import { GaussianSplatPLYLoader } from 'three/addons/loaders/GaussianSplatPLYLoader.js';
-import { SPZLoader } from 'three/addons/loaders/SPZLoader.js';
+import type { BufferAttribute } from 'three';
+import { parseScan } from './parse-scan';
 
 /** The arrays `createGaussianSplatGeometry` rebuilds the splat geometry from. */
 export interface ParsedScan {
@@ -45,15 +44,6 @@ async function readBody(response: Response, onFetched: (part: number) => void): 
   }
   if (got !== total) throw new Error('the file is shorter than the server said');
   return bytes.buffer;
-}
-
-/** Parse a scan by what its bytes are, not by its name (an imported scan's blob URL has
- *  none): a PLY starts with the text "ply"; anything else is read as SPZ, whose loader
- *  knows its own versions (gzip for 1 to 3, zstd for 4) and throws on what is neither. */
-async function parseScan(body: ArrayBuffer): Promise<BufferGeometry> {
-  const head = new Uint8Array(body, 0, Math.min(3, body.byteLength));
-  if (String.fromCharCode(...head) === 'ply') return new GaussianSplatPLYLoader().parse(body);
-  return await new SPZLoader().parse(body) as BufferGeometry;
 }
 
 self.onmessage = async (e: MessageEvent<Req | Cancel>) => {

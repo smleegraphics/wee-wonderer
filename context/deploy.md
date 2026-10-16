@@ -41,7 +41,7 @@ Unpacking in the worker went from about 500 ms to about 45 ms. They look the sam
 1.2e-4 scan units here), which moves Kitchen's collision a little
 (`context/collision.md`, "SPZ moves Kitchen's collision").
 
-`load-scan.worker.ts` picks the parser by the file's bytes, not its name (an imported
+`parseScan` (`src/parse-scan.ts`, used by `load-scan.worker.ts` and `inspect.html`) picks the parser by the file's bytes, not its name (an imported
 scan's `blob:` URL has none): a file starting with the text `ply` is PLY, anything else
 goes to three's `SPZLoader`, which reads SPZ versions 1 to 4 and throws on what is
 neither. Importing a scan still takes `.ply` only: the cleanup worker parses PLY.

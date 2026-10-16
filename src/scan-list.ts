@@ -20,7 +20,7 @@ export const SCAN_DIR = 'scans';
 // scans in the switcher, and the first of them opens by default; an unlisted scan is a
 // local test scan, loaded only by `?scan=` (CLAUDE.md, "Which scans ship").
 export const SCANS: ScanEntry[] = [
-  // Shipped as SPZ, 13 times smaller than the cleaned .ply it is converted from (context/deploy.md, "Scan files").
+  // Shipped as SPZ, converted from the cleaned .ply (context/deploy.md, "Scan files").
   { file: 'kitchen-clean.spz', label: 'Kitchen', listed: true }, // Mip-NeRF 360, floater-stripped (scripts/clean-scan.mjs)
   { file: 'livingroom-clean.spz', label: 'Living Room', listed: true },
   { file: 'counter-clean.spz', label: 'Counter', listed: true },
