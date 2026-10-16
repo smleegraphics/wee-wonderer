@@ -517,6 +517,24 @@ on opacity, size, or local density, then level and crop to the room.
 - Phone captures with bright windows, glass, or soft surfaces are heavy with
   floaters. The pipeline copes, but capture quality is the limit.
 
+## SPZ moves Kitchen's collision
+
+Converting the scans from `.ply` to `.spz` (`context/deploy.md`, "Scan files") changed
+Kitchen's numbers slightly and the other rooms' not at all: reach from spawn 75.8% →
+74.1%, walkable from spawn 55.9% → 54.8%. Accepted, and the baseline re-saved.
+
+- **The cause is SPZ's position rounding.** Applying its opacity, scale, rotation and
+  colour changes alone leaves the numbers as they were. The largest move is 1.22e-4 scan
+  units.
+- **Ruled out, each alone leaving the numbers as they were:** random jitter of the same
+  size, a translation of the whole scan, and the 0.006° change in orientation the
+  rounding causes.
+- **How so small a move changes reach is not known.** It is far below a voxel, so
+  something downstream must sit on a threshold (an isovalue crossing, a nav cell's
+  headroom, a platform join). Not investigated further.
+- A different mesh also sends `climbfuzz` down a different path, which is how it exposed
+  the climb snap bug (`context/climb.md`, rule 12).
+
 ## Ideas parked for later
 
 - Measuring more settings from the scan, for uploaded scans: the flatten band from how
