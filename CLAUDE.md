@@ -77,12 +77,14 @@ Visual and behavioural checks run headless in real Chrome through Playwright.
   (`dist` in `TARGET_RADIUS` units). Without it the camera follows the figurine.
 - **Telemetry and internal state:** `?tel=1` logs `CLIMB-*` events to the console
   and publishes `window.__dbg` every frame (state, position, climb facing, camera
-  distances, `probe`, and `reveal`: how much of the room is in place, 0 while
-  waiting and 1 once it has arrived). Without `?tel=1` there is no `__dbg`. `window.__wwReady` is
+  distances, `probe`, `reveal`: how much of the room is in place, 0 while
+  waiting and 1 once it has arrived, and `lightView`: where the scan light's debug
+  panorama is on screen while that view is on). Without `?tel=1` there is no `__dbg`. `window.__wwReady` is
   always set once the first frames have rendered.
-- **UI regression check:** `node scripts/uicheck.mjs` runs 23 checks of the title,
-  keys, tiles, Debug card, loading view, room switch and a failed load, and exits
-  non-zero on a failure. Run it after any change under `src/ui/` or to loading.
+- **UI regression check:** `node scripts/uicheck.mjs` runs 24 checks of the title,
+  keys, tiles, Debug card, loading view, the scan light's capture at load, room switch
+  and a failed load, and exits non-zero on a failure. Run it after any change under
+  `src/ui/`, to loading, or to the scan light.
 - **Gap measurement:** `node scripts/holes.mjs <scan> [outDir]` counts the pixels the
   scan leaves see-through from 16 cameras inside the room, and what is behind them.
   Playroom must stay at 0. It drives `window.__matte` (`?tel=1`), which shows the scan

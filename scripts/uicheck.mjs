@@ -13,6 +13,25 @@ const base = process.argv[2] ?? 'http://localhost:5173/';
 const FIRST = { file: 'kitchen-clean.spz', label: 'Kitchen' }, SECOND = { file: 'counter-clean.spz', label: 'Counter' };
 const LOAD_MS = 90000, SOON_MS = 5000;
 
+// A panorama of the fill alone is one colour: spread 0.0, measured with the bug back in.
+// Kitchen's real capture measured 24.0. Anything above noise means the room was seen.
+const LIGHT_SPREAD_MIN = 2;
+
+/** How varied the scan light's panorama is: the standard deviation of brightness (0..255)
+ *  over its top three quarters (the controls hint overlaps its bottom edge). */
+async function colourSpread(page, r) {
+  const png = await page.screenshot({ clip: { x: r.x, y: r.y, width: r.w, height: r.h * 0.75 } });
+  return page.evaluate(async (b64) => {
+    const bmp = await createImageBitmap(await (await fetch(`data:image/png;base64,${b64}`)).blob());
+    const c = new OffscreenCanvas(bmp.width, bmp.height).getContext('2d');
+    c.drawImage(bmp, 0, 0);
+    const px = c.getImageData(0, 0, bmp.width, bmp.height).data;
+    let n = 0, sum = 0, sq = 0;
+    for (let i = 0; i < px.length; i += 4) { const y = 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2]; n++; sum += y; sq += y * y; }
+    return Math.sqrt(Math.max(0, sq / n - (sum / n) ** 2));
+  }, png.toString('base64'));
+}
+
 const browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--enable-unsafe-swiftshader'] });
 let failed = 0;
 const check = (name, ok, detail = '') => { if (!ok) failed++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? '  — ' + detail : ''}`); };
@@ -47,6 +66,19 @@ try {
   const walked = await soon((p) => [window.__dbg.px, window.__dbg.py, window.__dbg.pz].join(',') !== p, spawn);
   await page.keyboard.up('KeyW');
   check('W walks after Begin, with no extra click', walked, `${spawn} -> ${await pos()}`);
+
+  // --- the scan light sees the room: its capture at load is not one flat colour (the
+  // probe saw only its fill backdrop when the room was still hidden). Measured before any
+  // slider is moved, since a collision rebuild asks for a fresh capture.
+  await page.keyboard.press('Backquote');
+  await page.getByLabel('Light debug view', { exact: true }).evaluate((el) => { if (!el.checked) el.click(); });
+  await page.keyboard.press('Escape');
+  const view = await soon(() => window.__dbg.lightView !== null) && (await dbg()).lightView;
+  const spread = view ? await colourSpread(page, view) : -1;
+  check('the scan light sees the room, not one flat colour', spread > LIGHT_SPREAD_MIN, `panorama brightness spread ${spread.toFixed(1)} (flat: under ${LIGHT_SPREAD_MIN})`);
+  await page.keyboard.press('Backquote');
+  await page.getByLabel('Light debug view', { exact: true }).evaluate((el) => { if (el.checked) el.click(); });
+  await page.keyboard.press('Escape');
 
   // --- a control clicked with the mouse does not keep the keyboard
   await page.getByRole('button', { name: 'Back to the start' }).click();
