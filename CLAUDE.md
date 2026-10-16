@@ -16,6 +16,7 @@ The two docs below are the ones to read before touching movement.
 - **Filling see-through ground with extra splats, or measuring how see-through a scan is** → `context/splat-fill.md`
 - **Frame rate, or anything that changes how much the graphics card draws** → `context/frame-time.md`
 - **Where scans are served from, the scan host, uploading scans, deploying** → `context/deploy.md`
+- **Bringing in a splat stored in USD (RenderMan, Houdini)** → `context/usd-splats.md`
 - **Anything on screen that is not the 3D view: tiles, cards, the Debug card, title and loading screens, fonts, colours** → `context/ui.md`
 
 ## Commands
