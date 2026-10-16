@@ -833,7 +833,12 @@ function captureScanLight(): void {
   // everything the capture changes about the scene, put back whatever happens
   const hidden: THREE.Object3D[] = [];
   const envNode = lit.environmentNode, bg = scene.background, dark = shadowDark.value;
-  const resumeReveal = revealPaused(); // the probe must see the whole room, however far the reveal has got
+  // The probe must see the whole room, however far the reveal has got: drawn as fully
+  // arrived, and drawn at all. Until its arrival starts the room is hidden (the render
+  // loop shows it only once some of it is in place), and the first capture is taken
+  // then, while the figurine is still paper, so it would see nothing but the fill.
+  const resumeReveal = revealPaused(), roomShown = room.visible;
+  room.visible = true;
   const t0 = performance.now();
   try {
     // only the scan lights the probe: hide the figurine and the debug overlays...
@@ -867,7 +872,7 @@ function captureScanLight(): void {
   } finally {
     scanFillDome.visible = false;
     shadowDark.value = dark;
-    resumeReveal();
+    resumeReveal(); room.visible = roomShown;
     lit.environmentNode = envNode; scene.background = bg;
     for (const o of hidden) o.visible = true;
     // The capture left the splats sorted for the probe's last view. GaussianSplat only
@@ -979,6 +984,12 @@ function updateScanDebug(): void {
   const h = halfH * 2 * SCAN_DEBUG.thumbHeight, margin = halfH * 2 * SCAN_DEBUG.thumbMargin; // the panorama is twice as wide as tall
   scanDebugThumb.scale.setScalar(h);
   scanDebugThumb.position.set(-halfW + margin + h, -halfH + margin + h / 2, -d);
+}
+
+/** Where updateScanDebug puts the panorama, in CSS pixels from the top left (for ?tel=1). */
+function scanDebugThumbRect(): { x: number; y: number; w: number; h: number } {
+  const H = renderer.domElement.clientHeight, h = H * SCAN_DEBUG.thumbHeight, margin = H * SCAN_DEBUG.thumbMargin;
+  return { x: margin, y: H - margin - h, w: 2 * h, h };
 }
 
 /** Per frame: advance the cross-fade, then take a capture if one is due — because it
@@ -1756,6 +1767,7 @@ function publishDebugState(): void {
     anim: activeAction ? activeAction.getClip().name : 'none',
     climbPaused: ca ? ca.paused : null,
     reveal: +revealProgress.toFixed(3), // how much of the room is in place: 0 while waiting, 1 once it has arrived
+    lightView: scanDebugThumb?.visible ? scanDebugThumbRect() : null, // where the scan light's panorama is on screen, while its debug view is on
   };
 }
 

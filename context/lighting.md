@@ -33,6 +33,16 @@ captures. With "Scan light: follow figurine" on, a capture is also wanted when t
 figurine has moved one body-height from the last capture point, at most twice a
 second. The probe's numbers are all in `SCAN_PROBE`.
 
+**The first capture is taken before the room is shown.** It is requested once the scan
+is in place, while the figurine is still paper and the room has not begun to arrive,
+so the light is ready before anyone sees the figurine in colour. The render loop hides
+the room until its arrival starts (`room.visible = arrived > 0`), so `captureScanLight`
+shows it for the capture as well as drawing it fully arrived (`revealPaused`), and puts
+both back after. From 2026-10-07 (the reveal) to 2026-10-16 it did only the second:
+every load's capture saw nothing but the fill, so the figurine was lit by one flat
+colour and the debug panorama was a single grey. `uicheck` now fails if the panorama
+after a load is one flat colour.
+
 **Gap fill.** Where the scan has no splats (usually the ceiling, which phone scans
 rarely capture), the probe would see the dark backdrop and read it as "no light from
 there", leaving the figurine dark on top. During a capture the backdrop is instead
