@@ -64,14 +64,14 @@ export let platformDebug: THREE.InstancedMesh | null = null;
 export const overlayBoxes: { voxel: HTMLInputElement | null; platform: HTMLInputElement | null } = { voxel: null, platform: null };
 export let lastVoxelSize = GRAIN;
 export let groundY: number | null = null; // the height of the ground the figurine plays on in this scan (the voxelizer's), or null
-export const PLATFORM_OPTS = { stepFactor: 0.35, minCells: 6, climbDeg: 70, bridge: 2, fill: 3 }; // hop straight down a drop up to this (char-heights); taller → climb down the face
+export const PLATFORM_OPTS = { stepFactor: 0.35, minCells: 6, climbDeg: 70, bridge: 2, fill: 3 }; // climbDeg: surfaces steeper than this (from horizontal) are walls to climb, gentler ones are ground to walk. minCells: an area, in grains². bridge, fill: how wide a gap in a surface is bridged, and how wide a hole in it filled, in grains
 // Spike 2: the reliable ground. The controller stands on the NavGrid (no
 // fall-through), is confined to it (no walking off), and recovers to `lastGood`.
 export let navGrid: NavGrid | null = null;
 export let navField: PlatformField | null = null; // navGrid's cells as a list, for the overlay and the gap fill
-export let navVersion = 0;   // last validated on-platform position (recovery)
-export let collision: MeshCollision | null = null;
-export let collisionKey = ''; // the arrays currentSplat draws (the scan's `own` splats, then its fill), and which walkable cells (navVersion) that fill is for
+export let navVersion = 0;                       // goes up each time the walkable cells are rebuilt
+export let collision: MeshCollision | null = null; // BVH over the voxel surface, rebuilt per scan
+export let collisionKey = ''; // the settings (voxelCacheKey) the collision there is was built with
 
 /** Take the room's collision, and its debug overlays, out of the scene. */
 export function disposeCollision(): void {

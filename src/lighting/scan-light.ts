@@ -11,7 +11,6 @@ import { collision, collisionDebug, platformDebug } from '../collision/room-coll
 import { charH, charLoaded } from '../figurine/character';
 import { shadowDark } from './contact-shadow';
 import { currentSplat, loadingScene, paperFigurine } from '../scan/room';
- // don't drop below the floor
 
 const hemi = new THREE.HemisphereLight(0x8899bb, 0x22201c, 0.9); // fixed ambient fill...
 scene.add(hemi);

@@ -21,13 +21,13 @@ import { charH, charLoaded, play, resetToSpawn } from '../figurine/character';
 import { installContactShadow } from '../lighting/contact-shadow';
 import { estimateScanFill, requestScanLight, scanFill } from '../lighting/scan-light';
 import { fillScan, installFillView, refillWalkable, reportWalkFill, scanBuffers, walkableNow, walkFillOptions } from './walk-fill';
- // BVH over the voxel surface, rebuilt per scan
+
 export let currentFile = DEFAULT_SCAN;
 // last-loaded scan data, kept so debug tunables can re-voxelize without reloading the PLY
 export let lastCenters: THREE.BufferAttribute | null = null;
 export let lastOpacity: Float32Array | null = null;
 export let lastCov: Float32Array | null = null; // per-splat covariance (6/splat) for anisotropic voxelization
-export const lastMatrix = new THREE.Matrix4();     // collide-and-slide substeps per frame
+export const lastMatrix = new THREE.Matrix4();
 export let loadToken = 0; // guards against a slow async collision build landing after a scan swap
 /** A new load (or collision rebuild) begins: every one still running is now superseded. */
 export function newLoadToken(): number { return ++loadToken; }
@@ -106,7 +106,7 @@ function clearRoom(): void {
   room.scale.setScalar(1);
 }
 export let currentSplat: GaussianSplat | null = null;
-export let currentScan: { scan: ParsedScan; own: number; cellsUsed: number } | null = null;
+export let currentScan: { scan: ParsedScan; own: number; cellsUsed: number } | null = null; // the arrays currentSplat draws (the scan's `own` splats, then its fill), and which walkable cells (navVersion) that fill is for
 
 /** Load an example scan from the scan host (scans.ts). */
 export function loadScan(file: string): void {

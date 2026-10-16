@@ -9,7 +9,7 @@ import { charH } from './character';
 import { climbDir } from './climb';
 import { lerpAngle } from './controller';
 
-orbit.addEventListener('start', () => { camLatch.handsOff = false; camSwinging = false; camLatch.basisHeld = false; });
+orbit.addEventListener('start', () => { camLatch.handsOff = false; camSwinging = false; camLatch.basisHeld = false; }); // the user's hand on the camera always wins over the auto-swing
 const camLook = new THREE.Vector3(), camDir = new THREE.Vector3();
 const CAM_PIVOT = 0.7; // the camera looks at the figurine this far up its height (about head centre)
 /** The opening shot (`resetToSpawn`): the camera's arm from the pivot, in figurine

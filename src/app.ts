@@ -33,7 +33,7 @@ export const num = (key: string, def: number) => (q.has(key) ? Number(q.get(key)
 export const MESHONLY = q.get('meshonly') === '1';
 export const FREECAM = ['az', 'el', 'dist', 'cx', 'cy', 'cz'].some((k) => q.has(k));
 export const FREECAM_OPTS = { az: num('az', 0.9), el: num('el', 0.5), dist: num('dist', 2.2), cx: num('cx', 0), cy: num('cy', 1), cz: num('cz', 0) };
-export const CAPSULE_RADIUS = 0.22;
+export const CAPSULE_RADIUS = 0.22; // capsule hemisphere radius, in char-heights
 const app = document.getElementById('app')!;
 // The on-screen UI (context/ui.md). What its controls do is filled in where the app is
 // put together (hudActions), since the code that does it is built on this.
@@ -68,9 +68,9 @@ export const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window
 // glued to the figurine each frame so it follows while you look around.
 export const orbit = new OrbitControls(camera, renderer.domElement);
 orbit.enableDamping = true;
-orbit.dampingFactor = 0.08; // the user's hand on the camera always wins over the auto-swing
+orbit.dampingFactor = 0.08;
 orbit.enablePan = false; // pivot tracks the figurine; panning it away would fight that
-orbit.maxPolarAngle = Math.PI * 0.49;
+orbit.maxPolarAngle = Math.PI * 0.49; // don't drop below the floor
 
 // The scan is auto-leveled at load (RANSAC floor fit) — Y-up, floor at y=0.
 // No per-scan constants: any scan (a demo, or the user's own) levels the same way.

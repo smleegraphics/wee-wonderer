@@ -5,7 +5,7 @@ import type { CleanOptions } from './clean-scan-core';
 import { workerCaller } from '../worker-call';
 import { hud } from '../app';
 import { loadFromURL } from './room';
- // the settings (voxelCacheKey) the collision there is was built with
+
 // scan import (upload + in-browser cleanup), session-only
 export const CLEAN_OPTS: CleanOptions = { alphaMin: 0.35, minMass: 4, scaleCapMul: 4, crop: true };
 export const uploads = new Map<string, string>(); // upload id → blob object URL

@@ -7,10 +7,10 @@ import { collision, navGrid, PLATFORM_OPTS } from '../collision/room-collision';
 import { camLatch } from './camera';
 import { actions, charFeetOffset, charH, charModel, play, resetToSpawn } from './character';
 import { climbGround, climbUpdate, resetClimbInput, tryStartClimb, tryStartClimbDown, updateClimbBlend } from './climb';
- // climbDeg: surfaces steeper than this (from horizontal) are walls to climb, gentler ones are ground to walk. minCells: an area, in grains². bridge, fill: how wide a gap in a surface is bridged, and how wide a hole in it filled, in grains
-export const STEP_DOWN_MAX = 0.6;                       // goes up each time the walkable cells are rebuilt
-export const lastGood = new THREE.Vector3(); // capsule hemisphere radius, in char-heights
-const PHYSICS_STEPS = 5;
+
+export const STEP_DOWN_MAX = 0.6; // hop straight down a drop up to this (char-heights); taller → climb down the face
+export const lastGood = new THREE.Vector3();   // last validated on-platform position (recovery)
+const PHYSICS_STEPS = 5;     // collide-and-slide substeps per frame
 
 const camFwd = new THREE.Vector3(), camRight = new THREE.Vector3(), wishDir = new THREE.Vector3();
 export function lerpAngle(a: number, b: number, t: number): number {
