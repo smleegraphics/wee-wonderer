@@ -24,7 +24,7 @@ state back to `air` on the frame the climb starts.
 | Function | Job |
 |---|---|
 | `CLIMB` | Every climb distance (probe heights, reaches, wall gap, mantle tolerances), named once with its reason. |
-| `isWall` / `wallSlopeMax` | The one definition of a wall, from the "Climb threshold" slider. Also the NavGrid's `slopeMin`. |
+| `isWall` / `wallSlopeMax` | The one definition of a wall, from the "Climb threshold" slider. Also the NavGrid's `slopeMin`. `wallSlopeMax` is in `collision/room-collision.ts`, beside `PLATFORM_OPTS.climbDeg` it is read from. |
 | `climbWall` | The only way climb code probes for a surface. Rejects surfaces seen from behind. |
 | `climbGround` | Walkable ground a climber would come down onto: beneath it, or one step back from the wall. |
 | `tryStartClimb` | Shared start check for ground and air: a wall at chest and head height. |

@@ -126,6 +126,9 @@ export interface Collision {
   /** Nearest surface ahead along `dir` within `max` — its distance + facing normal, or null.
    *  The result is a reused object: read it before the next call. */
   wallAhead(origin: THREE.Vector3, dir: THREE.Vector3, max: number): WallHit | null;
+  /** Distance to the first surface along `dir` (unit) from `origin`, else `max`.
+   *  Used to keep the follow-camera from clipping through walls. */
+  rayDistance(origin: THREE.Vector3, dir: THREE.Vector3, max: number): number;
   /** Find a sensible spawn near the content centre: stand on the lowest real
    *  up-facing surface with headroom (the floor in a room, the couch/table top in
    *  a floorless scan), never the phantom backstop plane, where the capsule fits.

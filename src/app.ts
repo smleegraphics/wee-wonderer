@@ -1,7 +1,8 @@
 // What every part of the app shares: the page's options (?scan, ?tel and the debug
 // ones), the scale scans are brought to, the renderer, scene and camera, the on-screen
 // UI's handle, the room and the figurine's objects, and how the figurine is moving.
-// It imports nothing else from the app, so it is always loaded before what uses it.
+// Of the app's own files it imports only the UI, the scan list and one constant of the
+// reveal, none of which import anything back, so it is always loaded before what uses it.
 
 import * as THREE from 'three';
 import { WebGPURenderer } from 'three/webgpu';

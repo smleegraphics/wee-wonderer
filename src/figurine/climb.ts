@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import type { WallHit } from '../collision/collision';
 import { CAPSULE_RADIUS, figurine, move, player, TEL, TUNE, velocity, WORLD_DOWN } from '../app';
-import { collision, navGrid, PLATFORM_OPTS } from '../collision/room-collision';
+import { collision, navGrid, wallSlopeMax } from '../collision/room-collision';
 import { camLatch } from './camera';
 import { actions, charH, play } from './character';
 import { bodyOverlap, lastGood, lerpAngle, STEP_DOWN_MAX, WALL_LIFT, wallFeet } from './controller';
@@ -46,12 +46,6 @@ export const CLIMB = {
   skin: 0.05,       // radii: the body resting this far into a surface is touching it, not inside it
 };
 
-/** Walk it or climb it — one cutoff, the "Climb threshold" slider: a surface steeper
- *  than that is a wall. The NavGrid won't stand on it (this is its `slopeMin`) and the
- *  climb will hang on it. Returned as the largest |normal.y| a wall may have. */
-export function wallSlopeMax(): number {
-  return Math.cos(THREE.MathUtils.degToRad(PLATFORM_OPTS.climbDeg));
-}
 export function isWall(w: WallHit): boolean {
   return Math.abs(w.up) <= wallSlopeMax();
 }

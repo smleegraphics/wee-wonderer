@@ -4,13 +4,12 @@
 
 import * as THREE from 'three';
 import { type VoxelOptions, type VoxelSurface, surfaceToGeometry } from './voxelize';
-import { type NavGrid, type PlatformField, MeshCollision } from './collision';
+import { type Collision, type NavGrid, type PlatformField, MeshCollision } from './collision';
 import { voxelCacheKey, voxelCacheGet, voxelCachePut } from './voxel-cache';
 import { workerCaller } from '../worker-call';
 import { SCANS } from '../scan/scans';
 import { GRAIN, hud, MESHONLY, num, q, scene, TARGET_RADIUS, VOXEL_SIZE } from '../app';
 import { charH } from '../figurine/character';
-import { wallSlopeMax } from '../figurine/climb';
 import { currentFile, lastCenters, lastCov, lastMatrix, lastOpacity, loadToken, newLoadToken, scanLoading } from '../scan/room';
 import { refillWalkable } from '../scan/walk-fill';
 
@@ -65,12 +64,18 @@ export const overlayBoxes: { voxel: HTMLInputElement | null; platform: HTMLInput
 export let lastVoxelSize = GRAIN;
 export let groundY: number | null = null; // the height of the ground the figurine plays on in this scan (the voxelizer's), or null
 export const PLATFORM_OPTS = { stepFactor: 0.35, minCells: 6, climbDeg: 70, bridge: 2, fill: 3 }; // climbDeg: surfaces steeper than this (from horizontal) are walls to climb, gentler ones are ground to walk. minCells: an area, in grains². bridge, fill: how wide a gap in a surface is bridged, and how wide a hole in it filled, in grains
+/** Walk it or climb it — one cutoff, the "Climb threshold" slider: a surface steeper
+ *  than that is a wall. The NavGrid won't stand on it (this is its `slopeMin`) and the
+ *  climb will hang on it. Returned as the largest |normal.y| a wall may have. */
+export function wallSlopeMax(): number {
+  return Math.cos(THREE.MathUtils.degToRad(PLATFORM_OPTS.climbDeg));
+}
 // Spike 2: the reliable ground. The controller stands on the NavGrid (no
 // fall-through), is confined to it (no walking off), and recovers to `lastGood`.
 export let navGrid: NavGrid | null = null;
 export let navField: PlatformField | null = null; // navGrid's cells as a list, for the overlay and the gap fill
 export let navVersion = 0;                       // goes up each time the walkable cells are rebuilt
-export let collision: MeshCollision | null = null; // BVH over the voxel surface, rebuilt per scan
+export let collision: Collision | null = null; // BVH over the voxel surface, rebuilt per scan
 export let collisionKey = ''; // the settings (voxelCacheKey) the collision there is was built with
 
 /** Take the room's collision, and its debug overlays, out of the scene. */

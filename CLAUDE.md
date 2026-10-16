@@ -150,8 +150,9 @@ Visual and behavioural checks run headless in real Chrome through Playwright.
 - **Nothing outside `src/ui/` builds UI.** The rest talks to the `hud` handle (made in
   `app.ts`); DOM and styles live in `src/ui/`, and every colour, font and size is a
   token in `ui.css`.
-- **`app.ts` imports nothing else from the app.** It holds what every part shares, so
-  it must load first; what the HUD's controls do is filled in by `main.ts`
+- **`app.ts` imports nothing that imports it back.** It holds what every part shares, so
+  it must load first: of the app's own files it imports only `ui/hud`, `scan/scans` and
+  `loading/room-reveal`, and what the HUD's controls do is filled in by `main.ts`
   (`hudActions`). A value another file reassigns lives in a shared object (`figurine`,
   `camLatch`, `NAV`) or behind a function, since an import cannot be assigned to.
 - **The controller talks to collision only through the `Collision` interface**, so
@@ -199,7 +200,7 @@ Project-specific checks:
 - No allocations in per-frame paths (`updateController`, `climbUpdate`,
   `updateCamera`, the render loop). Reuse module-level scratch vectors.
 - `SCHEMA` in `src/collision/voxel-cache.ts` is bumped if the collision surface changes.
-- The controller still reaches collision only through the `Collision` interface.
+- The controller still reaches collision only through the `Collision` interface (`collision` is typed by it, so a method missing from the interface fails the typecheck).
 - `npm run typecheck` and `npm run build` pass.
 
 Report findings before changing anything, most severe first, each with the file
