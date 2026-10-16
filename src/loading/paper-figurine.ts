@@ -11,7 +11,7 @@ import type { WebGPURenderer } from 'three/webgpu';
 import { mix, output, screenCoordinate, uniform, vec4 } from 'three/tsl';
 import { PUNCH_PX } from './paper-bits';
 import { HANDOVER } from './room-reveal';
-import { nodeMaterialFor } from './three-internals';
+import { nodeMaterialFor } from '../three-internals';
 
 const DOTS = { pitch: 2.6 }; // from one dot's middle to the next, in dot radii: close enough that the figurine's outline still reads
 // parts of the room's arrival: the dots grow once the waiting bits have handed over, and the colours follow while the last gaps close

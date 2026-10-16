@@ -11,23 +11,23 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import { GaussianSplat } from 'three/addons/objects/GaussianSplat.js';
 import { createGaussianSplatGeometry } from 'three/addons/utils/GaussianSplatUtils.js';
-import { orientScan } from './orient-scan';
-import type { Walkable, WalkableFillOptions } from './fill-scan-core';
-import type { FilledScan } from './fill-scan.worker';
-import { surfaceToGeometry } from './voxelize';
-import { MeshCollision, type NavGrid, type PlatformField, type WallHit } from './collision';
-import { voxelCacheKey, voxelCacheGet, voxelCachePut } from './voxel-cache';
-import type { VoxelSurface, VoxelOptions } from './voxelize';
-import type { CleanOptions } from './clean-scan-core';
-import { buildClimbSideClip } from './climb-side-anim';
+import { orientScan } from './scan/orient-scan';
+import type { Walkable, WalkableFillOptions } from './scan/fill-scan-core';
+import type { FilledScan } from './scan/fill-scan.worker';
+import { surfaceToGeometry } from './collision/voxelize';
+import { MeshCollision, type NavGrid, type PlatformField, type WallHit } from './collision/collision';
+import { voxelCacheKey, voxelCacheGet, voxelCachePut } from './collision/voxel-cache';
+import type { VoxelSurface, VoxelOptions } from './collision/voxelize';
+import type { CleanOptions } from './scan/clean-scan-core';
+import { buildClimbSideClip } from './figurine/climb-side-anim';
 import { createHud } from './ui/hud';
 import { workerCaller } from './worker-call';
-import type { ParsedScan, ScanLoadProgress } from './load-scan.worker';
+import type { ParsedScan, ScanLoadProgress } from './scan/load-scan.worker';
 import { splatInternals } from './three-internals';
-import { installReveal, startReveal, startLeave, updateReveal, revealPaused, HANDOVER } from './room-reveal';
-import { createLoadingScene, type LoadingScene } from './loading-scene';
-import { createPaperFigurine, type PaperFigurine } from './paper-figurine';
-import { SCANS, LISTED_SCANS, scanURL } from './scans';
+import { installReveal, startReveal, startLeave, updateReveal, revealPaused, HANDOVER } from './loading/room-reveal';
+import { createLoadingScene, type LoadingScene } from './loading/loading-scene';
+import { createPaperFigurine, type PaperFigurine } from './loading/paper-figurine';
+import { SCANS, LISTED_SCANS, scanURL } from './scan/scans';
 import { cameraPosition, cameraProjectionMatrixInverse, cameraWorldMatrix, cos, float, Fn, If, instanceIndex, mix, modelWorldMatrix, PI, pmremTexture, sin, smoothstep, uint, uniform, uv, varying, vec3, vec4, viewportUV } from 'three/tsl';
 
 const q = new URLSearchParams(location.search);
@@ -264,7 +264,7 @@ function loadScan(file: string): void {
 // The .ply is fetched and parsed in a worker (load-scan.worker.ts): on the main
 // thread a large scan froze the page for seconds.
 const parseScan = workerCaller<{ url: string }, ParsedScan, ScanLoadProgress>(
-  new Worker(new URL('./load-scan.worker.ts', import.meta.url), { type: 'module' }), 'scan load');
+  new Worker(new URL('./scan/load-scan.worker.ts', import.meta.url), { type: 'module' }), 'scan load');
 
 // The steps of a load, in order: what the loading note says during each, and its share
 // of the progress indicator. Only fetching can say how far through it is; the others
@@ -439,7 +439,7 @@ function applyFillView(): void {
 applyFillView();
 
 const fillScan = workerCaller<{ scan: ParsedScan; matrix: number[]; walk: Walkable; opts: WalkableFillOptions }, FilledScan>(
-  new Worker(new URL('./fill-scan.worker.ts', import.meta.url), { type: 'module' }), 'walkable fill');
+  new Worker(new URL('./scan/fill-scan.worker.ts', import.meta.url), { type: 'module' }), 'walkable fill');
 const scanBuffers = (scan: ParsedScan) => [scan.centers, scan.covariances, scan.colors, ...Object.values(scan.sphericalHarmonics)].map((a) => a.buffer as ArrayBuffer);
 
 /** Let FILL_VIEW decide how the splats after the scan's first `own`, which are the fill, and the scan's own are drawn. */
@@ -723,7 +723,7 @@ function startJump(): void {
 // --- collision ---------------------------------------------------------------
 // Voxelization runs in a Web Worker so the ~1s+ first build doesn't freeze the frame.
 const voxelize = workerCaller<{ positions: Float32Array; opacity: Float32Array; cov: Float32Array | null; count: number; matrix: number[]; voxelSize: number; unit: number; opts: VoxelOptions }, VoxelSurface>(
-  new Worker(new URL('./voxelize.worker.ts', import.meta.url), { type: 'module' }), 'collision build');
+  new Worker(new URL('./collision/voxelize.worker.ts', import.meta.url), { type: 'module' }), 'collision build');
 
 function voxelizeInWorker(centers: THREE.BufferAttribute, opacity: Float32Array, cov: Float32Array | null, matrixWorld: THREE.Matrix4, opts: VoxelOptions): Promise<VoxelSurface> {
   const positions = (centers.array as Float32Array).slice(); // copies so we can transfer
@@ -1824,7 +1824,7 @@ function climbableFace(ax: number, ay: number, az: number, bx: number, by: numbe
 // loaded when asked for, so none of it is part of normal play.
 if (TEL) (window as unknown as { __collisionHealth?: () => Promise<unknown> }).__collisionHealth = async () => {
   if (!navField || !collisionDebug || !lastCenters || !lastOpacity) return null; // no room yet
-  const { collisionHealth } = await import('./collision-health');
+  const { collisionHealth } = await import('./collision/collision-health');
   return collisionHealth({
     walk: navField,
     mesh: { positions: collisionDebug.geometry.attributes.position.array, index: collisionDebug.geometry.index!.array },
@@ -2067,7 +2067,7 @@ function setupDebugMenu(): void {
 
 // --- scan import (upload + in-browser cleanup) ------------------------------
 const cleanInWorker = workerCaller<{ buffer: ArrayBuffer; opts: CleanOptions }, { buffer: ArrayBuffer; kept: number; total: number }>(
-  new Worker(new URL('./clean-scan.worker.ts', import.meta.url), { type: 'module' }), 'scan cleanup');
+  new Worker(new URL('./scan/clean-scan.worker.ts', import.meta.url), { type: 'module' }), 'scan cleanup');
 
 /** Import an uploaded .ply: keep a copy for live re-clean, then clean + load it. */
 async function importScan(file: File): Promise<void> {

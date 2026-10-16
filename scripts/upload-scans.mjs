@@ -1,4 +1,4 @@
-// Upload the listed example scans (src/scan-list.ts) from scans/ to the scan host's R2
+// Upload the listed example scans (src/scan/scan-list.ts) from scans/ to the scan host's R2
 // bucket. Unlisted scans (local test scans such as Playroom) are never uploaded.
 //
 //   npm install --prefix deploy/scans-worker   # once: wrangler lives in the Worker's own package
@@ -29,7 +29,7 @@ const where = local ? '--local' : '--remote';
 // Read the list through Vite, so this is the same module the app imports. Nothing is
 // served, so the watcher and hot reload stay off (scans/ holds hundreds of MB).
 const vite = await createServer({ server: { middlewareMode: true, hmr: false, watch: null }, appType: 'custom', logLevel: 'error' });
-const { LISTED_SCANS, SCAN_DIR } = await vite.ssrLoadModule('/src/scan-list.ts');
+const { LISTED_SCANS, SCAN_DIR } = await vite.ssrLoadModule('/src/scan/scan-list.ts');
 await vite.close();
 
 const path = (file) => `${SCAN_DIR}/${file}`;

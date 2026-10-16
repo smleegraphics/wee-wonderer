@@ -1,6 +1,6 @@
 // How sound each room's collision is as ground for a game, in numbers, and whether any
 // of them has got worse than the saved baseline (context/collision.md). The measuring is
-// in src/collision-health.ts, reached through window.__collisionHealth (?tel=1). Needs
+// in src/collision/collision-health.ts, reached through window.__collisionHealth (?tel=1). Needs
 // the dev server running and the demo scans in scans/.
 //
 //   node scripts/collisioncheck.mjs [scan.ply ...]     compare with the baseline; exits 1 if a number got worse
@@ -69,7 +69,7 @@ let failed = 0;
  *    splats: one 1 voxel off the first triangle's centre, one 0.5 off the second's, one far from everything, one too faint to count */
 async function selfTest(page) {
   const got = await page.evaluate(async () => {
-    const { collisionHealth } = await import('/src/collision-health.ts');
+    const { collisionHealth } = await import('/src/collision/collision-health.ts');
     const pos = [], id = [];
     for (let x = 0; x < 10; x++) for (let z = 0; z < 10; z++) if (!(x >= 4 && x <= 5 && z >= 4 && z <= 5)) { pos.push(x, 0, z); id.push(0); }
     for (let z = 0; z < 3; z++) { pos.push(10, 2, z); id.push(1); }

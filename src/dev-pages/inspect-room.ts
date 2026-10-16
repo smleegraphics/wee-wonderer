@@ -5,9 +5,9 @@ import * as THREE from 'three';
 import { WebGPURenderer } from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GaussianSplat } from 'three/addons/objects/GaussianSplat.js';
-import { orientScan } from './orient-scan';
-import { parseScan } from './parse-scan';
-import { LISTED_SCANS, scanURL } from './scans';
+import { orientScan } from '../scan/orient-scan';
+import { parseScan } from '../scan/parse-scan';
+import { LISTED_SCANS, scanURL } from '../scan/scans';
 
 const app = document.getElementById('app')!;
 const renderer = new WebGPURenderer({ antialias: true }); // unlike the game (context/frame-time.md): this page is for looking at the y = 0 grid's thin lines, and its frame rate does not matter

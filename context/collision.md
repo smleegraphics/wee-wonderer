@@ -14,7 +14,7 @@ splat centres + opacity → density field (voxels) → cleanup, ground gaps → 
 - No physics engine. The character is kinematic and only needs collision detection.
 - It is a full mesh, not a heightfield, so the figurine can walk under tables.
 - Built in a Web Worker on first load of a scan, then cached in IndexedDB
-  (`src/voxel-cache.ts`). The cache key includes `SCHEMA` and every `VOXEL_OPTS`
+  (`src/collision/voxel-cache.ts`). The cache key includes `SCHEMA` and every `VOXEL_OPTS`
   value. Uploaded scans skip the cache.
 - Real splat centres must be read from the loader geometry before `GaussianSplat`
   is constructed (it swaps its geometry for a billboard quad), then transformed by
@@ -30,7 +30,7 @@ one's collision is as ground for a game, then fails if any guarded number is wor
 `scripts/collision-baseline.json`. Run it after any change to the voxelizer, its
 settings, the NavGrid, or how the figurine moves. When a change is meant to improve a
 number, check it did, then `--save` the new baseline in the same PR. The measuring is
-`src/collision-health.ts`, loaded only under `?tel=1`. Collision is seeded, so the
+`src/collision/collision-health.ts`, loaded only under `?tel=1`. Collision is seeded, so the
 numbers repeat exactly. `--with key=value` tries a setting without saving it (any
 `VOXEL_OPTS` key, or `vox`): `node scripts/collisioncheck.mjs --with refine=1`.
 
@@ -357,7 +357,7 @@ delete the small ones.
 
 The scan leaves bare stretches of floor with no splats, so no collision: holes and
 ragged edges in the one surface everything else stands on. `fillGround`
-(`src/voxelize-core.ts`, the `fillFloor` setting, "Ground gap fill" in the Debug card)
+(`src/collision/voxelize-core.ts`, the `fillFloor` setting, "Ground gap fill" in the Debug card)
 fills them in the voxel grid before meshing. The hole patching (`splat-fill.md`) follows
 by itself, since it tracks the walkable cells.
 
@@ -503,7 +503,7 @@ axis-sliced panel fill broke.
 ## Scan cleanup
 
 Every real-capture 3DGS scan has a shell of floaters. `scripts/clean-scan.mjs`
-(offline) and `src/clean-scan-core.ts` (in-browser, on import) drop splats failing
+(offline) and `src/scan/clean-scan-core.ts` (in-browser, on import) drop splats failing
 on opacity, size, or local density, then level and crop to the room.
 
 - Production parameters: `alphaMin 0.35`, `minMass 4`, `scaleCapMul 4` (about half

@@ -9,7 +9,7 @@ that unfold from them.
 ## What is on screen
 
 - **Tiles.** Scans (top-right); Back to the start and Debug (bottom-right). The Scans
-  card lists the `listed` entries of `SCANS` (`src/scan-list.ts`), then "Import your own scan".
+  card lists the `listed` entries of `SCANS` (`src/scan/scan-list.ts`), then "Import your own scan".
 - **Cards.** Scans and Debug unfold beside the tile column. At most one is open;
   `Escape` folds it. `` ` `` toggles Debug.
 - **Controls hint** (bottom-left), **status note** (top-centre).
@@ -37,10 +37,10 @@ that unfold from them.
 | `src/ui/paper.ts` | The building blocks: `piece` (shadow holder + cut face), `tile`, `el`, the icon paths |
 | `src/ui/hud.ts` | `createHud`: builds all of it, owns what is open, returns the `Hud` handle |
 | `src/ui/debug-panel.ts` | The Debug card: `section()` → `addToggle` / `addSlider` (which returns a function that shows a value on the slider, for a setting that changed without it) |
-| `src/paper-bits.ts` | The sheet of paper dots: where they sit and what a dot looks like. One set of formulas, used by both files below |
-| `src/loading-scene.ts` | The stand-in dots drawn before a scan has loaded (one instanced sprite) |
-| `src/room-reveal.ts` | The room's arrival: per-splat journey in the scan's own shader |
-| `src/paper-figurine.ts` | The figurine's paper-dots look while waiting, and how it becomes itself |
+| `src/loading/paper-bits.ts` | The sheet of paper dots: where they sit and what a dot looks like. One set of formulas, used by both files below |
+| `src/loading/loading-scene.ts` | The stand-in dots drawn before a scan has loaded (one instanced sprite) |
+| `src/loading/room-reveal.ts` | The room's arrival: per-splat journey in the scan's own shader |
+| `src/loading/paper-figurine.ts` | The figurine's paper-dots look while waiting, and how it becomes itself |
 | `src/three-internals.ts` | The private parts of three.js the app reaches into (`GaussianSplat`, the renderer's material conversion), in one place |
 
 `main.ts` creates one `hud` and never touches UI DOM. It tells the HUD what happened

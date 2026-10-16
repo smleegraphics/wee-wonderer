@@ -1,7 +1,7 @@
 // The example scans, as data only: no side effects and no import.meta.env, so the Vite
 // config (vite.config.ts) and scripts/upload-scans.mjs can read it as well as the app.
 // Where a scan is fetched from is decided in scans.ts (context/deploy.md).
-import type { VoxelOptions } from './voxelize-core';
+import type { VoxelOptions } from '../collision/voxelize-core';
 
 export interface ScanEntry {
   /** A plain file name: scans are kept flat, in scans/ and on the scan host alike. */
