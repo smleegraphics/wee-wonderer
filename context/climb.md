@@ -68,6 +68,22 @@ These were each found by a bug. Breaking one brings the bug back.
     frame on every mantle and step-off.
 11. **A failed climb attempt must not write `climbDir`.** The camera reads it. Use
     `climbTry` until the climb actually starts.
+12. **Every move that places the climber goes through `fitClimbBody`.** It pushes the
+    body out of an overlap up to a radius and refuses anything deeper (the way out is
+    then ambiguous, and a push can go through a thin shell), so the caller undoes or
+    refuses that move. Two moves used to skip it, for the same reason: each finds the
+    face with one ray and places the whole body by it, so where the face is set back at
+    that height (a recess, or under a lip) the rest of the body lands inside what sticks
+    out.
+    - The snap that holds the gap to the face, whose ray is near the feet, carried the
+      body up to `followReach` (2.8 radii) forward. On Counter (`.spz`, seeds 1 and 5) it
+      was left 1.2 radii inside. Now a snap that goes too deep is not made that frame;
+      the sideways and vertical moves still apply. Clamping the snap to a radius was
+      rejected: it pulls in and pushes out every frame, which jitters.
+    - The lip grab measures the face just below the lip and hung the body inside the
+      lip (0.82 radii on Counter `.spz`, seed 6). It was pushed out only on the next
+      frame with a key held: a resting frame returns before the push. Now the grab is
+      pushed clear as it is made, or refused if it is too deep.
 
 ## Follow camera
 

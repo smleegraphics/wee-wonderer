@@ -1205,6 +1205,7 @@ const climbDir = new THREE.Vector3();   // horizontal direction into the wall we
 const climbTry = new THREE.Vector3();   // scratch: a candidate direction, until a climb actually starts
 const climbProbe = new THREE.Vector3(); // scratch for the forward wall raycast
 const climbSide = new THREE.Vector3();  // scratch: sideways direction along the wall
+const climbFrom = new THREE.Vector3();  // scratch: where the body was before a move that might not fit
 let climbAwaitRelease = false;          // grabbed a lip mid-walk: the still-held walk keys mean "keep going down" until let go
 let climbV = 0, climbH = 0;             // this frame's climb input after latches: up/down, right/left
 let climbSideMix = 0;                   // animation blend: -1 = shimmy left, 0 = up/down climb, +1 = shimmy right
@@ -1339,8 +1340,13 @@ function tryStartClimbDown(dx: number, dz: number): boolean {
   // walked off forwards, so that's a turn-around to face back the way we came.
   const fx = climbProbe.x + climbSide.x * w.distance, fz = climbProbe.z + climbSide.z * w.distance; // point on the face
   const ox = w.nx / hn, oz = w.nz / hn;       // the face's outward direction
-  if (TEL) console.log(`CLIMBDOWN-START y=${(supportY - charH * CLIMB.hang).toFixed(2)} below=${below.toFixed(2)} face=${w.distance.toFixed(2)}`);
+  // The face was found below the lip, but the body reaches above it: where the face
+  // is set back under the lip, the body would hang inside the lip. Push it clear; too
+  // deep for that, and there is no hanging here.
+  climbFrom.copy(p);
   p.set(fx + ox * gap, supportY - charH * CLIMB.hang, fz + oz * gap);
+  if (!fitClimbBody(CAPSULE_RADIUS * charH)) { p.copy(climbFrom); return false; }
+  if (TEL) console.log(`CLIMBDOWN-START y=${p.y.toFixed(2)} below=${below.toFixed(2)} face=${w.distance.toFixed(2)}`);
   climbDir.set(-ox, 0, -oz);                  // into the wall
   climbCling = false;
   // The keys held right now mean "walk off this ledge", not climb input: once we've
@@ -1484,6 +1490,7 @@ function climbUpdate(dt: number): boolean {
   if (wall) climbCling = false;                // wall above the feet again (the lip rose) → not topped out
   else if (climbCling) wall = climbWall(climbProbe.set(p.x, p.y + probeUp, p.z), climbDir, followReach);
   if (wall) {
+    climbFrom.copy(p);
     p.addScaledVector(climbDir, wall.distance - gap);
     // steer into the face along its normal, so a curved / angled wall is followed
     // around. Eased: scan surfaces are lumpy, and per-triangle normals jitter.
@@ -1503,22 +1510,34 @@ function climbUpdate(dt: number): boolean {
 
   // --- the whole body has to fit, not just the grip ---
   // The face is followed at one point near the feet, so the rest of the body can be
-  // carried into whatever is beside or above it. Push the body out of anything this
-  // move put it in — the same collide-and-slide walking uses, in all three axes here.
-  // An object in the way pushes straight back, so the move makes no headway; a lump
-  // of the wall itself pushes outward, and the climber rides over it.
-  //   Only while the overlap is shallower than the body's radius, though: that is as
-  // deep as one frame's move can take it, and as deep as "which way is out" has a
-  // single answer. Deeper means the body was already inside something when the move
-  // began (a grab that started that way) — pushing then can eject it through the far
-  // side of a thin shell, so it is left alone.
-  const sunk = bodyOverlap(p.x, p.y, p.z, radius);
-  if (sunk > radius * CLIMB.skin && sunk <= radius) {
+  // carried into whatever is beside or above it. A step is about a quarter of a radius
+  // at the longest frame, so `fitClimbBody` can push it back out. The snap to the face
+  // can go further: where the face is further back near the feet than higher up (a
+  // recess, or under an overhanging lip), it carries the body up to `followReach`
+  // forward into the part that sticks out. Such a snap is not made this frame; the
+  // sideways and vertical moves stand, and the gap closes once the body is clear.
+  if (!fitClimbBody(radius) && wall) { p.copy(climbFrom); fitClimbBody(radius); }
+  return false;
+}
+
+/** Make a climber's body fit after a move, feet at the player's position. An overlap up
+ *  to a radius is pushed out, with the same collide-and-slide walking uses, in all three
+ *  axes here: an object in the way pushes straight back, so the move makes no headway;
+ *  a lump of the wall itself pushes outward, and the climber rides over it. Returns
+ *  false, moving nothing, when the body is deeper than a radius: "which way is out" no
+ *  longer has a single answer, and a push can eject it through the far side of a thin
+ *  shell. The caller then undoes the move or refuses it, so no move leaves the body that
+ *  deep (context/climb.md, rule 12). */
+function fitClimbBody(radius: number): boolean {
+  const p = player.position, sunk = bodyOverlap(p.x, p.y, p.z, radius);
+  if (sunk > radius) return false;
+  const pushed = sunk > radius * CLIMB.skin;
+  if (pushed) {
     if (TEL && !climbBlocked) console.log(`CLIMB-PUSHED y=${p.y.toFixed(2)} by=${(sunk / radius).toFixed(2)}r`);
     p.set(wallFeet.x, wallFeet.y - charH * WALL_LIFT, wallFeet.z);
-    climbBlocked = true;
-  } else climbBlocked = false;
-  return false;
+  }
+  climbBlocked = pushed;
+  return true;
 }
 
 // scratch vectors for the collide-and-slide loop (avoid per-frame allocation)

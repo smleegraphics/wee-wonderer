@@ -1,4 +1,4 @@
-// Web Worker: fetch and parse a scan's .ply off the main thread. Parsing a large
+// Web Worker: fetch and parse a scan (.ply or .spz) off the main thread. Parsing a large
 // scan takes seconds (the Playroom is 453 MB), and on the main thread that froze
 // the page: no clicks, no animation. The file is fetched here too, so its bytes
 // never cross threads; only the parsed arrays are transferred back, zero-copy. A load
@@ -6,7 +6,7 @@
 // has begun: that is one call into three.js).
 
 import type { BufferAttribute } from 'three';
-import { GaussianSplatPLYLoader } from 'three/addons/loaders/GaussianSplatPLYLoader.js';
+import { parseScan } from './parse-scan';
 
 /** The arrays `createGaussianSplatGeometry` rebuilds the splat geometry from. */
 export interface ParsedScan {
@@ -59,7 +59,7 @@ self.onmessage = async (e: MessageEvent<Req | Cancel>) => {
     fetching.delete(id);
     abort.signal.throwIfAborted(); // cancelled between the last bytes and here
     say({ step: 'unpack' });
-    const geometry = new GaussianSplatPLYLoader().parse(body);
+    const geometry = await parseScan(body);
     const sphericalHarmonics: Record<string, Uint32Array> = {};
     for (const name of Object.keys(geometry.attributes)) {
       if (name.startsWith('sphericalHarmonics')) sphericalHarmonics[name] = (geometry.getAttribute(name) as BufferAttribute).array as Uint32Array;

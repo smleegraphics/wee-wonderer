@@ -13,6 +13,39 @@ A scan a visitor imports never leaves their browser: it is read into memory, cle
 in a worker, and loaded from a `blob:` URL (`importScan` in `main.ts`). Nothing about
 hosting involves it.
 
+**Live:** the app is https://wee.samanthamlee.com (Vercel project `wee-wonderer`, with
+its `.vercel.app` alias removed). The scan host is
+https://wee-scans.wee-scans-worker.workers.dev, with `ALLOWED_ORIGINS` set to
+`https://wee.samanthamlee.com` alone. **Vercel's preview builds cannot load scans, on
+purpose:** their addresses are not allowed, and they do not need scans. Do not widen
+`ALLOWED_ORIGINS` without asking.
+
+## Scan files
+
+The shipped scans are SPZ (`*-clean.spz`), converted from the cleaned `.ply`:
+
+```bash
+npx -y @playcanvas/splat-transform@3.8.0 scans/<name>-clean.ply scans/<name>-clean.spz
+```
+
+That writes SPZ version 4 (zstd). Measured file sizes, `.ply` → `.spz`:
+
+| Scan | Size |
+|---|---|
+| Kitchen | 40.3 → 3.1 MB |
+| Living Room | 33.4 → 2.2 MB |
+| Counter | 30.7 → 2.3 MB |
+| Curled Up Dog | 30.9 → 2.8 MB |
+
+Unpacking in the worker went from about 500 ms to about 45 ms. They look the same as the `.ply` side by side. SPZ rounds positions (by at most
+1.2e-4 scan units here), which moves Kitchen's collision a little
+(`context/collision.md`, "SPZ moves Kitchen's collision").
+
+`parseScan` (`src/parse-scan.ts`, used by `load-scan.worker.ts` and `inspect.html`) picks the parser by the file's bytes, not its name (an imported
+scan's `blob:` URL has none): a file starting with the text `ply` is PLY, anything else
+goes to three's `SPZLoader`, which reads SPZ versions 1 to 4 and throws on what is
+neither. Importing a scan still takes `.ply` only: the cleanup worker parses PLY.
+
 ## Where scans come from
 
 - **`src/scan-list.ts`** holds the list (`SCANS`, `LISTED_SCANS`) and `SCAN_DIR`, as
@@ -104,13 +137,13 @@ same build from another port (`--port 4174`) checks that a page not in
    `VITE_SCAN_BASE` to the Worker's address **for both Production and Preview** (a build
    without it fetches `/scans/`, which Vercel does not have), and add the domain
    `wee.samanthamlee.com`. The DNS is already on Vercel, so the record is added there.
-3. **Allow Vercel's own addresses:** once the project exists, its builds are served at
+3. **Optionally, allow Vercel's own addresses** (not done for the live site; see "Live"
+   above): once the project exists, its builds are served at
    `wee-wonderer-<id>-<scope>.vercel.app` (and the project at `<name>.vercel.app`). Add
    `https://wee-wonderer-*-<scope>.vercel.app` and the project's address to
    `ALLOWED_ORIGINS`, and deploy the Worker again. Same whenever the app's address changes.
 
 ## Known limitations
 
-- Scans are full-size `.ply` (31 to 40 MB). Smaller files (SPZ) are the next step.
 - A scan load that fails for CORS reads only "Failed to fetch": the browser does not
   tell the page why.

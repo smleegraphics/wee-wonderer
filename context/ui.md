@@ -150,7 +150,7 @@ to its spawn point, and the reveal starts from there.
   it through `hud.token`, and three.js cannot parse a CSS colour function. `index.html`
   repeats the value for the first paint.
 - **The page must stay responsive while a scan loads**, or the waiting figurine
-  freezes. The `.ply` is fetched and parsed in `load-scan.worker.ts` for that reason.
+  freezes. The scan is fetched and parsed in `load-scan.worker.ts` for that reason.
   Before, parsing the 453 MB Playroom blocked the main thread for about 10 s and a
   click on Begin did nothing until it ended.
 

@@ -20,10 +20,11 @@ export const SCAN_DIR = 'scans';
 // scans in the switcher, and the first of them opens by default; an unlisted scan is a
 // local test scan, loaded only by `?scan=` (CLAUDE.md, "Which scans ship").
 export const SCANS: ScanEntry[] = [
-  { file: 'kitchen-clean.ply', label: 'Kitchen', listed: true }, // Mip-NeRF 360, floater-stripped (scripts/clean-scan.mjs)
-  { file: 'livingroom-clean.ply', label: 'Living Room', listed: true },
-  { file: 'counter-clean.ply', label: 'Counter', listed: true },
-  { file: 'Marishka-clean.ply', label: 'Curled Up Dog', listed: true }, // a scan of our own: a dog on a blanket, the kind of capture a visitor brings
+  // Shipped as SPZ, converted from the cleaned .ply (context/deploy.md, "Scan files").
+  { file: 'kitchen-clean.spz', label: 'Kitchen', listed: true }, // Mip-NeRF 360, floater-stripped (scripts/clean-scan.mjs)
+  { file: 'livingroom-clean.spz', label: 'Living Room', listed: true },
+  { file: 'counter-clean.spz', label: 'Counter', listed: true },
+  { file: 'Marishka-clean.spz', label: 'Curled Up Dog', listed: true }, // a scan of our own: a dog on a blanket, the kind of capture a visitor brings
   { file: 'room2.ply', label: 'Playroom', listed: false, collision: { floorFlat: 2 } }, // not shipped: its licence is unclear. Kept for the checks that measure on it. Already tightly bounded — no cleanup needed. Its rug is uneven: ridges of it stand above the usual 1.5 grains and were left as bumps on the floor
 ];
 

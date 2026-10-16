@@ -36,7 +36,7 @@ gitignored. To run locally:
 1. Put a Gaussian-splat `.ply` in `scans/` (standard 3DGS format — a Scaniverse
    or Luma export, or a pretrained scene). The dev server serves it at `/scans/`.
 2. Open `http://localhost:5173/?scan=yourscan.ply`, or add it to `src/scans.ts`.
-   The default is `kitchen-clean.ply`.
+   The default is `kitchen-clean.spz`.
 
 Which scans ship publicly, and why, is in [`CLAUDE.md`](./CLAUDE.md) ("Which scans
 ship"); how they are hosted is in [`context/deploy.md`](./context/deploy.md).
@@ -57,7 +57,7 @@ clips; contract in `context/character-README.md`).
 
 ### Tooling
 
-- **`inspect.html`** (`src/inspect-room.ts`) — a scan inspector: loads a `.ply`,
+- **`inspect.html`** (`src/inspect-room.ts`) — a scan inspector: loads a scan (`.ply` or `.spz`),
   auto-levels it, and shows it against a y=0 grid. `?file=…&ca=&ce=&cd=`.
 - **`scripts/shot.mjs`** / **`scripts/drive.mjs`** — headless Chrome (Playwright)
   screenshotting and keyboard/mouse driving, for verifying the 3D app from the

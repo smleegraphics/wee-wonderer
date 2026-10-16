@@ -5,8 +5,8 @@ import * as THREE from 'three';
 import { WebGPURenderer } from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GaussianSplat } from 'three/addons/objects/GaussianSplat.js';
-import { GaussianSplatPLYLoader } from 'three/addons/loaders/GaussianSplatPLYLoader.js';
 import { orientScan } from './orient-scan';
+import { parseScan } from './parse-scan';
 import { LISTED_SCANS, scanURL } from './scans';
 
 const app = document.getElementById('app')!;
@@ -28,7 +28,10 @@ const room = new THREE.Group();
 scene.add(room);
 const file = q.get('file') ?? LISTED_SCANS[0].file; // the app's default scan
 
-new GaussianSplatPLYLoader().load(scanURL(file), (geometry) => {
+fetch(scanURL(file)).then((res) => {
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return res.arrayBuffer();
+}).then(parseScan).then((geometry) => {
   const o = orientScan(geometry.getAttribute('position') as THREE.BufferAttribute);
   const splat = new GaussianSplat(geometry);
   splat.position.copy(o.center).multiplyScalar(-1);
@@ -51,6 +54,6 @@ new GaussianSplatPLYLoader().load(scanURL(file), (geometry) => {
   camera.updateProjectionMatrix();
   orbit.update();
   (window as unknown as { __wwReady?: boolean }).__wwReady = true;
-});
+}).catch((err) => console.error(`inspect: ${file} failed to load:`, err));
 
 renderer.setAnimationLoop(() => { orbit.update(); void renderer.renderAsync(scene, camera); });
