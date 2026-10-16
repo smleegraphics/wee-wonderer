@@ -3,7 +3,7 @@
 // only under ?tel=1: this module is loaded on demand and is never part of normal play.
 //
 // Three-free. Distances and areas are in `unit`s (the grain collision's settings are
-// counted in: GRAIN in main.ts), not in cells of whatever grid is in use, so the numbers
+// counted in: GRAIN in app.ts), not in cells of whatever grid is in use, so the numbers
 // compare across scans and across grid sizes.
 
 export interface HealthInput {

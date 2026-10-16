@@ -3,7 +3,7 @@
 // and the arrays to draw are transferred back: the same ones if nothing was added, or if
 // the fill could not be worked out. That is reported in the answer, not as a failed job,
 // so that the scan comes back whatever happens: a room without its fill is still a room.
-// Called through workerCaller (worker-call.ts) from main.ts.
+// Called through workerCaller (worker-call.ts) from walk-fill.ts.
 
 import { fillWalkable, appendFill, type Walkable, type WalkableFillOptions } from './fill-scan-core';
 import type { ParsedScan } from './load-scan.worker';

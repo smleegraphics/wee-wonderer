@@ -50,10 +50,9 @@ clips; contract in `context/character-README.md`).
   recenter + a RANSAC floor-plane fit (largest near-horizontal surface, robust to
   floaters / furniture / stairwells) → floor normal to +Y, floor dropped to y=0.
   No per-scan constants; the same code levels a demo scan or your own.
-- **`src/main.ts`** — loads + auto-levels the scan (native `GaussianSplat`),
-  spawns the figurine, runs the character controller (idle/walk/run/jump/climb
-  state machine, camera-relative movement), and the orbit-follow camera. The
-  collision seam is `groundHeightAt()` (currently a flat floor at y=0).
+- **`src/main.ts`** — puts the app together and runs the frame loop. The parts are
+  in folders by job (`scan/`, `collision/`, `figurine/`, `lighting/`, `loading/`,
+  `ui/`); CLAUDE.md ("Where things are") lists what each file holds.
 
 ### Tooling
 

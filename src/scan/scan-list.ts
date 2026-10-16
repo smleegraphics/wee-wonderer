@@ -9,7 +9,7 @@ export interface ScanEntry {
   label: string;
   /** Shown in the Scans card and uploaded to the scan host. Unlisted scans are local test scans. */
   listed: boolean;
-  /** The scan's own collision settings, set by hand where the defaults do not suit it (useScanSettings in main.ts). */
+  /** The scan's own collision settings, set by hand where the defaults do not suit it (useScanSettings in collision/room-collision.ts). */
   collision?: VoxelOptions;
 }
 

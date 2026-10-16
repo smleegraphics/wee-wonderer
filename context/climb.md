@@ -2,7 +2,7 @@
 
 How the climb works, the rules it depends on, and what is known to be missing.
 Read this before changing climbing, airborne movement, or the follow camera. All
-of it is in `src/main.ts` unless noted.
+of it is in `src/figurine/` (`climb.ts`, `controller.ts`, `camera.ts`) unless noted.
 
 ## Behaviour
 

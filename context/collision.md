@@ -72,7 +72,7 @@ How far each number can be trusted:
   0.26 and 1.29. It ignores walls in the way of a jump. For climbing, a higher surface
   is reached from a cell within a mantle's step of it, seen from above, if the mesh has
   a wall between the two at every height from the feet to where a mantle takes over
-  (`climbableFace` in `main.ts`, through the climb's own `climbWall` and `isWall`). The
+  (`climbableFace` in `src/telemetry.ts`, through the climb's own `climbWall` and `isWall`). The
   row below it drops that test: it is the most that better faces could reach, and what
   it leaves out no change to faces will join. No predicted climb has been played out in
   the game to confirm it. The model takes its speeds from `TUNE` and `CLIMB`, so it
@@ -139,7 +139,7 @@ Not measured:
 
 ## Sizes are in grains, not voxels
 
-`GRAIN` (`main.ts`, `TARGET_RADIUS / 72`, about a fifth of the figurine's height) is the
+`GRAIN` (`src/app.ts`, `TARGET_RADIUS / 72`, about a fifth of the figurine's height) is the
 length collision's settings are counted in: the voxel size they were tuned at. The
 voxelizer takes it as `unit` beside `voxelSize` and turns each setting into voxels
 itself (`per`), so a setting means the same thing on any grid. The walkable cells are a
@@ -416,7 +416,7 @@ Known limits:
 
 ## Settings for one scan
 
-`useScanSettings(id)` in `src/main.ts` decides the collision settings (`VOXEL_OPTS`) when
+`useScanSettings(id)` in `src/collision/room-collision.ts` decides the collision settings (`VOXEL_OPTS`) when
 a scan starts loading, from three layers, later ones winning:
 
 1. `VOXEL_DEFAULTS`: what every scan starts from.

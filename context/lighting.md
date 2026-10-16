@@ -2,7 +2,7 @@
 
 How the figurine picks up the scan's lighting, and what was tried. Read this before
 changing lights, the environment map, or anything that renders the splats from a
-second camera. The code is in `src/main.ts` (`SCAN_LIGHT`, `SCAN_PROBE`,
+second camera. The code is in `src/lighting/scan-light.ts` (`SCAN_LIGHT`, `SCAN_PROBE`,
 `captureScanLight`, `applyScanLight`, `updateScanLight`).
 
 ## The problem
@@ -169,7 +169,7 @@ need lighting, or if probes can be computed from splat colours without rendering
 
 ## Contact shadow
 
-Code: `CONTACT_SHADOW`, `installContactShadow`, `updateContactShadow` in `src/main.ts`.
+Code: `CONTACT_SHADOW`, `installContactShadow`, `updateContactShadow` in `src/lighting/contact-shadow.ts`.
 
 **Why it is done in the splat shader.** The splats are transparent and write no
 depth, so a shadow drawn as its own layer (a decal, or a shadow-catcher mesh, which

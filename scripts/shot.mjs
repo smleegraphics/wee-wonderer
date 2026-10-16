@@ -3,7 +3,7 @@
 //
 //   node scripts/shot.mjs [url] [outPath] [extraWaitMs]
 //
-// Optional camera query params the app understands (see main.ts): az, el, dist.
+// Optional camera query params the app understands (see FREECAM_OPTS in app.ts): az, el, dist.
 // Example: node scripts/shot.mjs "http://localhost:5173/?az=1.2&el=0.3" shot.png
 
 import { chromium } from 'playwright';

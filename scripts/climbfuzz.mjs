@@ -1,6 +1,6 @@
 // Regression check for climbing: random walking, jumping and climbing, sampling the
 // rule that a climber is never inside something solid (window.__dbg.probe — see
-// publishDebugState in src/main.ts). Needs the dev server running.
+// publishDebugState in src/telemetry.ts). Needs the dev server running.
 //
 //   node scripts/climbfuzz.mjs [scan] [seconds] [seed]
 //   node scripts/climbfuzz.mjs counter-clean.spz 90 1
