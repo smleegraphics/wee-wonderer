@@ -94,13 +94,13 @@ const FREECAM = ['az', 'el', 'dist', 'cx', 'cy', 'cz'].some((k) => q.has(k));
 const FREECAM_OPTS = { az: num('az', 0.9), el: num('el', 0.5), dist: num('dist', 2.2), cx: num('cx', 0), cy: num('cy', 1), cz: num('cz', 0) };
 let showVoxels = q.get('voxel') === '1';
 let collisionDebug: THREE.Mesh | null = null;
-let voxelCheckbox: HTMLInputElement | null = null; // the Debug card's copy of showVoxels (the V key changes it too)
 // Spike 1: platform-decomposition overlay (colored walkable surfaces). stepFactor
 // = max step (in char-heights) two cells can differ and still be one platform;
 // minCells drops floater specks. Tuned live to see how scans decompose.
 let showPlatforms = q.get('platforms') === '1';
 let platformDebug: THREE.InstancedMesh | null = null;
-let platformCheckbox: HTMLInputElement | null = null;
+/** The Debug card's checkboxes for the two overlays, kept in step when a key (V, P) changes them. */
+const overlayBoxes: { voxel: HTMLInputElement | null; platform: HTMLInputElement | null } = { voxel: null, platform: null };
 let lastVoxelSize = GRAIN;
 let groundY: number | null = null; // the height of the ground the figurine plays on in this scan (the voxelizer's), or null
 const PLATFORM_OPTS = { stepFactor: 0.35, minCells: 6, climbDeg: 70, bridge: 2, fill: 3 }; // climbDeg: surfaces steeper than this (from horizontal) are walls to climb, gentler ones are ground to walk. minCells: an area, in grains². bridge, fill: how wide a gap in a surface is bridged, and how wide a hole in it filled, in grains
@@ -110,9 +110,7 @@ const STEP_DOWN_MAX = 0.6; // hop straight down a drop up to this (char-heights)
 let navGrid: NavGrid | null = null;
 let navField: PlatformField | null = null; // navGrid's cells as a list, for the overlay and the gap fill
 let navVersion = 0;                       // goes up each time the walkable cells are rebuilt
-let supportY = 0;                       // height of the platform the player is standing on
 const lastGood = new THREE.Vector3();   // last validated on-platform position (recovery)
-let useNavGround = q.get('nav') !== '0'; // the platform reliability layer (on by default)
 let collision: MeshCollision | null = null; // BVH over the voxel surface, rebuilt per scan
 let currentFile = DEFAULT_SCAN;
 // last-loaded scan data, kept so debug tunables can re-voxelize without reloading the PLY
@@ -123,6 +121,8 @@ const lastMatrix = new THREE.Matrix4();
 const CAPSULE_RADIUS = 0.22; // capsule hemisphere radius, in char-heights
 const PHYSICS_STEPS = 5;     // collide-and-slide substeps per frame
 let loadToken = 0; // guards against a slow async collision build landing after a scan swap
+/** A new load (or collision rebuild) begins: every one still running is now superseded. */
+function newLoadToken(): number { return ++loadToken; }
 let collisionKey = ''; // the settings (voxelCacheKey) the collision there is was built with
 // scan import (upload + in-browser cleanup), session-only
 const CLEAN_OPTS: CleanOptions = { alphaMin: 0.35, minMass: 4, scaleCapMul: 4, crop: true };
@@ -130,13 +130,14 @@ const uploads = new Map<string, string>(); // upload id → blob object URL
 let lastUploadBuffer: ArrayBuffer | null = null; // raw bytes of the active upload (for live re-clean)
 let lastUploadName = '';
 const app = document.getElementById('app')!;
-// The on-screen UI (context/ui.md). Demo scans load by filename; an uploaded id
-// resolves to its blob URL in `uploads`.
+// The on-screen UI (context/ui.md). What its controls do is filled in where the app is
+// put together (hudActions), since the code that does it is built on this.
+const hudActions = { pickRoom: (_id: string): void => {}, importScan: (_file: File): void => {}, reset: (): void => {} };
 const hud = createHud({
   rooms: LISTED_SCANS.map((s) => ({ id: s.file, label: s.label })),
-  onPickRoom: (id) => { const url = uploads.get(id); if (url) loadFromURL(url, id); else loadScan(id); },
-  onImport: (file) => void importScan(file),
-  onReset: () => { if (charLoaded) resetToSpawn(); }, // the way out of any spot the figurine gets stuck in
+  onPickRoom: (id) => hudActions.pickRoom(id),
+  onImport: (file) => hudActions.importScan(file),
+  onReset: () => hudActions.reset(),
 });
 let scanLoading = false; // a scan is being fetched or its collision built
 // The loading view: there is no room yet, and the figurine waits, idle, on a rippling
@@ -154,6 +155,25 @@ let loadAbort: AbortController | null = null;  // cancels the newest load's fetc
 /** True until there is a room to stand in and a figurine to stand in it. */
 function loadingViewOn(): boolean {
   return scanLoading || !charLoaded;
+}
+
+/** Make the loading view's dots and the figurine's paper look, once the figurine (and so its height) is known. */
+function setUpLoadingView(model: THREE.Object3D): void {
+  loadingScene = createLoadingScene(charH, hud.token('--paper'));
+  paperFigurine = createPaperFigurine(model, renderer, hud.token('--paper'));
+  scene.add(loadingScene.object);
+}
+
+/** Per frame: how much of the room is in place, and everything that follows from it.
+ *  Everything about waiting follows from that one number, so the way into the loading
+ *  view is as gradual as the way out of it. */
+function updateArrival(dt: number): void {
+  const arrived = revealProgress = updateReveal(dt);
+  if (roomLeft && arrived === 0) { clearRoom(); roomLeft(); roomLeft = null; } // the old room is back in the sheet: now it can go
+  room.visible = arrived > 0;
+  loadingScene?.show(1 - Math.min(1, arrived / HANDOVER)); // the stand-in dots give way to the scan's own at the start of its arrival
+  paperFigurine?.show(arrived);                             // the figurine is paper too, and itself once the room is in
+  surround.lerpColors(SURROUND.sky, SURROUND.beyond, THREE.MathUtils.smoothstep(arrived, SURROUND.darken[0], SURROUND.darken[1]));
 }
 
 /** Bring the screen in line with whether the loading view is on. Call after anything it depends on changes. */
@@ -218,7 +238,7 @@ const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerH
 const orbit = new OrbitControls(camera, renderer.domElement);
 orbit.enableDamping = true;
 orbit.dampingFactor = 0.08;
-orbit.addEventListener('start', () => { camHandsOff = false; camSwinging = false; camBasisHeld = false; }); // the user's hand on the camera always wins over the auto-swing
+orbit.addEventListener('start', () => { camLatch.handsOff = false; camSwinging = false; camLatch.basisHeld = false; }); // the user's hand on the camera always wins over the auto-swing
 orbit.enablePan = false; // pivot tracks the figurine; panning it away would fight that
 orbit.maxPolarAngle = Math.PI * 0.49; // don't drop below the floor
 
@@ -298,7 +318,7 @@ function loadStep(token: number, step: LoadStep | 'done', through = 0): void {
 /** Load a scan from any URL (an example scan from the scan host, or an imported scan's
  *  blob). `id` is the stable identity used for the collision cache and status. */
 function loadFromURL(url: string, id: string): void {
-  const token = ++loadToken;
+  const token = newLoadToken();
   currentFile = id;
   useScanSettings(id);
   hud.setCurrentRoom(id);
@@ -509,13 +529,17 @@ const TUNE = { walkSpeed: 1.6, runSpeed: 4.0, jumpVel: 3.2, gravity: -9.0, climb
 
 const move = { f: 0, b: 0, l: 0, r: 0, run: false };
 const MOVE_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD']);
-let state: 'ground' | 'jump_start' | 'air' | 'land' | 'climb' = 'ground';
 const velocity = new THREE.Vector3(); // gravity/jump; horizontal input is applied per-frame
-let wasGrounded = false;
+/** How the figurine is moving: written by the controller, the climb and a respawn alike. */
+const figurine = {
+  state: 'ground' as 'ground' | 'jump_start' | 'air' | 'land' | 'climb',
+  supportY: 0,        // height of the platform the player is standing on
+  smoothFeetY: 0,     // damped feet height for RENDER only (physics stays crisp)
+  wasGrounded: false,
+};
 let charH = 1;
 let charModel: THREE.Object3D | null = null;
 let charFeetOffset = 0;   // model's local y so its feet sit at the player origin
-let smoothFeetY = 0;      // damped feet height for RENDER only (physics stays crisp)
 let mixer: THREE.AnimationMixer | null = null;
 const actions: Record<string, THREE.AnimationAction> = {};
 let activeAction: THREE.AnimationAction | null = null;
@@ -541,9 +565,7 @@ function onLoaded(gltf: GLTF): void {
 
   play('idle', 0);
   charLoaded = true;
-  loadingScene = createLoadingScene(charH, hud.token('--paper'));
-  paperFigurine = createPaperFigurine(model, renderer, hud.token('--paper'));
-  scene.add(loadingScene.object);
+  setUpLoadingView(model);
   if (collision) rebuildPlatformOverlay(); // rebuild the NavGrid now charH (headroom/step) is real
   resetToSpawn();
   updateLoading(); // after the figurine is in its place: if the room was only waiting for it, this starts the room arriving around it
@@ -575,39 +597,13 @@ function resetToSpawn(): void {
   if (s !== null) player.position.y = s;
   player.rotation.set(0, 0, 0);
   velocity.set(0, 0, 0);
-  wasGrounded = false;
-  supportY = player.position.y;         // stand on the spawn surface
+  figurine.wasGrounded = false;
+  figurine.supportY = player.position.y;         // stand on the spawn surface
   lastGood.copy(player.position);
-  smoothFeetY = player.position.y;
+  figurine.smoothFeetY = player.position.y;
   if (charModel) charModel.position.y = charFeetOffset;
-  state = 'ground';
-  camPull = 1; camSwinging = false;
-  orbit.target.set(player.position.x, player.position.y + charH * CAM_PIVOT, player.position.z);
-  // The opening shot, turned to a side of the figurine with a clear view of it. From a
-  // fixed side, a room with something solid there (Living Room) opened with the camera
-  // pulled in as close as it goes, filling the screen with the figurine's face. The
-  // figurine turns with the shot, so every room opens on the same framing.
-  const turn = clearStartTurn(orbit.target);
-  player.rotation.y = turn;
-  camera.position.copy(CAM_START).applyAxisAngle(WORLD_UP, turn).multiplyScalar(charH).add(orbit.target);
-  orbit.update();
-}
-
-/** How far to turn the opening shot about the figurine, pivot at `pivot`: the side
- *  nearest the unturned one whose arm meets nothing; failing that, the one that sees
- *  furthest. Unturned when there is no collision yet to test against. */
-function clearStartTurn(pivot: THREE.Vector3): number {
-  if (!collision) return 0;
-  const len = CAM_START.length() * charH, step = (Math.PI * 2) / CAM_START_TURNS;
-  let best = 0, bestClear = -1;
-  for (let i = 0; i < CAM_START_TURNS; i++) {
-    const turn = (i % 2 ? 1 : -1) * Math.ceil(i / 2) * step; // 0, +1, -1, +2, -2 … steps: nearest the unturned shot first
-    camDir.copy(CAM_START).applyAxisAngle(WORLD_UP, turn).normalize();
-    const clear = collision.rayDistance(pivot, camDir, len);
-    if (clear >= len) return turn;
-    if (clear > bestClear) { best = turn; bestClear = clear; }
-  }
-  return best;
+  figurine.state = 'ground';
+  frameOpeningShot();
 }
 
 function setupMixer(gltf: GLTF, model: THREE.Object3D): void {
@@ -659,8 +655,8 @@ function play(name: string, fade = TUNE.fade): void {
 
 function onActionFinished(e: { action: THREE.AnimationAction }): void {
   const name = e.action.getClip().name;
-  if (name === 'jump_start') { velocity.y = TUNE.jumpVel * charH; state = 'air'; play('jump_loop', 0.08); }
-  else if (name === 'jump_land') { state = 'ground'; play('idle', 0.25); }
+  if (name === 'jump_start') { velocity.y = TUNE.jumpVel * charH; figurine.state = 'air'; play('jump_loop', 0.08); }
+  else if (name === 'jump_land') { figurine.state = 'ground'; play('idle', 0.25); }
 }
 
 function keyEvent(e: KeyboardEvent, v: 0 | 1): void {
@@ -673,7 +669,7 @@ function keyEvent(e: KeyboardEvent, v: 0 | 1): void {
     case 'Backquote': hud.toggleDebug(); return;
   }
   if (v && loadingViewOn()) return; // the rest are the figurine's, which cannot move until there is a room
-  if (v && !e.repeat && MOVE_KEYS.has(e.code)) camBasisHeld = false; // a fresh press is a fresh intent, in the current view
+  if (v && !e.repeat && MOVE_KEYS.has(e.code)) camLatch.basisHeld = false; // a fresh press is a fresh intent, in the current view
   switch (e.code) {
     case 'KeyW': move.f = v; break;
     case 'KeyS': move.b = v; break;
@@ -688,8 +684,8 @@ addEventListener('keyup', (e) => keyEvent(e, 0));
 
 /** The jump key: a jump from the ground, or off the wall when climbing. */
 function jumpKey(): void {
-  if (state === 'ground') startJump();
-  else if (state === 'climb') climbJumpOff();
+  if (figurine.state === 'ground') startJump();
+  else if (figurine.state === 'climb') climbJumpOff();
 }
 
 // ?tel=1 only: drive the figurine in fixed steps, for a script whose run has to repeat
@@ -706,7 +702,7 @@ if (TEL) (window as unknown as { __step?: (keys: string[], seconds: number, jump
     stepped = true;
     for (const [code, k] of [['KeyW', 'f'], ['KeyS', 'b'], ['KeyA', 'l'], ['KeyD', 'r']] as const) {
       const down = keys.includes(code) ? 1 : 0;
-      if (down && !move[k]) camBasisHeld = false; // a fresh press, as keyEvent has it
+      if (down && !move[k]) camLatch.basisHeld = false; // a fresh press, as keyEvent has it
       move[k] = down;
     }
     move.run = keys.includes('ShiftLeft');
@@ -716,8 +712,8 @@ if (TEL) (window as unknown as { __step?: (keys: string[], seconds: number, jump
   });
 
 function startJump(): void {
-  if (actions['jump_start']) { state = 'jump_start'; play('jump_start', 0.06); }
-  else { velocity.y = TUNE.jumpVel * charH; state = 'air'; play(actions['jump_loop'] ? 'jump_loop' : 'idle', 0.08); }
+  if (actions['jump_start']) { figurine.state = 'jump_start'; play('jump_start', 0.06); }
+  else { velocity.y = TUNE.jumpVel * charH; figurine.state = 'air'; play(actions['jump_loop'] ? 'jump_loop' : 'idle', 0.08); }
 }
 
 // --- collision ---------------------------------------------------------------
@@ -783,7 +779,7 @@ async function buildCollision(file: string, token: number, centers: THREE.Buffer
 function rebuildCollision(): void {
   if (scanLoading || !lastCenters || !lastOpacity) return;
   disposeCollision();
-  buildCollision(currentFile, ++loadToken, lastCenters, lastOpacity, lastCov, lastMatrix)
+  buildCollision(currentFile, newLoadToken(), lastCenters, lastOpacity, lastCov, lastMatrix)
     .catch((err: unknown) => hud.status(err instanceof Error ? err.message : String(err), 'error'));
 }
 
@@ -1111,11 +1107,11 @@ const shadowAt = new THREE.Vector3(), shadowFacing = new THREE.Vector3();
 function updateContactShadow(dt: number): void {
   const p = player.position, radius = CAPSULE_RADIUS * charH;
   let height = 0; // how far the figurine is off the surface it would shadow
-  if (state === 'climb') {
+  if (figurine.state === 'climb') {
     // on a wall: the shadow is on the face it's hanging from, behind its body
     shadowAt.set(p.x, p.y + charH * CLIMB.chest, p.z).addScaledVector(climbDir, radius * CLIMB.gap);
     shadowFacing.copy(climbDir).negate();
-  } else if (state === 'air') {
+  } else if (figurine.state === 'air') {
     // in the air: onto the ground it would land on, straight below
     const ground = navGrid ? navGrid.surfaceBelow(p.x, p.z, p.y + radius * 0.5) : null;
     height = ground === null ? Infinity : Math.max(0, p.y - ground);
@@ -1159,9 +1155,12 @@ const CAM_START_TURNS = 16; // sides of the figurine the opening shot may be tur
 let camWant = 0;          // arm length with nothing in the way (the user's zoom)
 let camPull = 1;          // rendered arm = camWant * camPull (1 = unobstructed)
 let camSwinging = false;  // coming round to the figurine's back (see updateCamera)
-let camHandsOff = true;    // the user hasn't orbited/zoomed since this climb began → auto-swing allowed
 const camHome = new THREE.Vector3();
-let camBasisHeld = false; // movement keys keep the camera frame they were pressed in (see updateController)
+/** Who the camera answers to, set from several places: the climb, the keys, and the user's hand on it. */
+const camLatch = {
+  handsOff: true,     // the user hasn't orbited/zoomed since this climb began → auto-swing allowed
+  basisHeld: false,   // movement keys keep the camera frame they were pressed in (see updateController)
+};
 
 /** Glue the orbit pivot to the figurine so the camera follows while the user
  *  orbits/zooms; pull the camera in if something is between it and the pivot; and,
@@ -1173,13 +1172,13 @@ function updateCamera(dt: number): void {
     camDir.subVectors(camera.position, t).normalize();
     camera.position.copy(t).addScaledVector(camDir, camWant);
   }
-  camLook.set(player.position.x, smoothFeetY + charH * CAM_PIVOT, player.position.z);
+  camLook.set(player.position.x, figurine.smoothFeetY + charH * CAM_PIVOT, player.position.z);
   t.lerp(camLook, 0.15);
   // Climbing puts the figurine flat against a wall, so a camera left on the wall's far
   // side (e.g. it walked off a ledge and now hangs on the face below) can't be fixed by
   // shortening the arm — the wall is closer than the figurine is wide. Swing round to
   // the open side instead: behind the figurine's back.
-  if (state !== 'climb') camSwinging = false;
+  if (figurine.state !== 'climb') camSwinging = false;
   if (camSwinging) {
     const ox = camera.position.x - t.x, oz = camera.position.z - t.z;
     const cur = Math.atan2(ox, oz), home = Math.atan2(-climbDir.x, -climbDir.z);
@@ -1199,12 +1198,12 @@ function updateCamera(dt: number): void {
   // Offer the swing only while the user is leaving the camera alone, and only if the
   // view from behind the figurine is actually clearer than this one — otherwise it
   // would trade one blocked view for another and fight every attempt to orbit out of it.
-  if (blocked && state === 'climb' && camHandsOff && !camSwinging) {
+  if (blocked && figurine.state === 'climb' && camLatch.handsOff && !camSwinging) {
     const flat = Math.hypot(camDir.x, camDir.z); // keep the current elevation
     camHome.set(-climbDir.x * flat, camDir.y, -climbDir.z * flat);
     if (collision.rayDistance(t, camHome, camWant) > clear) {
       camSwinging = true;
-      camBasisHeld = !!(move.f || move.b || move.l || move.r); // keys already down keep steering by the view they were pressed in
+      camLatch.basisHeld = !!(move.f || move.b || move.l || move.r); // keys already down keep steering by the view they were pressed in
     }
   }
   // shorten fast (don't show the inside of a wall), lengthen gently (an occluder that
@@ -1218,6 +1217,39 @@ function updateCamera(dt: number): void {
   camPull += (Math.min(goal, 1) - camPull) * Math.min(1, (goal < camPull ? TUNE.camIn : TUNE.camOut) * dt);
   camera.position.copy(t).addScaledVector(camDir, camWant * camPull);
 }
+
+/** Frame the figurine from scratch (resetToSpawn): the arm at full length, the pivot on
+ *  the figurine, and the camera at the opening shot. */
+function frameOpeningShot(): void {
+  camPull = 1; camSwinging = false;
+  orbit.target.set(player.position.x, player.position.y + charH * CAM_PIVOT, player.position.z);
+  // The opening shot, turned to a side of the figurine with a clear view of it. From a
+  // fixed side, a room with something solid there (Living Room) opened with the camera
+  // pulled in as close as it goes, filling the screen with the figurine's face. The
+  // figurine turns with the shot, so every room opens on the same framing.
+  const turn = clearStartTurn(orbit.target);
+  player.rotation.y = turn;
+  camera.position.copy(CAM_START).applyAxisAngle(WORLD_UP, turn).multiplyScalar(charH).add(orbit.target);
+  orbit.update();
+}
+
+/** How far to turn the opening shot about the figurine, pivot at `pivot`: the side
+ *  nearest the unturned one whose arm meets nothing; failing that, the one that sees
+ *  furthest. Unturned when there is no collision yet to test against. */
+function clearStartTurn(pivot: THREE.Vector3): number {
+  if (!collision) return 0;
+  const len = CAM_START.length() * charH, step = (Math.PI * 2) / CAM_START_TURNS;
+  let best = 0, bestClear = -1;
+  for (let i = 0; i < CAM_START_TURNS; i++) {
+    const turn = (i % 2 ? 1 : -1) * Math.ceil(i / 2) * step; // 0, +1, -1, +2, -2 … steps: nearest the unturned shot first
+    camDir.copy(CAM_START).applyAxisAngle(WORLD_UP, turn).normalize();
+    const clear = collision.rayDistance(pivot, camDir, len);
+    if (clear >= len) return turn;
+    if (clear > bestClear) { best = turn; bestClear = clear; }
+  }
+  return best;
+}
+
 /** Debug free-camera: park at a fixed spherical orbit around the look-at point
  *  (see FREECAM_OPTS). Deterministic — lets a headless screenshot frame any region. */
 const freeCenter = new THREE.Vector3();
@@ -1251,6 +1283,8 @@ const climbSide = new THREE.Vector3();  // scratch: sideways direction along the
 const climbFrom = new THREE.Vector3();  // scratch: where the body was before a move that might not fit
 let climbAwaitRelease = false;          // grabbed a lip mid-walk: the still-held walk keys mean "keep going down" until let go
 let climbV = 0, climbH = 0;             // this frame's climb input after latches: up/down, right/left
+/** Every frame starts with no climb input: climbUpdate sets it, and the animation blend reads it in every state. */
+function resetClimbInput(): void { climbV = climbH = 0; }
 let climbSideMix = 0;                   // animation blend: -1 = shimmy left, 0 = up/down climb, +1 = shimmy right
 let climbAtEdge = false;                // sideways shuffle is stopped at the wall's edge (telemetry de-dupe)
 let climbCling = false;                 // topped out with nowhere to stand → hanging
@@ -1332,7 +1366,7 @@ function climbStartsHere(x: number, feetY: number, z: number, dir: THREE.Vector3
 /** True if a wall is right in front (in the `dx,dz` direction); if so, enter the climb
  *  at `feetY` — the ground we're standing on, or wherever the feet are when a jump
  *  carries us into the wall. */
-function tryStartClimb(dx: number, dz: number, feetY = supportY): boolean {
+function tryStartClimb(dx: number, dz: number, feetY = figurine.supportY): boolean {
   if (!collision || !actions['climb']) return false;
   climbTry.set(dx, 0, dz);
   if (climbTry.lengthSq() < 1e-9) return false;
@@ -1340,15 +1374,15 @@ function tryStartClimb(dx: number, dz: number, feetY = supportY): boolean {
   const p = player.position;
   if (!climbStartsHere(p.x, feetY, p.z, climbTry)) return false;
   const { dist, up } = climbStart;
-  const midAir = state === 'air';
+  const midAir = figurine.state === 'air';
   climbDir.copy(climbTry);
   climbCling = false;
   climbAwaitRelease = false;
-  state = 'climb';
+  figurine.state = 'climb';
   velocity.set(0, 0, 0);
   player.rotation.y = Math.atan2(climbDir.x, climbDir.z); // face the wall
   play('climb', TUNE.fade);
-  camHandsOff = true;
+  camLatch.handsOff = true;
   if (TEL) console.log(`CLIMB-START${midAir ? ' (mid-air)' : ''} y=${p.y.toFixed(2)} dist=${dist.toFixed(2)} up=${up.toFixed(2)}`);
   return true;
 }
@@ -1363,11 +1397,11 @@ function tryStartClimbDown(dx: number, dz: number): boolean {
   const p = player.position, gap = CAPSULE_RADIUS * charH * CLIMB.gap;
   const tx = p.x + climbTry.x * navGrid.step, tz = p.z + climbTry.z * navGrid.step;
   // must be a real edge: nothing walkable to continue onto at this level...
-  if (navGrid.surfaceNear(tx, tz, supportY, charH * STEP_DOWN_MAX) !== null) return false;
+  if (navGrid.surfaceNear(tx, tz, figurine.supportY, charH * STEP_DOWN_MAX) !== null) return false;
   // ...with a meaningful drop below...
-  const lipY = supportY - charH * CLIMB.lipProbe;
+  const lipY = figurine.supportY - charH * CLIMB.lipProbe;
   const below = navGrid.surfaceBelow(tx, tz, lipY);
-  if (below === null || supportY - below < charH * STEP_DOWN_MAX) return false;
+  if (below === null || figurine.supportY - below < charH * STEP_DOWN_MAX) return false;
   // ...and a wall descending from the lip. Find it the way we'll hang on it: looking
   // back at the ledge from out past the edge, just below the lip. (Probing outward from
   // under our own feet starts inside the ledge and says nothing about which way the
@@ -1387,7 +1421,7 @@ function tryStartClimbDown(dx: number, dz: number): boolean {
   // is set back under the lip, the body would hang inside the lip. Push it clear; too
   // deep for that, and there is no hanging here.
   climbFrom.copy(p);
-  p.set(fx + ox * gap, supportY - charH * CLIMB.hang, fz + oz * gap);
+  p.set(fx + ox * gap, figurine.supportY - charH * CLIMB.hang, fz + oz * gap);
   if (!fitClimbBody(CAPSULE_RADIUS * charH)) { p.copy(climbFrom); return false; }
   if (TEL) console.log(`CLIMBDOWN-START y=${p.y.toFixed(2)} below=${below.toFixed(2)} face=${w.distance.toFixed(2)}`);
   climbDir.set(-ox, 0, -oz);                  // into the wall
@@ -1397,17 +1431,17 @@ function tryStartClimbDown(dx: number, dz: number): boolean {
   // back over the lip. Until they're released they keep meaning what they meant —
   // carry on over the edge, i.e. down the face; after that W/S/A/D steer the climb.
   climbAwaitRelease = true;
-  state = 'climb';
+  figurine.state = 'climb';
   velocity.set(0, 0, 0);
   play('climb', TUNE.fade);
-  camHandsOff = true;
+  camLatch.handsOff = true;
   return true;
 }
 
 /** Jump off the wall: launch up and away from the face. */
 function climbJumpOff(): void {
   velocity.set(-climbDir.x * TUNE.walkSpeed * charH, TUNE.jumpVel * charH, -climbDir.z * TUNE.walkSpeed * charH);
-  state = 'air'; climbCling = false;
+  figurine.state = 'air'; climbCling = false;
   play(actions['jump_loop'] ? 'jump_loop' : 'idle', 0.08);
 }
 
@@ -1415,8 +1449,8 @@ function climbJumpOff(): void {
 function climbStandAt(x: number, y: number, z: number): void {
   const p = player.position;
   p.set(x, y, z);
-  supportY = y; lastGood.copy(p);
-  state = 'ground'; velocity.set(0, 0, 0);
+  figurine.supportY = y; lastGood.copy(p);
+  figurine.state = 'ground'; velocity.set(0, 0, 0);
 }
 
 /** Top out of a climb onto a surface just over the lip, if there is one to stand on. */
@@ -1436,7 +1470,7 @@ function tryMantle(): boolean {
 function updateClimbBlend(dt: number): void {
   const c = actions['climb'], r = actions['climb_side_r'], l = actions['climb_side_l'];
   if (!c || !r || !l) return;
-  const on = state === 'climb', moving = on && (climbV !== 0 || climbH !== 0);
+  const on = figurine.state === 'climb', moving = on && (climbV !== 0 || climbH !== 0);
   // resting on the wall holds whatever blend the last move left (the pose just freezes)
   const target = !on ? 0 : moving ? climbH / (Math.abs(climbV) + Math.abs(climbH)) : climbSideMix;
   climbSideMix += (target - climbSideMix) * Math.min(1, TUNE.climbBlend * dt);
@@ -1589,14 +1623,18 @@ const navRecover = new THREE.Vector3();
 const wallFeet = new THREE.Vector3(), zeroDisp = new THREE.Vector3(), wallCorr = new THREE.Vector3();
 const WALL_LIFT = 0.25; // body-vs-wall tests ignore the body below this fraction of its height (see bodyOverlap)
 
+/** Movement tunables: `on` stands the figurine on the walkable cells (the platform
+ *  reliability layer, on by default); off, it moves on the raw mesh. */
+const NAV = { on: q.get('nav') !== '0' };
+
 function updateController(dt: number): void {
   // Movement is camera-relative — but an automatic camera move must not re-aim a key
   // that's already held (the swing behind a climber would turn "walk away from the
   // wall" into "walk into it"). Keys that were down when a swing began keep steering by
   // the view they were pressed in, until they're released, another key is pressed, or
   // the user takes the camera.
-  if (!(move.f || move.b || move.l || move.r)) camBasisHeld = false;
-  if (!camBasisHeld) {
+  if (!(move.f || move.b || move.l || move.r)) camLatch.basisHeld = false;
+  if (!camLatch.basisHeld) {
     camera.getWorldDirection(camFwd); camFwd.y = 0; camFwd.normalize();
     camRight.crossVectors(camFwd, WORLD_UP).negate();
   }
@@ -1604,21 +1642,21 @@ function updateController(dt: number): void {
   const moving = wishDir.lengthSq() > 0;
   if (moving) wishDir.normalize();
 
-  if (state === 'jump_start') return;        // anticipation freeze; onActionFinished launches
+  if (figurine.state === 'jump_start') return;        // anticipation freeze; onActionFinished launches
   if (!collision) return;
 
   // Movement for this frame → `grounded`. Climb runs its own update (on the wall);
   // everything else walks/jumps. Both then fall through to the shared render + camera
   // follow below, so the camera tracks the figurine in every state.
   let grounded: boolean;
-  climbV = climbH = 0;
+  resetClimbInput();
   let wasClimbing = false;
-  if (state === 'climb') {
+  if (figurine.state === 'climb') {
     wasClimbing = true;
     grounded = climbUpdate(dt); // true only on the frame it ends standing (mantle / stepping off)
   } else {
     if (player.position.y < -charH * 3) { // lost the surface (rare edge case)
-      if (navGrid && useNavGround) { player.position.copy(lastGood); supportY = lastGood.y; velocity.set(0, 0, 0); state = 'ground'; } // snap back to the last valid spot (gentle)
+      if (navGrid && NAV.on) { player.position.copy(lastGood); figurine.supportY = lastGood.y; velocity.set(0, 0, 0); figurine.state = 'ground'; } // snap back to the last valid spot (gentle)
       else resetToSpawn();
       return;
     }
@@ -1626,15 +1664,15 @@ function updateController(dt: number): void {
     const speed = (move.run ? TUNE.runSpeed : TUNE.walkSpeed) * charH;
     hVel.copy(wishDir).multiplyScalar(moving ? speed : 0);
     const radius = CAPSULE_RADIUS * charH;
-    grounded = navGrid && useNavGround ? navMove(dt, radius) : meshMove(dt, radius);
+    grounded = navGrid && NAV.on ? navMove(dt, radius) : meshMove(dt, radius);
   }
-  wasGrounded = grounded;
+  figurine.wasGrounded = grounded;
 
   // Visual-only vertical smoothing, run for EVERY state so the camera follows: when
   // grounded, damp the bump bob; otherwise (airborne / climbing) track physics exactly.
-  if (grounded && !wasClimbing) smoothFeetY += (player.position.y - smoothFeetY) * Math.min(1, 10 * dt);
-  else smoothFeetY = player.position.y;
-  if (charModel) charModel.position.y = charFeetOffset + (smoothFeetY - player.position.y);
+  if (grounded && !wasClimbing) figurine.smoothFeetY += (player.position.y - figurine.smoothFeetY) * Math.min(1, 10 * dt);
+  else figurine.smoothFeetY = player.position.y;
+  if (charModel) charModel.position.y = charFeetOffset + (figurine.smoothFeetY - player.position.y);
 
   updateClimbBlend(dt);
   updateLocomotion(grounded, moving); // early-returns while climbing
@@ -1669,7 +1707,7 @@ function pushOutOfWalls(feetY: number, radius: number): number {
 function navMove(dt: number, radius: number): boolean {
   const nav = navGrid!, p = player.position;
   const band = charH * PLATFORM_OPTS.stepFactor; // max step you can walk up/down
-  if (state === 'air') {
+  if (figurine.state === 'air') {
     velocity.y += TUNE.gravity * charH * dt;
     const prevY = p.y;
     // horizontal = input (air control) + any launch velocity (e.g. jumping off a wall)
@@ -1698,7 +1736,7 @@ function navMove(dt: number, radius: number): boolean {
       // (jumping off a wall) catches any surface crossed during the step instead of
       // stepping straight over the narrow band at the new position.
       const floor = nav.surfaceBelow(p.x, p.z, prevY + radius * 0.5);
-      if (floor !== null && p.y <= floor) { p.y = floor; velocity.set(0, 0, 0); supportY = floor; lastGood.copy(p); return true; }
+      if (floor !== null && p.y <= floor) { p.y = floor; velocity.set(0, 0, 0); figurine.supportY = floor; lastGood.copy(p); return true; }
     }
     return false;
   }
@@ -1706,15 +1744,15 @@ function navMove(dt: number, radius: number): boolean {
   const moving = hVel.x !== 0 || hVel.z !== 0;
   if (moving) navHorizontal(hVel.x * dt, hVel.z * dt, band);
   // walls and furniture are solid: push the body out of them sideways
-  if (moving) pushOutOfWalls(supportY, radius);
+  if (moving) pushOutOfWalls(figurine.supportY, radius);
   // Moving into a wall right ahead? Start climbing it. (Triggering off the wall
   // itself — not a near-head-on "block" — makes it fire consistently at any angle.)
   if (moving && tryStartClimb(hVel.x, hVel.z)) return false;
   // Walking off a ledge whose face is a wall? Grab the lip and climb down.
   if (moving && tryStartClimbDown(hVel.x, hVel.z)) return false;
-  const here = nav.surfaceNear(p.x, p.z, supportY, band);
-  if (here !== null) { p.y = here; supportY = here; velocity.set(0, 0, 0); lastGood.copy(p); return true; }
-  if (nav.nearest(lastGood.x, lastGood.z, supportY, navRecover)) { p.copy(navRecover); supportY = navRecover.y; velocity.set(0, 0, 0); lastGood.copy(p); } // recovered
+  const here = nav.surfaceNear(p.x, p.z, figurine.supportY, band);
+  if (here !== null) { p.y = here; figurine.supportY = here; velocity.set(0, 0, 0); lastGood.copy(p); return true; }
+  if (nav.nearest(lastGood.x, lastGood.z, figurine.supportY, navRecover)) { p.copy(navRecover); figurine.supportY = navRecover.y; velocity.set(0, 0, 0); lastGood.copy(p); } // recovered
   return true;
 }
 
@@ -1723,14 +1761,14 @@ function navMove(dt: number, radius: number): boolean {
  *  unchanged if there's nowhere to go. */
 function navHorizontal(dx: number, dz: number, band: number): void {
   const nav = navGrid!, p = player.position, x0 = p.x, z0 = p.z, tx = x0 + dx, tz = z0 + dz;
-  if (nav.surfaceNear(tx, tz, supportY, band) !== null) { p.x = tx; p.z = tz; return; } // continues
+  if (nav.surfaceNear(tx, tz, figurine.supportY, band) !== null) { p.x = tx; p.z = tz; return; } // continues
   // slide: one axis at a time, the second from wherever the first left us — applying
   // both from the start would be the diagonal step that was just refused
-  if (dx !== 0 && nav.surfaceNear(tx, z0, supportY, band) !== null) p.x = tx;
-  if (dz !== 0 && nav.surfaceNear(p.x, tz, supportY, band) !== null) p.z = tz;
+  if (dx !== 0 && nav.surfaceNear(tx, z0, figurine.supportY, band) !== null) p.x = tx;
+  if (dz !== 0 && nav.surfaceNear(p.x, tz, figurine.supportY, band) !== null) p.z = tz;
   if (p.x !== x0 || p.z !== z0) return;
-  const down = nav.surfaceBelow(tx, tz, supportY - band);
-  if (down !== null && supportY - down <= charH * STEP_DOWN_MAX) { p.x = tx; p.z = tz; supportY = down; }
+  const down = nav.surfaceBelow(tx, tz, figurine.supportY - band);
+  if (down !== null && figurine.supportY - down <= charH * STEP_DOWN_MAX) { p.x = tx; p.z = tz; figurine.supportY = down; }
 }
 
 /** Raw capsule-vs-mesh collide-and-slide (the pre-nav movement, kept for A/B). One
@@ -1750,7 +1788,7 @@ function meshMove(dt: number, radius: number): boolean {
     else if (correction.lengthSq() > 1e-12) { slideN.copy(correction).normalize(); velocity.addScaledVector(slideN, -slideN.dot(velocity)); }
   }
   // stick to a small down-step rather than briefly launching (kills stair-edge jitter)
-  if (!grounded && wasGrounded && velocity.y <= 0) {
+  if (!grounded && figurine.wasGrounded && velocity.y <= 0) {
     const gy = collision.groundHeightAt(player.position.x, player.position.z, player.position.y + radius);
     if (gy <= player.position.y && player.position.y - gy < charH * 0.35) { player.position.y = gy; velocity.set(0, 0, 0); grounded = true; }
   }
@@ -1759,17 +1797,17 @@ function meshMove(dt: number, radius: number): boolean {
 
 /** Drive the animation state machine from grounded + movement. */
 function updateLocomotion(grounded: boolean, moving: boolean): void {
-  if (state === 'climb') return; // climbing owns its own state + animation
+  if (figurine.state === 'climb') return; // climbing owns its own state + animation
   if (!grounded) {
-    if (state !== 'air') { state = 'air'; play(actions['jump_loop'] ? 'jump_loop' : 'idle', 0.15); }
+    if (figurine.state !== 'air') { figurine.state = 'air'; play(actions['jump_loop'] ? 'jump_loop' : 'idle', 0.15); }
     return;
   }
-  if (state === 'air') { // just landed
-    if (actions['jump_land']) { state = 'land'; play('jump_land', 0.06); return; }
-    state = 'ground';
+  if (figurine.state === 'air') { // just landed
+    if (actions['jump_land']) { figurine.state = 'land'; play('jump_land', 0.06); return; }
+    figurine.state = 'ground';
   }
-  if (state === 'land') return; // let the land clip finish (onActionFinished → ground)
-  state = 'ground';
+  if (figurine.state === 'land') return; // let the land clip finish (onActionFinished → ground)
+  figurine.state = 'ground';
   play(moving ? (move.run && actions['run'] ? 'run' : 'walk') : 'idle');
 }
 
@@ -1784,7 +1822,7 @@ const dbgAt = new THREE.Vector3(), dbgDir = new THREE.Vector3();
 function publishDebugState(): void {
   const P = player.position, ca = actions['climb'];
   let probe: unknown = null, sunk: number | null = null; // sunk: how deep the body is in the mesh, in capsule radii
-  if (collision && state === 'climb') {
+  if (collision && figurine.state === 'climb') {
     const c = collision;
     dbgAt.set(P.x, P.y + charH * CLIMB.chest, P.z);
     const see = (dir: THREE.Vector3, max: number) => { const w = c.wallAhead(dbgAt, dir, max); return w ? `${w.distance.toFixed(2)}${w.front ? 'F' : 'B'}` : '-'; };
@@ -1792,7 +1830,7 @@ function publishDebugState(): void {
     sunk = +(bodyOverlap(P.x, P.y, P.z, CAPSULE_RADIUS * charH) / (CAPSULE_RADIUS * charH)).toFixed(2);
   }
   (window as unknown as { __dbg?: unknown }).__dbg = {
-    state, cling: climbCling, probe, sunk,
+    state: figurine.state, cling: climbCling, probe, sunk,
     px: +P.x.toFixed(3), py: +P.y.toFixed(3), pz: +P.z.toFixed(3),
     climbYaw: +THREE.MathUtils.radToDeg(Math.atan2(climbDir.x, climbDir.z)).toFixed(1),
     camDist: +camera.position.distanceTo(orbit.target).toFixed(2), camWant: +camWant.toFixed(2), camSwinging,
@@ -1864,6 +1902,14 @@ function applyMatteView(): void {
   collisionDebug.geometry.setDrawRange(0, view.mode === 'meshNoPlane' ? indices - 6 : indices); // the voxelizer appends the backstop plane as the last two triangles
 }
 
+// What the on-screen UI's controls do. Demo scans load by filename; an uploaded id
+// resolves to its blob URL in `uploads`.
+Object.assign(hudActions, {
+  pickRoom: (id: string) => { const url = uploads.get(id); if (url) loadFromURL(url, id); else loadScan(id); },
+  importScan: (file: File) => void importScan(file),
+  reset: () => { if (charLoaded) resetToSpawn(); }, // the way out of any spot the figurine gets stuck in
+});
+
 const clock = new THREE.Clock();
 let frames = 0;
 
@@ -1880,14 +1926,7 @@ async function main(): Promise<void> {
     if (charLoaded && !still) { if (!waiting) updateController(dt); if (FREECAM) updateFreeCam(); else updateCamera(dt); }
     mixer?.update(dt);
     if (charLoaded) { updateContactShadow(dt); updateScanLight(dt); updateScanDebug(); }
-    // Everything about waiting follows from one number, how much of the room is in place,
-    // so the way into the loading view is as gradual as the way out of it.
-    const arrived = revealProgress = updateReveal(dt);
-    if (roomLeft && arrived === 0) { clearRoom(); roomLeft(); roomLeft = null; } // the old room is back in the sheet: now it can go
-    room.visible = arrived > 0;
-    loadingScene?.show(1 - Math.min(1, arrived / HANDOVER)); // the stand-in dots give way to the scan's own at the start of its arrival
-    paperFigurine?.show(arrived);                             // the figurine is paper too, and itself once the room is in
-    surround.lerpColors(SURROUND.sky, SURROUND.beyond, THREE.MathUtils.smoothstep(arrived, SURROUND.darken[0], SURROUND.darken[1]));
+    updateArrival(dt);
     if (TEL) publishDebugState();
     if (TEL) applyMatteView();
     if (stepFrames > 0 && --stepFrames === 0) { stepDone?.(); stepDone = null; }
@@ -1907,13 +1946,13 @@ addEventListener('resize', () => {
 function setVoxelOverlay(on: boolean): void {
   showVoxels = on;
   if (collisionDebug) collisionDebug.visible = on;
-  if (voxelCheckbox) voxelCheckbox.checked = on;
+  if (overlayBoxes.voxel) overlayBoxes.voxel.checked = on;
 }
 
 function setPlatformOverlay(on: boolean): void {
   showPlatforms = on;
   if (platformDebug) platformDebug.visible = on;
-  if (platformCheckbox) platformCheckbox.checked = on;
+  if (overlayBoxes.platform) overlayBoxes.platform.checked = on;
 }
 
 // Spike 1 overlay: decompose the current collision into walkable platforms and
@@ -1967,9 +2006,9 @@ function rebuildPlatformOverlay(): void {
 // the section they belong to, rather than reaching for URL params.
 function setupDebugMenu(): void {
   const overlays = hud.debug.section('Overlays', true);
-  voxelCheckbox = overlays.addToggle('Voxel wireframe (V)', showVoxels, setVoxelOverlay,
+  overlayBoxes.voxel = overlays.addToggle('Voxel wireframe (V)', showVoxels, setVoxelOverlay,
     'Draw the collision mesh over the scan as a wireframe.');
-  platformCheckbox = overlays.addToggle('Platforms (P)', showPlatforms, setPlatformOverlay,
+  overlayBoxes.platform = overlays.addToggle('Platforms (P)', showPlatforms, setPlatformOverlay,
     'Spike 1: color the walkable surfaces the collision decomposes into — floor, ' +
     'couch, counter. Distinct colors = distinct platforms (reached by climbing/jumping).');
 
@@ -2010,7 +2049,7 @@ function setupDebugMenu(): void {
     'Distance between the added splats, in collision voxels. Smaller = more, smaller splats. Works the fill out again.');
 
   const ground = hud.debug.section('Ground and platforms');
-  ground.addToggle('Reliable ground (nav)', useNavGround, (on) => { useNavGround = on; },
+  ground.addToggle('Reliable ground (nav)', NAV.on, (on) => { NAV.on = on; },
     'Spike 2: stand on / confine to the hole-filled NavGrid so the figurine can\'t ' +
     'fall through gaps or walk off platform edges. Off = raw mesh collision only.');
   ground.addSlider('Step limit', PLATFORM_OPTS.stepFactor, 0.1, 1, 0.05, (v) => {
