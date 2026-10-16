@@ -10,7 +10,7 @@
 import { chromium } from 'playwright';
 
 const base = process.argv[2] ?? 'http://localhost:5173/';
-const FIRST = { file: 'kitchen-clean.ply', label: 'Kitchen' }, SECOND = { file: 'counter-clean.ply', label: 'Counter' };
+const FIRST = { file: 'kitchen-clean.spz', label: 'Kitchen' }, SECOND = { file: 'counter-clean.spz', label: 'Counter' };
 const LOAD_MS = 90000, SOON_MS = 5000;
 
 const browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--enable-unsafe-swiftshader'] });

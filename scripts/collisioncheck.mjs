@@ -24,7 +24,7 @@ const args = process.argv.slice(2), save = args.includes('--save');
 const trial = args.flatMap((a, i) => (args[i - 1] === '--with' ? [a] : [])); // settings to try, as key=value
 if (save && trial.length) { console.log('--save and --with do not go together: a trial is not the baseline'); process.exit(1); }
 const named = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--with');
-const scans = named.length ? named : ['livingroom-clean.ply', 'counter-clean.ply', 'kitchen-clean.ply', 'room2.ply', 'Marishka-clean.ply']; // (Marishka: a dog on a blanket. Nothing in it is flat or hard-edged, which is what the rooms cannot test)
+const scans = named.length ? named : ['livingroom-clean.spz', 'counter-clean.spz', 'kitchen-clean.spz', 'room2.ply', 'Marishka-clean.spz']; // (Marishka: a dog on a blanket. Nothing in it is flat or hard-edged, which is what the rooms cannot test)
 
 // What is shown, and what is guarded: `worse` is the direction that is a regression, and
 // `slack` how far a number may move that way before it counts (shares are 0..1; offsets are voxels).
@@ -119,7 +119,7 @@ try {
 } finally { await browser.close(); }
 
 const width = Math.max(...METRICS.map((m) => m.label.length));
-console.log(`\n${''.padEnd(width)}  ${scans.map((s) => s.replace(/(-clean)?\.ply$/, '').padStart(12)).join('')}`);
+console.log(`\n${''.padEnd(width)}  ${scans.map((s) => s.replace(/(-clean)?\.(ply|spz)$/, '').padStart(12)).join('')}`);
 for (const m of METRICS) console.log(`${m.label.padEnd(width)}  ${scans.map((s) => show(m, measured[s]?.[m.key]).padStart(12)).join('')}`);
 
 if (save) {

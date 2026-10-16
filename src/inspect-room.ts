@@ -6,6 +6,7 @@ import { WebGPURenderer } from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GaussianSplat } from 'three/addons/objects/GaussianSplat.js';
 import { GaussianSplatPLYLoader } from 'three/addons/loaders/GaussianSplatPLYLoader.js';
+import { SPZLoader } from 'three/addons/loaders/SPZLoader.js';
 import { orientScan } from './orient-scan';
 import { LISTED_SCANS, scanURL } from './scans';
 
@@ -28,7 +29,7 @@ const room = new THREE.Group();
 scene.add(room);
 const file = q.get('file') ?? LISTED_SCANS[0].file; // the app's default scan
 
-new GaussianSplatPLYLoader().load(scanURL(file), (geometry) => {
+(/\.spz$/i.test(file) ? new SPZLoader() : new GaussianSplatPLYLoader()).load(scanURL(file), (geometry) => {
   const o = orientScan(geometry.getAttribute('position') as THREE.BufferAttribute);
   const splat = new GaussianSplat(geometry);
   splat.position.copy(o.center).multiplyScalar(-1);

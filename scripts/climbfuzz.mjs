@@ -3,7 +3,7 @@
 // publishDebugState in src/main.ts). Needs the dev server running.
 //
 //   node scripts/climbfuzz.mjs [scan] [seconds] [seed]
-//   node scripts/climbfuzz.mjs counter-clean.ply 90 1
+//   node scripts/climbfuzz.mjs counter-clean.spz 90 1
 //
 // Prints each violation with the climb events that led up to it, then a summary
 // line, including how deep the climber's body sat in the mesh (`sunk`). Exits 1 if there were violations. Counter and Kitchen reach climbs from
@@ -15,7 +15,7 @@
 // whatever the frame rate. `seconds` is that game time, not the time the run takes.
 import { chromium } from 'playwright';
 
-const scan = process.argv[2] ?? 'counter-clean.ply';
+const scan = process.argv[2] ?? 'counter-clean.spz';
 const seconds = Number(process.argv[3] ?? 90);
 const seed0 = Number(process.argv[4] ?? 1);
 const url = `http://localhost:5173/?scan=${scan}&tel=1`;

@@ -36,7 +36,7 @@ gitignored. To run locally:
 1. Put a Gaussian-splat `.ply` in `scans/` (standard 3DGS format — a Scaniverse
    or Luma export, or a pretrained scene). The dev server serves it at `/scans/`.
 2. Open `http://localhost:5173/?scan=yourscan.ply`, or add it to `src/scans.ts`.
-   The default is `kitchen-clean.ply`.
+   The default is `kitchen-clean.spz`.
 
 Which scans ship publicly, and why, is in [`CLAUDE.md`](./CLAUDE.md) ("Which scans
 ship"); how they are hosted is in [`context/deploy.md`](./context/deploy.md).

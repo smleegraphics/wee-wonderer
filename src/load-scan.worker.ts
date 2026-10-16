@@ -1,12 +1,13 @@
-// Web Worker: fetch and parse a scan's .ply off the main thread. Parsing a large
+// Web Worker: fetch and parse a scan (.ply or .spz) off the main thread. Parsing a large
 // scan takes seconds (the Playroom is 453 MB), and on the main thread that froze
 // the page: no clicks, no animation. The file is fetched here too, so its bytes
 // never cross threads; only the parsed arrays are transferred back, zero-copy. A load
 // that is no longer wanted can be cancelled while it is fetching (not once unpacking
 // has begun: that is one call into three.js).
 
-import type { BufferAttribute } from 'three';
+import type { BufferAttribute, BufferGeometry } from 'three';
 import { GaussianSplatPLYLoader } from 'three/addons/loaders/GaussianSplatPLYLoader.js';
+import { SPZLoader } from 'three/addons/loaders/SPZLoader.js';
 
 /** The arrays `createGaussianSplatGeometry` rebuilds the splat geometry from. */
 export interface ParsedScan {
@@ -46,6 +47,15 @@ async function readBody(response: Response, onFetched: (part: number) => void): 
   return bytes.buffer;
 }
 
+/** Parse a scan by what its bytes are, not by its name (an imported scan's blob URL has
+ *  none): a PLY starts with the text "ply"; anything else is read as SPZ, whose loader
+ *  knows its own versions (gzip for 1 to 3, zstd for 4) and throws on what is neither. */
+async function parseScan(body: ArrayBuffer): Promise<BufferGeometry> {
+  const head = new Uint8Array(body, 0, Math.min(3, body.byteLength));
+  if (String.fromCharCode(...head) === 'ply') return new GaussianSplatPLYLoader().parse(body);
+  return await new SPZLoader().parse(body) as BufferGeometry;
+}
+
 self.onmessage = async (e: MessageEvent<Req | Cancel>) => {
   if ('cancel' in e.data) { fetching.get(e.data.id)?.abort(); return; }
   const { id, url } = e.data;
@@ -59,7 +69,7 @@ self.onmessage = async (e: MessageEvent<Req | Cancel>) => {
     fetching.delete(id);
     abort.signal.throwIfAborted(); // cancelled between the last bytes and here
     say({ step: 'unpack' });
-    const geometry = new GaussianSplatPLYLoader().parse(body);
+    const geometry = await parseScan(body);
     const sphericalHarmonics: Record<string, Uint32Array> = {};
     for (const name of Object.keys(geometry.attributes)) {
       if (name.startsWith('sphericalHarmonics')) sphericalHarmonics[name] = (geometry.getAttribute(name) as BufferAttribute).array as Uint32Array;
