@@ -96,6 +96,11 @@ A spring arm from the figurine to the camera (`updateCamera`).
   zoom.
 - It shortens fast and lengthens slowly, so a flickering blocker holds it still.
 - It never comes closer than the distance at which the figurine fits in frame.
+- **The opening shot is turned to a clear side** (`resetToSpawn`, `clearStartTurn`):
+  the same framing (`CAM_START`) at every spawn and Reset, with the figurine turned
+  along, tried at 16 sides nearest the unturned one first, taking the first whose arm
+  meets nothing (else the one that sees furthest). From one fixed side, Living Room
+  opened pulled in as close as the camera goes, on the figurine's face.
 - While climbing, if the wall blocks the view and the view from behind the figurine
   is clearer, it swings round. Any user drag or zoom cancels that for the rest of
   the climb (`camHandsOff`).
