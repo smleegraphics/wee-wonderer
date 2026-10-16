@@ -35,7 +35,7 @@ preview servers serve at `/scans/` (never `public/`: Vite copies it into every b
 the default is `kitchen-clean.spz` (Kitchen). Cleaned demo scans are `*-clean.ply`; the shipped
 ones are those converted to SPZ (`*-clean.spz`, `context/deploy.md`, "Scan files").
 
-**Which scans ship.** `SCANS` in `src/scan-list.ts` lists every known scan; only the
+**Which scans ship.** `SCANS` in `src/scan/scan-list.ts` lists every known scan; only the
 `listed: true` ones appear in the Scans card, and the first of those is the default.
 The shipped scans are Kitchen, Living Room and Counter (Mip-NeRF 360, CC BY 4.0, which
 needs credit) and Curled Up Dog (`Marishka-clean.spz`, our own capture). **Playroom
@@ -46,24 +46,30 @@ new scan, record where it came from and its licence.
 
 ## Where things are
 
-| File | What it holds |
+Source is grouped by job; file names are unique across folders, so a bare name is
+enough to find one.
+
+| Where | What it holds |
 |---|---|
-| `src/main.ts` | App, controller (`updateController`, `navMove`), climb state machine, follow camera, the list of Debug tunables (`setupDebugMenu`) |
-| `src/ui/` | The on-screen UI: `hud.ts` (tiles, cards, screens), `debug-panel.ts`, `paper.ts` (building blocks), `ui.css` (all styles and tokens) |
-| `src/collision.ts` | `MeshCollision` (three-mesh-bvh over the collision mesh) and `NavGrid` (walkable cells) |
-| `src/voxelize-core.ts` (+ `.worker.ts`, `voxelize.ts`) | Splat → density field → collision surface |
-| `src/room-reveal.ts`, `src/loading-scene.ts`, `src/paper-bits.ts`, `src/paper-figurine.ts` | How a room arrives after loading (the scan's points start as a sheet of paper dots and rise to their places, in the scan's shader), the stand-in dots before it has loaded, the formulas both share, and the figurine's paper look meanwhile |
+| `src/main.ts` | App, controller (`updateController`, `navMove`), climb state machine, follow camera, scan lighting, the list of Debug tunables (`setupDebugMenu`) |
 | `src/three-internals.ts` | Every private part of three.js the app touches (`GaussianSplat`'s fields, the renderer's material conversion); check it on a three.js upgrade |
-| `src/scan-list.ts`, `src/scans.ts` | The example scans (`SCANS`, which are listed, `SCAN_DIR`) as plain data the Vite config and scripts also read; and `scanURL`, the one place a scan's address is decided (`VITE_SCAN_BASE`) |
+| `src/worker-call.ts` | `workerCaller`: promise-based request/response for all the workers (a failed job rejects) |
+| **`src/scan/`** | **Getting a scan in:** |
+| `scan-list.ts`, `scans.ts` | The example scans (`SCANS`, which are listed, `SCAN_DIR`) as plain data the Vite config and scripts also read; and `scanURL`, the one place a scan's address is decided (`VITE_SCAN_BASE`) |
+| `load-scan.worker.ts`, `parse-scan.ts` | Fetches and parses a scan off the main thread; `parseScan` picks PLY or SPZ by the file's bytes (also used by `inspect.html`) |
+| `orient-scan.ts` | Levels the floor and yaw-aligns walls to X/Z (seeded, deterministic) |
+| `clean-scan-core.ts` (+ worker), `scripts/clean-scan.mjs` | Floater removal, in-browser and offline |
+| `fill-scan-core.ts` (+ worker) | Walkable gap fill: flat splats added where the ground the figurine can stand on lets the backdrop through |
+| **`src/collision/`** | **Collision from the splats:** |
+| `collision.ts` | `MeshCollision` (three-mesh-bvh over the collision mesh) and `NavGrid` (walkable cells) |
+| `voxelize-core.ts` (+ `.worker.ts`, `voxelize.ts`) | Splat → density field → collision surface |
+| `voxel-cache.ts` | IndexedDB cache of the built surface. **Bump `SCHEMA` when the surface algorithm changes.** |
+| `collision-health.ts` | The collision health numbers, for `scripts/collisioncheck.mjs` (loaded only under `?tel=1`) |
+| **`src/loading/`** | **While a room loads and arrives:** `room-reveal.ts` (the scan's points start as a sheet of paper dots and rise to their places, in the scan's shader), `loading-scene.ts` (the stand-in dots before it has loaded), `paper-bits.ts` (the formulas both share), `paper-figurine.ts` (the figurine's paper look meanwhile) |
+| **`src/figurine/`** | `climb-side-anim.ts`: the sideways-climb animation generated from the `climb` clip |
+| **`src/ui/`** | The on-screen UI: `hud.ts` (tiles, cards, screens), `debug-panel.ts`, `paper.ts` (building blocks), `ui.css` (all styles and tokens) |
+| **`src/dev-pages/`** | `inspect-room.ts`, the scan inspector (`inspect.html`; not part of the app) |
 | `deploy/scans-worker/`, `scripts/upload-scans.mjs` | The scan host (a Worker over R2, with its own `package.json` for wrangler) and the upload of the listed scans to it |
-| `src/load-scan.worker.ts`, `src/parse-scan.ts` | Fetches and parses a scan off the main thread; `parseScan` picks PLY or SPZ by the file's bytes (also used by `inspect.html`) |
-| `src/worker-call.ts` | `workerCaller`: promise-based request/response for all three workers (a failed job rejects) |
-| `src/voxel-cache.ts` | IndexedDB cache of the built surface. **Bump `SCHEMA` when the surface algorithm changes.** |
-| `src/fill-scan-core.ts` (+ `.worker.ts`) | Walkable gap fill: flat splats added where the ground the figurine can stand on lets the backdrop through |
-| `src/orient-scan.ts` | Levels the floor and yaw-aligns walls to X/Z (seeded, deterministic) |
-| `src/clean-scan-core.ts` (+ worker), `scripts/clean-scan.mjs` | Floater removal, in-browser and offline |
-| `src/collision-health.ts` | The collision health numbers, for `scripts/collisioncheck.mjs` (loaded only under `?tel=1`) |
-| `src/climb-side-anim.ts` | Sideways-climb animation generated from the `climb` clip |
 
 ## Testing without a human
 
@@ -174,7 +180,7 @@ Project-specific checks:
 
 - No allocations in per-frame paths (`updateController`, `climbUpdate`,
   `updateCamera`, the render loop). Reuse module-level scratch vectors.
-- `SCHEMA` in `src/voxel-cache.ts` is bumped if the collision surface changes.
+- `SCHEMA` in `src/collision/voxel-cache.ts` is bumped if the collision surface changes.
 - The controller still reaches collision only through the `Collision` interface.
 - `npm run typecheck` and `npm run build` pass.
 

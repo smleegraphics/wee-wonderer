@@ -19,7 +19,7 @@ export default {
 
     let key;
     try { key = decodeURIComponent(new URL(request.url).pathname.slice(1)); } catch { return notFound(); } // a malformed % escape names no scan
-    if (!key || key.includes('/')) return notFound(); // scans are flat (src/scan-list.ts)
+    if (!key || key.includes('/')) return notFound(); // scans are flat (src/scan/scan-list.ts)
 
     // R2 answers the request's own conditions and range: a browser revalidating gets 304,
     // a range request gets just that range.

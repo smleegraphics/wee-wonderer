@@ -41,17 +41,17 @@ Unpacking in the worker went from about 500 ms to about 45 ms. They look the sam
 1.2e-4 scan units here), which moves Kitchen's collision a little
 (`context/collision.md`, "SPZ moves Kitchen's collision").
 
-`parseScan` (`src/parse-scan.ts`, used by `load-scan.worker.ts` and `inspect.html`) picks the parser by the file's bytes, not its name (an imported
+`parseScan` (`src/scan/parse-scan.ts`, used by `load-scan.worker.ts` and `inspect.html`) picks the parser by the file's bytes, not its name (an imported
 scan's `blob:` URL has none): a file starting with the text `ply` is PLY, anything else
 goes to three's `SPZLoader`, which reads SPZ versions 1 to 4 and throws on what is
 neither. Importing a scan still takes `.ply` only: the cleanup worker parses PLY.
 
 ## Where scans come from
 
-- **`src/scan-list.ts`** holds the list (`SCANS`, `LISTED_SCANS`) and `SCAN_DIR`, as
+- **`src/scan/scan-list.ts`** holds the list (`SCANS`, `LISTED_SCANS`) and `SCAN_DIR`, as
   plain data with no `import.meta.env`, so `vite.config.ts` and
   `scripts/upload-scans.mjs` read the same list and folder name as the app.
-- **`src/scans.ts`** has `scanURL(file)`, the one place a scan's address is decided.
+- **`src/scan/scans.ts`** has `scanURL(file)`, the one place a scan's address is decided.
 - **Scan names are flat** (no folders), locally and on the scan host alike: both refuse
   a name with a `/`, so what loads locally loads when deployed.
 - **Locally**, scans live in the gitignored **`scans/`** folder, and a plugin in

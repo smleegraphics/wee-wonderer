@@ -8,7 +8,7 @@
 import * as THREE from 'three';
 import type { GaussianSplat } from 'three/addons/objects/GaussianSplat.js';
 import { cameraProjectionMatrix, cameraViewMatrix, Fn, hash, If, instanceIndex, mix, modelWorldMatrix, positionGeometry, screenSize, smoothstep, uniform, varyingProperty, vec3, vec4 } from 'three/tsl';
-import { splatInternals } from './three-internals';
+import { splatInternals } from '../three-internals';
 import { BITS, SHEET_CELL, dotShape, rimFade, sheetHeight } from './paper-bits';
 
 export const REVEAL = {

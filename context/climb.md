@@ -111,7 +111,7 @@ A spring arm from the figurine to the camera (`updateCamera`).
 
 ## Sideways animation
 
-`character.glb` has one `climb` clip. `src/climb-side-anim.ts` builds a shimmy for
+`character.glb` has one `climb` clip. `src/figurine/climb-side-anim.ts` builds a shimmy for
 each direction at load time from that clip's cycle-averaged pose. Each limb is
 rotated about `reach × travel` so its tip moves along the wall, and the world-space
 rotation is carried into the bone's frame. No bone axes are hard-coded. The look is

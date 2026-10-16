@@ -98,7 +98,7 @@ for (let i = 0; i < count; i++) {
 const passOpacitySize = (i) => alpha[i] >= ALPHA_MIN && sizeOf[i] <= scaleCap;
 
 // --- auto-level: RANSAC floor normal in a rough-flipped, recentered frame ---
-// (mirrors src/orient-scan.ts so the crop frame matches the app's load frame)
+// (mirrors src/scan/orient-scan.ts so the crop frame matches the app's load frame)
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const norm = (a) => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };

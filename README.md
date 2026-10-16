@@ -35,7 +35,7 @@ gitignored. To run locally:
 
 1. Put a Gaussian-splat `.ply` in `scans/` (standard 3DGS format — a Scaniverse
    or Luma export, or a pretrained scene). The dev server serves it at `/scans/`.
-2. Open `http://localhost:5173/?scan=yourscan.ply`, or add it to `src/scans.ts`.
+2. Open `http://localhost:5173/?scan=yourscan.ply`, or add it to `SCANS` in `src/scan/scan-list.ts`.
    The default is `kitchen-clean.spz`.
 
 Which scans ship publicly, and why, is in [`CLAUDE.md`](./CLAUDE.md) ("Which scans
@@ -46,7 +46,7 @@ clips; contract in `context/character-README.md`).
 
 ## How it works
 
-- **`src/orient-scan.ts`** — `orientScan(positions)` levels any scan: robust
+- **`src/scan/orient-scan.ts`** — `orientScan(positions)` levels any scan: robust
   recenter + a RANSAC floor-plane fit (largest near-horizontal surface, robust to
   floaters / furniture / stairwells) → floor normal to +Y, floor dropped to y=0.
   No per-scan constants; the same code levels a demo scan or your own.
@@ -57,7 +57,7 @@ clips; contract in `context/character-README.md`).
 
 ### Tooling
 
-- **`inspect.html`** (`src/inspect-room.ts`) — a scan inspector: loads a scan (`.ply` or `.spz`),
+- **`inspect.html`** (`src/dev-pages/inspect-room.ts`) — a scan inspector: loads a scan (`.ply` or `.spz`),
   auto-levels it, and shows it against a y=0 grid. `?file=…&ca=&ce=&cd=`.
 - **`scripts/shot.mjs`** / **`scripts/drive.mjs`** — headless Chrome (Playwright)
   screenshotting and keyboard/mouse driving, for verifying the 3D app from the

@@ -1,12 +1,12 @@
 import { createReadStream, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { defineConfig, loadEnv, type Connect, type Plugin, type ResolvedConfig } from 'vite';
-import { SCAN_DIR } from './src/scan-list';
+import { SCAN_DIR } from './src/scan/scan-list';
 
 // The example scans are tens of MB each, so they are not in public/ (Vite copies all of
 // it into every build) but in the gitignored scans/ folder. The dev and preview servers
 // serve that folder at <base>scans/; a public build fetches them from VITE_SCAN_BASE
-// instead (src/scans.ts, context/deploy.md).
+// instead (src/scan/scans.ts, context/deploy.md).
 const scanDir = resolve(__dirname, SCAN_DIR);
 
 function serveScans(): Plugin {
