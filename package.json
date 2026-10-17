@@ -1,7 +1,7 @@
 {
   "name": "wee-wonderer",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
   "description": "A cozy browser toy where a tiny figurine explores a Gaussian splat scan of your real space. three.js (WebGPU) app; splat rendering via splatlight.",
   "scripts": {

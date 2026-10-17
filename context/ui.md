@@ -120,6 +120,20 @@ and the figurine's old spot (the origin on a first load, the last room's spawn o
 switch) is inside it, so the camera pulled in close and jumped back out when the spawn
 was set after the fill, about 0.2 s later.
 
+## The page around the app
+
+`index.html` carries the page's description, its icons and how a shared link looks.
+
+- **`public/favicon.svg`** is the figurine's head in its own colours, read from
+  `character.glb`'s materials (body `#84bc78`, eyes `#232323`). It reads at 16 px.
+  **`public/apple-touch-icon.png`** is the same at 180 px on the `--sky` colour, for an
+  iPhone home screen.
+- **`public/social-preview.png`** (1200 × 630) is the title screen over Kitchen,
+  screenshot headless at that size with the HUD's corner tiles and any on-screen key
+  hints hidden and Begin made invisible. Retake it the same way when the title screen changes. The `og:image`
+  address in `index.html` is the public site's (`context/deploy.md`): a link preview
+  needs a full address.
+
 ## Gotchas
 
 - **A splat's vertex stage cannot be set on its material.** `GaussianSplat` puts its

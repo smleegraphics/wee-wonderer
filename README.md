@@ -64,9 +64,16 @@ clips; contract in `context/character-README.md`).
 
 ## Status
 
-- **M0 ✓** WebGPU app shell
-- **M1 ✓** native `GaussianSplat` rendering + verified mesh↔splat occlusion
-- **M2 ✓** character controller (idle/walk/run/jump/climb) on WebGPU
-- **M3 ✓** figurine in an auto-leveled room scan + orbit-follow camera
-- **Next:** hand-authored collision (hop onto furniture / climb a step); a clean
-  own-room scan; camera & character-identity polish.
+**v1.0**, live at **https://wee.samanthamlee.com**.
+
+- Four example scans: Kitchen, Living Room and Counter (Mip-NeRF 360) and Curled Up
+  Dog (Samantha Lee's own capture), served as SPZ from a scan host (`context/deploy.md`).
+- Walk, run, jump and climb, on collision built automatically from the splats
+  (`context/collision.md`, `context/climb.md`).
+- The figurine is lit from the scan itself and casts a contact shadow into it
+  (`context/lighting.md`).
+- Import your own `.ply` scan: it is cleaned in your browser and never uploaded.
+
+Known limits: keyboard only (no touch controls yet); best in a WebGPU browser
+(elsewhere three.js falls back to WebGL2); a casual phone scan with heavy floaters
+gives rougher collision than the example scans.
