@@ -28,6 +28,10 @@ that unfold from them.
   recede. It follows how much of the room is in place (`SURROUND` in `src/app.ts`).
 - **Title screen**, the first time the game is opened on a device only
   (`localStorage['ww.titleSeen']`). To see it again, remove that key.
+  On a touch-only device (`(hover: none) and (pointer: coarse)`: a phone or tablet) it
+  also says the game is best on a computer with a keyboard, since there are no touch
+  controls. CSS alone decides this (`.ww-touch-note`); check it headless with Playwright's
+  `devices['iPhone 13']`, which matches that query.
 
 ## Where things are
 
