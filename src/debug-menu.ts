@@ -32,7 +32,7 @@ export function setupDebugMenu(): void {
   light.addToggle('Fill gaps', SCAN_LIGHT.fill, (on) => { SCAN_LIGHT.fill = on; requestScanLight(); },
     'Where the scan has nothing (usually the ceiling), light the figurine with the average colour of the scan\'s upper half instead of darkness.');
   light.addToggle('Light debug view', SCAN_LIGHT.debug, (on) => { SCAN_LIGHT.debug = on; applyScanLight(); },
-    'Show what the light probe captured (panorama, bottom-left: up is at the top) and three balls lit by it: mirror, half-rough metal, matte white.');
+    'Show what the light probe captured (panorama, top-left: up is at the top) and three balls lit by it: mirror, half-rough metal, matte white.');
   light.addSlider('Light strength', SCAN_LIGHT.intensity, 0, 3, 0.05, (v) => { SCAN_LIGHT.intensity = v; applyScanLight(); },
     'How strongly the scan lights the figurine.');
   light.addSlider('Light blend (s)', SCAN_LIGHT.blend, 0, 2, 0.1, (v) => { SCAN_LIGHT.blend = v; },

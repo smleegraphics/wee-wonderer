@@ -231,7 +231,7 @@ function buildScanDebug(): void {
 }
 
 /** Keep the debug balls over the figurine's head and the thumbnail pinned to the
- *  bottom-left corner of the view. */
+ *  top-left corner of the view (the one corner the HUD leaves free). */
 export function updateScanDebug(): void {
   if (!scanDebugBalls || !scanDebugThumb || !scanDebugBalls.visible) return;
   scanDebugBalls.scale.setScalar(charH * SCAN_DEBUG.ballRadius);
@@ -240,13 +240,13 @@ export function updateScanDebug(): void {
   const d = charH, halfH = d * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2), halfW = halfH * camera.aspect;
   const h = halfH * 2 * SCAN_DEBUG.thumbHeight, margin = halfH * 2 * SCAN_DEBUG.thumbMargin; // the panorama is twice as wide as tall
   scanDebugThumb.scale.setScalar(h);
-  scanDebugThumb.position.set(-halfW + margin + h, -halfH + margin + h / 2, -d);
+  scanDebugThumb.position.set(-halfW + margin + h, halfH - margin - h / 2, -d);
 }
 
 /** Where updateScanDebug puts the panorama, in CSS pixels from the top left (for ?tel=1). */
 export function scanDebugThumbRect(): { x: number; y: number; w: number; h: number } {
   const H = renderer.domElement.clientHeight, h = H * SCAN_DEBUG.thumbHeight, margin = H * SCAN_DEBUG.thumbMargin;
-  return { x: margin, y: H - margin - h, w: 2 * h, h };
+  return { x: margin, y: margin, w: 2 * h, h };
 }
 
 /** Per frame: advance the cross-fade, then take a capture if one is due — because it

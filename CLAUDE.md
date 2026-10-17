@@ -100,8 +100,8 @@ Visual and behavioural checks run headless in real Chrome through Playwright.
   waiting and 1 once it has arrived, and `lightView`: where the scan light's debug
   panorama is on screen while that view is on). Without `?tel=1` there is no `__dbg`. `window.__wwReady` is
   always set once the first frames have rendered.
-- **UI regression check:** `node scripts/uicheck.mjs` runs 25 checks of the title,
-  keys, tiles, Credits card, Debug card, loading view, the scan light's capture at load, room switch
+- **UI regression check:** `node scripts/uicheck.mjs` runs 26 checks of the title,
+  keys, tiles, Credits and Controls cards, Debug card, loading view, the scan light's capture at load, room switch
   and a failed load, and exits non-zero on a failure. Run it after any change under
   `src/ui/`, to loading, or to the scan light.
 - **Gap measurement:** `node scripts/holes.mjs <scan> [outDir]` counts the pixels the

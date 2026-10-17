@@ -14,13 +14,13 @@ const FIRST = { file: 'kitchen-clean.spz', label: 'Kitchen' }, SECOND = { file: 
 const LOAD_MS = 90000, SOON_MS = 5000;
 
 // A panorama of the fill alone is one colour: spread 0.0, measured with the bug back in.
-// Kitchen's real capture measured 24.0. Anything above noise means the room was seen.
+// Kitchen's real capture measured 22.6 (the whole panorama). Anything above noise means the room was seen.
 const LIGHT_SPREAD_MIN = 2;
 
 /** How varied the scan light's panorama is: the standard deviation of brightness (0..255)
- *  over its top three quarters (the controls hint overlaps its bottom edge). */
+ *  over the whole of it (it is in the top-left corner, where nothing covers it). */
 async function colourSpread(page, r) {
-  const png = await page.screenshot({ clip: { x: r.x, y: r.y, width: r.w, height: r.h * 0.75 } });
+  const png = await page.screenshot({ clip: { x: r.x, y: r.y, width: r.w, height: r.h } });
   return page.evaluate(async (b64) => {
     const bmp = await createImageBitmap(await (await fetch(`data:image/png;base64,${b64}`)).blob());
     const c = new OffscreenCanvas(bmp.width, bmp.height).getContext('2d');
@@ -93,6 +93,14 @@ try {
   await page.keyboard.press('Escape');
   check('the Credits card opens and credits the figurine and the scans', /PolyOne Studio/.test(credits) && /Mip-NeRF 360/.test(credits) && /Samantha Lee/.test(credits)
     && await page.evaluate(() => document.querySelector('.ww-credits').hidden));
+
+  // --- the controls are folded away, in a card of their own
+  const hintGone = await page.evaluate(() => !document.querySelector('.ww-hint'));
+  await page.getByRole('button', { name: 'Controls', exact: true }).click();
+  const controls = await page.evaluate(() => { const c = document.querySelector('.ww-controls'); return c && !c.hidden ? c.textContent : ''; });
+  await page.keyboard.press('Escape');
+  check('the controls are in their card, not on screen until asked for', hintGone && /walk/.test(controls) && /jump/.test(controls) && /climb/.test(controls)
+    && await page.evaluate(() => document.querySelector('.ww-controls').hidden));
 
   // --- the Debug card
   await page.keyboard.press('Backquote');

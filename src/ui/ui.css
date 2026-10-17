@@ -21,8 +21,6 @@
   --drop: drop-shadow(var(--lift) var(--lift) 0 var(--shade));
   --card-pad: 14px;
   --rule: color-mix(in srgb, var(--ink) 20%, transparent);
-  --on-scan: #fff;          /* text laid straight on the scan, with no paper under it (the controls hint)... */
-  --on-scan-shade: rgb(0 0 0 / 0.7); /* ...and the shadow that keeps it readable there */
   --title-wash: #7fd0c4;    /* mixed into --mark for the title screen's backdrop */
   --sky: #b1d8ef;           /* the open air around a scan (--mark and --paper mixed 38:62). A plain value: the 3D scene reads it */
   --beyond: #1a1c22;        /* what is around a scan once it has arrived: near-dark, so its gaps and edges recede. Plain, for the same reason */
@@ -66,12 +64,13 @@ button.ww-piece[aria-expanded='true'] > .ww-face, .ww-primary > .ww-face { backg
 .ww-corner { position: absolute; right: var(--edge); display: flex; flex-direction: column; gap: var(--gap); }
 .ww-corner-top { top: var(--edge); }
 .ww-corner-bottom { bottom: var(--edge); }
+.ww-corner-left { left: var(--edge); right: auto; bottom: var(--edge); }
 /* cards unfold beside the tile column */
-.ww-rooms, .ww-credits, .ww-debug { position: absolute; right: calc(var(--edge) + var(--tile) + var(--gap)); }
+.ww-rooms, .ww-controls, .ww-debug { position: absolute; right: calc(var(--edge) + var(--tile) + var(--gap)); }
 
 .ww-rooms { top: var(--edge); width: 230px; }
-/* Beside its tile (the second in the top corner), and never taller or wider than the window: it scrolls instead. */
-.ww-credits { top: var(--edge); width: min(320px, calc(100vw - 2 * var(--edge) - var(--tile) - var(--gap))); max-height: calc(100vh - 2 * var(--edge)); overflow-y: auto; }
+/* Beside its tile in the bottom-left corner, and never taller or wider than the window: it scrolls instead. */
+.ww-credits { position: absolute; left: calc(var(--edge) + var(--tile) + var(--gap)); bottom: var(--edge); width: min(320px, calc(100vw - 2 * var(--edge) - var(--tile) - var(--gap))); max-height: calc(100vh - 2 * var(--edge)); overflow-y: auto; }
 .ww-credits dl { margin: 0; }
 .ww-credits dt { margin-top: 10px; font: 700 0.85em var(--font-display); letter-spacing: 0.04em; color: var(--ink-soft); }
 .ww-credits dt:first-child { margin-top: 0; }
@@ -79,6 +78,10 @@ button.ww-piece[aria-expanded='true'] > .ww-face, .ww-primary > .ww-face { backg
 .ww-credits a { color: inherit; text-decoration: underline; text-decoration-color: var(--ink-soft); text-underline-offset: 2px; }
 .ww-credits a:hover { text-decoration-color: var(--mark); }
 .ww-credit-note { color: var(--ink-soft); }
+/* A key line: key caps, then what they do (the Controls card, and the title's reminder). */
+.ww-keys { display: inline-flex; align-items: center; gap: 5px; }
+.ww-controls { bottom: var(--edge); display: flex; flex-direction: column; gap: 8px; }
+.ww-controls .ww-heading { margin: 0; }
 .ww-rooms ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .ww-rooms button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: 0; background: none; text-align: left; }
 .ww-rooms button:hover { background: color-mix(in srgb, var(--mark) 22%, transparent); }
@@ -107,8 +110,6 @@ button.ww-piece[aria-expanded='true'] > .ww-face, .ww-primary > .ww-face { backg
 .ww-debug-help > [data-on] { visibility: visible; }
 
 /* ---- controls hint ---------------------------------------------------------- */
-.ww-hint { position: absolute; left: var(--edge); bottom: var(--edge); max-width: calc(100% - 3 * var(--edge) - var(--tile)); display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; color: var(--on-scan); text-shadow: 0 1px 3px var(--on-scan-shade); pointer-events: none; }
-.ww-hint span { display: inline-flex; align-items: center; gap: 5px; }
 .ww-key { display: inline-grid; place-items: center; box-sizing: border-box; min-width: 26px; height: 26px; padding: 0 6px; background: var(--paper); color: var(--ink); font: 700 13px var(--font-display); text-shadow: none; filter: drop-shadow(2px 2px 0 var(--shade)); }
 
 /* ---- status: above everything, so an error is readable over the loading and title screens */
@@ -139,6 +140,9 @@ button.ww-piece[aria-expanded='true'] > .ww-face, .ww-primary > .ww-face { backg
 .ww-letter { width: clamp(30px, 6.6vw, 78px); height: clamp(36px, 8vw, 94px); }
 .ww-letter > .ww-face { font: 700 clamp(22px, 5vw, 60px)/1 var(--font-display); }
 .ww-title p { margin: 0; padding: 6px 16px; }
+.ww-title .ww-keys-note { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 14px; }
+/* No keys on a touch screen, so no reminder of them. */
+@media (hover: none) and (pointer: coarse) { .ww-title .ww-keys-note { display: none; } }
 .ww-begin > .ww-face { height: var(--tile); padding: 0 34px; font: 700 1.5em var(--font-display); letter-spacing: 0.04em; }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,5 +1,5 @@
 // The on-screen UI: icon tiles at the window's edge that unfold paper cards, the
-// controls hint, the status note, and the loading and title screens. It owns its
+// status note, and the loading and title screens. It owns its
 // DOM and what is open; the app tells it what happened and is called back with
 // what the player asked for. See context/ui.md.
 
@@ -57,11 +57,14 @@ export function createHud(opts: HudOptions): Hud {
   const roomsTile = tile('rooms', 'Scans', 0);
   const resetTile = tile('reset', 'Back to the start', 1);
   const debugTile = tile('debug', 'Debug', 2);
+  const controlsTile = tile('controls', 'Controls', 0);
   const creditsTile = tile('credits', 'Credits', 1);
   const top = el('div', 'ww-corner ww-corner-top');
-  top.append(roomsTile, creditsTile);
+  top.appendChild(roomsTile);
   const bottom = el('div', 'ww-corner ww-corner-bottom');
-  bottom.append(resetTile, debugTile);
+  bottom.append(controlsTile, resetTile, debugTile);
+  const left = el('div', 'ww-corner ww-corner-left');
+  left.appendChild(creditsTile);
 
   // --- cards: at most one is unfolded at a time ---
   const roomsCard = el('section', 'ww-card ww-rooms');
@@ -69,7 +72,9 @@ export function createHud(opts: HudOptions): Hud {
   const roomList = roomsCard.appendChild(el('ul'));
   const debug = createDebugPanel();
   const creditsCard = createCreditsCard();
-  const cards = [{ tile: roomsTile, card: roomsCard }, { tile: creditsTile, card: creditsCard }, { tile: debugTile, card: debug.el }];
+  const controlsCard = el('section', 'ww-card ww-controls');
+  controlsCard.appendChild(el('h2', 'ww-heading', 'Controls'));
+  const cards = [{ tile: roomsTile, card: roomsCard }, { tile: creditsTile, card: creditsCard }, { tile: controlsTile, card: controlsCard }, { tile: debugTile, card: debug.el }];
   function unfold(target: HTMLElement | null): void {
     for (const c of cards) {
       c.card.hidden = c.card !== target;
@@ -112,17 +117,16 @@ export function createHud(opts: HudOptions): Hud {
   }
   opts.rooms.forEach(addRoom);
 
-  // --- controls hint ---
-  const hint = el('div', 'ww-hint');
-  const hintLine = (keys: string[], does: string) => {
-    const line = hint.appendChild(el('span'));
+  // --- the controls: keys and what they do, in the Controls card (and the first two on the title) ---
+  const keysLine = (into: HTMLElement, keys: string[], does: string) => {
+    const line = into.appendChild(el('span', 'ww-keys'));
     for (const k of keys) line.appendChild(el('kbd', 'ww-key', k));
     line.append(does);
   };
-  hintLine(['W', 'A', 'S', 'D'], 'walk');
-  hintLine(['Shift'], 'run');
-  hintLine(['Space'], 'jump');
-  hintLine([], 'walk into a wall to climb');
+  keysLine(controlsCard, ['W', 'A', 'S', 'D'], 'walk');
+  keysLine(controlsCard, ['Shift'], 'run');
+  keysLine(controlsCard, ['Space'], 'jump');
+  keysLine(controlsCard, [], 'walk into a wall to climb');
 
   // --- status note ---
   const statusEl = el('div', 'ww-card ww-status');
@@ -171,7 +175,6 @@ export function createHud(opts: HudOptions): Hud {
   loadProgress('Building the room', 0); // until the app names the first step
   function setLoading(on: boolean): void {
     loading.dataset.on = String(on);
-    hint.hidden = on; // the keys it lists do nothing until there is a room
   }
   setLoading(true); // loading from the first frame; the app says when there is a room
 
@@ -189,6 +192,10 @@ export function createHud(opts: HudOptions): Hud {
     });
   });
   title.appendChild(el('p', 'ww-card', 'A tiny explorer in your real room'));
+  // The controls are folded away in play, so the title says how to move (not on a touch screen, which has no keys: ui.css).
+  const keysNote = title.appendChild(el('p', 'ww-card ww-keys-note'));
+  keysLine(keysNote, ['W', 'A', 'S', 'D'], 'to walk');
+  keysLine(keysNote, ['Space'], 'to jump');
   const begin = piece('button', 'ww-begin ww-primary', 0);
   begin.face.textContent = 'Begin';
   title.appendChild(begin.holder);
@@ -204,7 +211,7 @@ export function createHud(opts: HudOptions): Hud {
   }
   title.hidden = true;
 
-  root.append(top, bottom, roomsCard, creditsCard, debug.el, hint, picker, drop, loading, title, statusEl);
+  root.append(top, bottom, left, roomsCard, creditsCard, controlsCard, debug.el, picker, drop, loading, title, statusEl);
   document.body.appendChild(root);
   if (!titleSeen()) showTitle();
 
