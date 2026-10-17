@@ -89,11 +89,19 @@ These were each found by a bug. Breaking one brings the bug back.
 
 A spring arm from the figurine to the camera (`updateCamera`).
 
-- The arm's full length (`camWant`) is the user's zoom and belongs to OrbitControls.
-  Obstruction shortens the rendered arm by `camPull`. OrbitControls reads zoom off
-  the camera position, so the arm is restored to full length before
-  `orbit.update()` each frame. Writing a shortened position without that loses the
-  zoom.
+- **Two cameras: what the player asked for, and what is shown.** OrbitControls drives
+  its own camera (`orbitCamera`, `app.ts`), which nothing else moves: its distance
+  from the pivot is the user's zoom (`camWant`). The camera that is drawn (`camera`)
+  is set from it each frame (`showView`): the same line and facing, shortened by
+  `camPull` when something is in the way. The automatic swing turns `orbitCamera`,
+  since it re-aims where the player looks from.
+- **Never move `orbitCamera` to show something.** OrbitControls reads its camera's
+  distance as the zoom whenever input arrives (a scroll calls its `update()` inside
+  the event, `OrbitControls.js` `_handleMouseWheel`), not only when the frame asks.
+  With one shared camera, a scroll made while the view was pulled in zoomed from the
+  pulled-in distance, and the next frame put the old zoom back: near anything that
+  blocked the view, scrolling did nothing. Measured in Kitchen, blocked: 17 scrolls,
+  zoom unchanged before; every scroll counted after.
 - It shortens fast and lengthens slowly, so a flickering blocker holds it still.
 - It never comes closer than the distance at which the figurine fits in frame.
 - **The opening shot is turned to a clear side** (`resetToSpawn`, `clearStartTurn`):

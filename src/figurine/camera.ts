@@ -3,7 +3,7 @@
 // "Follow camera"). Also the fixed debug camera (?az, ?el, ?dist, ?cx, ?cy, ?cz).
 
 import * as THREE from 'three';
-import { camera, figurine, FREECAM_OPTS, move, orbit, player, TARGET_RADIUS, TUNE, WORLD_UP } from '../app';
+import { camera, figurine, FREECAM_OPTS, move, orbit, orbitCamera, player, TARGET_RADIUS, TUNE, WORLD_UP } from '../app';
 import { collision } from '../collision/room-collision';
 import { charH } from './character';
 import { climbDir } from './climb';
@@ -19,9 +19,10 @@ const CAM_START = new THREE.Vector3(1.2, 2.6 - CAM_PIVOT, 4.5);
 const CAM_START_TURNS = 16; // sides of the figurine the opening shot may be turned to: 22.5° apart
 
 // The follow camera is a spring arm from the pivot (the figurine) to the camera. The
-// arm's full length (`camWant`) is the user's zoom and belongs to OrbitControls; when
-// something blocks the view the arm is drawn shorter by `camPull`, WITHOUT touching
-// the zoom, so it springs back out once the view is clear.
+// arm's full length (`camWant`) is the user's zoom: the distance of OrbitControls' own
+// camera (`orbitCamera`, app.ts), which nothing else moves. When something blocks the
+// view, the camera that is shown (`camera`) sits on the same line but shorter, by
+// `camPull`, so the zoom is untouched and the view springs back out once it is clear.
 export let camWant = 0;          // arm length with nothing in the way (the user's zoom)
 let camPull = 1;          // rendered arm = camWant * camPull (1 = unobstructed)
 export let camSwinging = false;  // coming round to the figurine's back (see updateCamera)
@@ -33,15 +34,10 @@ export const camLatch = {
 };
 
 /** Glue the orbit pivot to the figurine so the camera follows while the user
- *  orbits/zooms; pull the camera in if something is between it and the pivot; and,
+ *  orbits/zooms; show the view pulled in if something is between it and the pivot; and,
  *  on a wall, bring it round behind the figurine if that wall is what's in the way. */
 export function updateCamera(dt: number): void {
   const t = orbit.target;
-  // hand OrbitControls the un-shortened arm — it reads the zoom off the camera position
-  if (camPull < 1 && camWant > 0) {
-    camDir.subVectors(camera.position, t).normalize();
-    camera.position.copy(t).addScaledVector(camDir, camWant);
-  }
   camLook.set(player.position.x, figurine.smoothFeetY + charH * CAM_PIVOT, player.position.z);
   t.lerp(camLook, 0.15);
   // Climbing puts the figurine flat against a wall, so a camera left on the wall's far
@@ -50,18 +46,18 @@ export function updateCamera(dt: number): void {
   // the open side instead: behind the figurine's back.
   if (figurine.state !== 'climb') camSwinging = false;
   if (camSwinging) {
-    const ox = camera.position.x - t.x, oz = camera.position.z - t.z;
+    const ox = orbitCamera.position.x - t.x, oz = orbitCamera.position.z - t.z; // (the swing re-aims what the player looks from)
     const cur = Math.atan2(ox, oz), home = Math.atan2(-climbDir.x, -climbDir.z);
     const a = lerpAngle(cur, home, TUNE.camSwing * dt) - cur;
     const c = Math.cos(a), sn = Math.sin(a);
-    camera.position.x = t.x + ox * c + oz * sn;
-    camera.position.z = t.z + oz * c - ox * sn;
+    orbitCamera.position.x = t.x + ox * c + oz * sn;
+    orbitCamera.position.z = t.z + oz * c - ox * sn;
     if (Math.abs(lerpAngle(cur, home, 1) - cur) < 0.05) camSwinging = false; // arrived
   }
   orbit.update();
-  camDir.subVectors(camera.position, t);
+  camDir.subVectors(orbitCamera.position, t);
   camWant = camDir.length();
-  if (!collision || camWant < 1e-4) { camPull = 1; return; }
+  if (!collision || camWant < 1e-4) { camPull = 1; showView(); return; }
   camDir.divideScalar(camWant);
   const clear = collision.rayDistance(t, camDir, camWant);
   const blocked = clear < camWant;
@@ -85,7 +81,14 @@ export function updateCamera(dt: number): void {
   const closest = (charH * CAM_PIVOT) / Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
   const goal = blocked ? Math.max(clear - charH * 0.15, Math.min(closest, camWant)) / camWant : 1;
   camPull += (Math.min(goal, 1) - camPull) * Math.min(1, (goal < camPull ? TUNE.camIn : TUNE.camOut) * dt);
-  camera.position.copy(t).addScaledVector(camDir, camWant * camPull);
+  showView();
+}
+
+/** Put the camera that is shown where the player looks from, `camPull` of the way along
+ *  the arm: facing as OrbitControls' camera faces, from the same line. */
+function showView(): void {
+  camera.position.lerpVectors(orbit.target, orbitCamera.position, camPull);
+  camera.quaternion.copy(orbitCamera.quaternion);
 }
 
 /** Frame the figurine from scratch (resetToSpawn): the arm at full length, the pivot on
@@ -99,8 +102,9 @@ export function frameOpeningShot(): void {
   // figurine turns with the shot, so every room opens on the same framing.
   const turn = clearStartTurn(orbit.target);
   player.rotation.y = turn;
-  camera.position.copy(CAM_START).applyAxisAngle(WORLD_UP, turn).multiplyScalar(charH).add(orbit.target);
+  orbitCamera.position.copy(CAM_START).applyAxisAngle(WORLD_UP, turn).multiplyScalar(charH).add(orbit.target);
   orbit.update();
+  showView();
 }
 
 /** How far to turn the opening shot about the figurine, pivot at `pivot`: the side

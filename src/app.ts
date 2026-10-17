@@ -63,11 +63,19 @@ export const SURROUND = {
 export const surround = new THREE.Color().copy(SURROUND.sky);
 scene.background = surround;
 
+/** The camera the screen shows: where the follow camera puts it each frame (figurine/camera.ts). */
 export const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.001, 200);
+/** Where the player has asked to look from: OrbitControls' own camera, moved by nothing
+ *  else. It is never drawn from. The follow camera reads the player's angle and zoom off
+ *  it and shows them, pulled in where something is in the way. Kept apart from `camera`
+ *  because OrbitControls reads its camera's distance as the zoom whenever input arrives,
+ *  not only when the frame asks it to: sharing one camera, a scroll made while the view
+ *  was pulled in zoomed from the pulled-in distance and was then undone. */
+export const orbitCamera = new THREE.PerspectiveCamera();
 
 // Orbit-follow camera: user drags to orbit / scrolls to zoom, and its pivot is
 // glued to the figurine each frame so it follows while you look around.
-export const orbit = new OrbitControls(camera, renderer.domElement);
+export const orbit = new OrbitControls(orbitCamera, renderer.domElement);
 orbit.enableDamping = true;
 orbit.dampingFactor = 0.08;
 orbit.enablePan = false; // pivot tracks the figurine; panning it away would fight that
