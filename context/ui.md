@@ -8,11 +8,18 @@ that unfold from them.
 
 ## What is on screen
 
-- **Tiles.** Scans (top-right); Back to the start and Debug (bottom-right). The Scans
-  card lists the `listed` entries of `SCANS` (`src/scan/scan-list.ts`), then "Import your own scan".
-- **Cards.** Scans and Debug unfold beside the tile column. At most one is open;
+- **Tiles.** Scans (top-right); Controls, Back to the start and Debug (bottom-right);
+  Credits (bottom-left). The top-left corner is left free (the scan-light debug panorama
+  goes there). The Scans card lists the `listed` entries of `SCANS`
+  (`src/scan/scan-list.ts`), then "Import your own scan".
+  The Credits card (`src/ui/credits.ts`) names who made what, with the licences that ask
+  for credit; `CREDITS.md` says the same at length, and the two are kept in step.
+- **Cards.** Scans, Controls, Credits and Debug unfold beside their tile. At most one is open;
   `Escape` folds it. `` ` `` toggles Debug.
-- **Controls hint** (bottom-left), **status note** (top-centre).
+- **The controls** are not on screen in play: they are in the Controls card, so the
+  view is the room alone. The title screen says how to walk and jump instead
+  (`.ww-keys-note`, hidden on touch screens, which have no keys).
+- **Status note** (top-centre).
 - **Loading view** while a scan is fetched and its collision built, and until the
   figurine has loaded. There is no room yet: the figurine stands idle on a rippling
   sheet of hole-punch dots, itself drawn as paper dots, with a note that names
@@ -176,8 +183,8 @@ was set after the fill, about 0.2 s later.
   Before, parsing the 453 MB Playroom blocked the main thread for about 10 s and a
   click on Begin did nothing until it ended.
 
-- **`scripts/uicheck.mjs` is the regression check for all of this**: 24 checks of
-  the title, keys, tiles, Debug card, loading note, progress bar, arrival, the scan
+- **`scripts/uicheck.mjs` is the regression check for all of this**: 26 checks of
+  the title, keys, tiles, Credits and Controls cards, Debug card, loading note, progress bar, arrival, the scan
   light's capture at load (`context/lighting.md`), room switch and a failed load. Run it after any change here. It waits for conditions,
   not for fixed times: a fixed 200 ms wait failed about one run in five.
 - **Headless scripts start with the title screen dismissed.** A fresh browser profile
@@ -275,6 +282,5 @@ was set after the fill, about 0.2 s later.
 
 - No touch controls; the HUD is laid out for a desktop window.
 - Drag-and-drop and file-picker import are not covered by a headless check.
-- The scan-light debug view draws its panorama bottom-left, under the controls hint.
 - A debug slider that rebuilds collision does not show the loading screen (by
   design: you want to watch the mesh change), so there is no progress cue for it.

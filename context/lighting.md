@@ -54,7 +54,7 @@ engine's ambient-probe fallback; the research equivalent is inpainting the
 environment map with a diffusion model (ComGS), which is far too heavy here.
 
 **Debug view.** "Scan light: debug view" shows a panorama of the capture in the
-bottom-left corner (up at the top, down at the bottom, all the way round left to
+top-left corner (up at the top, down at the bottom, all the way round left to
 right) and three balls above the figurine lit by it: a mirror, a half-rough metal
 and a matte white one. The panorama is the thing to look at first when lighting
 seems wrong: a band of one flat colour is a gap being filled.
