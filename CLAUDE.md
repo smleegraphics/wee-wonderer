@@ -52,7 +52,7 @@ enough to find one.
 | Where | What it holds |
 |---|---|
 | `src/main.ts` | Puts the app together (`hudActions`), loads the default scan and the figurine, and runs the frame loop (with `__step`, the fixed-step clock for repeatable runs) |
-| `src/app.ts` | What every part shares: page options (`q`, `TEL`, `MESHONLY`, `FREECAM`), `TARGET_RADIUS` and `GRAIN`, renderer, scene, camera, orbit, `hud`, the `room` and `player` objects, `TUNE`, `move`, `velocity`, and `figurine` (how it is moving: `state`, `supportY`) |
+| `src/app.ts` | What every part shares: page options (`q`, `TEL`, `MESHONLY`, `FREECAM`), `TARGET_RADIUS` and `GRAIN`, renderer, scene, `camera` (shown) and `orbitCamera` (OrbitControls' own, never drawn from; context/climb.md, "Follow camera"), orbit, `hud`, the `room` and `player` objects, `TUNE`, `move`, `velocity`, and `figurine` (how it is moving: `state`, `supportY`) |
 | `src/debug-menu.ts` | The Debug card's tunables (`setupDebugMenu`) |
 | `src/telemetry.ts` | `?tel=1` only: `__dbg`, `__collisionHealth`, the matte view |
 | `src/three-internals.ts` | Every private part of three.js the app touches (`GaussianSplat`'s fields, the renderer's material conversion); check it on a three.js upgrade |
