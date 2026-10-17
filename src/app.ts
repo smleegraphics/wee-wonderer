@@ -1,0 +1,95 @@
+// What every part of the app shares: the page's options (?scan, ?tel and the debug
+// ones), the scale scans are brought to, the renderer, scene and camera, the on-screen
+// UI's handle, the room and the figurine's objects, and how the figurine is moving.
+// Of the app's own files it imports only the UI, the scan list and one constant of the
+// reveal, none of which import anything back, so it is always loaded before what uses it.
+
+import * as THREE from 'three';
+import { WebGPURenderer } from 'three/webgpu';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { createHud } from './ui/hud';
+import { HANDOVER } from './loading/room-reveal';
+import { LISTED_SCANS } from './scan/scans';
+
+export const q = new URLSearchParams(location.search);
+export const TEL = q.get('tel') === '1'; // debug telemetry: CLIMB-* console events + window.__dbg
+export const DEFAULT_SCAN = q.get('scan') ?? LISTED_SCANS[0].file;
+export const TARGET_RADIUS = 7; // normalize every scan to this world size (figurine ~0.45 tall)
+// Collision voxelization: build a cleaned blocky surface mesh from the splat and
+// show it as a debug overlay (toggle 'V', or ?voxel=1 to start visible).
+// GRAIN is the length collision's settings are counted in: the voxel size they were
+// tuned at, about a fifth of the figurine's height. The grid itself can be finer
+// (VOXEL_SIZE); settings given in grains then mean the same thing at any grid size.
+export const GRAIN = TARGET_RADIUS / 72; // ~0.097 world units
+export const VOXEL_SIZE = Number(q.get('vox')) || GRAIN;
+export const num = (key: string, def: number) => (q.has(key) ? Number(q.get(key)) : def);
+// Debug free-camera: when any of ?az/el/dist/cx/cy/cz is present, detach the
+// figurine-follow and park the camera at a fixed orbit around a look-at point, so
+// any part of the collision mesh can be framed for inspection (used with ?voxel=1).
+// az/el = azimuth/elevation in radians; dist = distance in scene-radii (TARGET_RADIUS);
+// cx/cy/cz = look-at point in world units (floor is y=0). Non-interactive by design.
+// Debug mesh-only view (?meshonly=1): hide the splat and draw the collision surface
+// as a solid lit mesh, so holes / fills are unmistakable (the wireframe-over-splat
+// overlay is too cluttered to judge). Pairs with the free-cam for inspection.
+export const MESHONLY = q.get('meshonly') === '1';
+export const FREECAM = ['az', 'el', 'dist', 'cx', 'cy', 'cz'].some((k) => q.has(k));
+export const FREECAM_OPTS = { az: num('az', 0.9), el: num('el', 0.5), dist: num('dist', 2.2), cx: num('cx', 0), cy: num('cy', 1), cz: num('cz', 0) };
+export const CAPSULE_RADIUS = 0.22; // capsule hemisphere radius, in char-heights
+const app = document.getElementById('app')!;
+// The on-screen UI (context/ui.md). What its controls do is filled in where the app is
+// put together (hudActions), since the code that does it is built on this.
+export const hudActions = { pickRoom: (_id: string): void => {}, importScan: (_file: File): void => {}, reset: (): void => {} };
+export const hud = createHud({
+  rooms: LISTED_SCANS.map((s) => ({ id: s.file, label: s.label })),
+  onPickRoom: (id) => hudActions.pickRoom(id),
+  onImport: (file) => hudActions.importScan(file),
+  onReset: () => hudActions.reset(),
+});
+
+export const renderer = new WebGPURenderer({ antialias: false }); // no MSAA: every splat would be blended at several samples a pixel, which a soft splat gains nothing from (context/frame-time.md)
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+app.appendChild(renderer.domElement);
+
+export const scene = new THREE.Scene();
+// What is seen around a scan. While the figurine waits it is the open air of the paper
+// world (the UI's --sky token; index.html paints it before the first frame). As the room
+// arrives it darkens to --beyond, which a scan's gaps and edges recede into. It follows
+// how much of the room is in place, both ways, so it is never a cut.
+export const SURROUND = {
+  sky: new THREE.Color(hud.token('--sky')), beyond: new THREE.Color(hud.token('--beyond')),
+  darken: [HANDOVER, 0.8], // the part of the arrival it takes: from when the dots lift off, to a little before the last land, so the arrival ends on the room alone
+};
+export const surround = new THREE.Color().copy(SURROUND.sky);
+scene.background = surround;
+
+export const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.001, 200);
+
+// Orbit-follow camera: user drags to orbit / scrolls to zoom, and its pivot is
+// glued to the figurine each frame so it follows while you look around.
+export const orbit = new OrbitControls(camera, renderer.domElement);
+orbit.enableDamping = true;
+orbit.dampingFactor = 0.08;
+orbit.enablePan = false; // pivot tracks the figurine; panning it away would fight that
+orbit.maxPolarAngle = Math.PI * 0.49; // don't drop below the floor
+
+// The scan is auto-leveled at load (RANSAC floor fit) — Y-up, floor at y=0.
+// No per-scan constants: any scan (a demo, or the user's own) levels the same way.
+export const room = new THREE.Group();
+scene.add(room);
+
+export const player = new THREE.Group();
+scene.add(player);
+
+export const TUNE = { walkSpeed: 1.6, runSpeed: 4.0, jumpVel: 3.2, gravity: -9.0, climbSpeed: 1.2, climbTurn: 6, climbBlend: 10, fade: 0.18, turnLerp: 12, camIn: 20, camOut: 3, camSwing: 4 };
+
+export const move = { f: 0, b: 0, l: 0, r: 0, run: false };
+export const velocity = new THREE.Vector3(); // gravity/jump; horizontal input is applied per-frame
+/** How the figurine is moving: written by the controller, the climb and a respawn alike. */
+export const figurine = {
+  state: 'ground' as 'ground' | 'jump_start' | 'air' | 'land' | 'climb',
+  supportY: 0,        // height of the platform the player is standing on
+  smoothFeetY: 0,     // damped feet height for RENDER only (physics stays crisp)
+  wasGrounded: false,
+};
+export const WORLD_UP = new THREE.Vector3(0, 1, 0), WORLD_DOWN = new THREE.Vector3(0, -1, 0);

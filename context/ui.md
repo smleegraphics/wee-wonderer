@@ -25,7 +25,7 @@ that unfold from them.
   only then is it taken away. The new scan is fetched meanwhile.
 - **The surround.** The space around a scan is the `--sky` token (paper-blue) while
   waiting and `--beyond` (near-black) once the room is in, so a scan's gaps and edges
-  recede. It follows how much of the room is in place (`SURROUND` in `main.ts`).
+  recede. It follows how much of the room is in place (`SURROUND` in `src/app.ts`).
 - **Title screen**, the first time the game is opened on a device only
   (`localStorage['ww.titleSeen']`). To see it again, remove that key.
 
@@ -43,7 +43,7 @@ that unfold from them.
 | `src/loading/paper-figurine.ts` | The figurine's paper-dots look while waiting, and how it becomes itself |
 | `src/three-internals.ts` | The private parts of three.js the app reaches into (`GaussianSplat`, the renderer's material conversion), in one place |
 
-`main.ts` creates one `hud` and never touches UI DOM. It tells the HUD what happened
+`app.ts` creates the one `hud`, and nothing outside `src/ui/` touches UI DOM. It tells the HUD what happened
 (`setCurrentRoom`, `addRoom`, `status`, `setLoading`) and is called back with what
 the player asked for (`onPickRoom`, `onImport`, `onReset`).
 
@@ -104,7 +104,7 @@ directly, which is what keeps the way into the loading view as gradual as the wa
 out. At 1 the reveal reduces to "draw the splat unchanged" and the figurine's
 material to its normal output.
 
-`loadingViewOn()` in `main.ts` is the one definition of "loading" (the note is up,
+`loadingViewOn()` in `src/scan/room.ts` is the one definition of "loading" (the note is up,
 the controller is off, the figurine's keys are ignored); `updateLoading()` applies it
 and starts the reveal when it ends. Call `updateLoading()` after changing anything it
 reads.
@@ -174,7 +174,7 @@ was set after the fill, about 0.2 s later.
 - **The help strip is as tall as the longest help text.** All help texts sit in one
   grid cell with one visible, so the strip never resizes or scrolls while the pointer
   moves. A very long help string makes the strip taller for every control.
-- **A load reports its steps.** `LOAD_STEPS` in `main.ts` lists them in order with
+- **A load reports its steps.** `LOAD_STEPS` in `src/scan/room.ts` lists them in order with
   the note's text and each one's share of the bar; `loadStep(token, step, through)`
   tells the HUD (`hud.loadProgress`), and `loadStep(token, 'done')` fills the bar. A
   new step in the load path goes in that table and calls `loadStep` when it begins.

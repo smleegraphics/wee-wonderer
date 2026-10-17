@@ -3,7 +3,7 @@
 // each pixel's opacity), with the gap fill off and on, then the collision mesh is shot
 // solid, with and without its backstop plane. A pixel where the scan is under half
 // opaque is a hole, and is counted by what is behind it: the mesh, only the backstop
-// plane (floor level), or nothing. Uses window.__matte (main.ts, ?tel=1).
+// plane (floor level), or nothing. Uses window.__matte (telemetry.ts, ?tel=1).
 //
 //   node scripts/holes.mjs <scan.ply> [outDir]
 //

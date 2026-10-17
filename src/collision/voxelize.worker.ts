@@ -1,7 +1,7 @@
 // Web Worker that runs the voxelizer core off the main thread, so the ~1s+
 // first-build of a scan's collision surface doesn't freeze the frame. Receives
 // splat centers + world matrix + options, returns the surface arrays (transferred
-// back zero-copy). Called through workerCaller (worker-call.ts) from main.ts.
+// back zero-copy). Called through workerCaller (worker-call.ts) from room-collision.ts.
 
 import { voxelizeCore, type VoxelOptions } from './voxelize-core';
 

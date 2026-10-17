@@ -4,7 +4,7 @@ How the see-through ground under the figurine is patched, what was measured, and
 was tried. Read this before changing the fill or adding another kind. Code:
 `src/scan/fill-scan-core.ts` (the work), `src/scan/fill-scan.worker.ts`, and `WALK_FILL`,
 `FILL_VIEW`, `installFillView`, `refillWalkable`, `showSplat` and the end of `showScan`
-in `src/main.ts`.
+in `src/scan/walk-fill.ts`.
 
 ## The problem, and its scope
 

@@ -6,7 +6,7 @@
 //   node scripts/collisioncheck.mjs [scan.ply ...]     compare with the baseline; exits 1 if a number got worse
 //   node scripts/collisioncheck.mjs --save [scan ...]  make what is measured now the baseline
 //   node scripts/collisioncheck.mjs --with fit=1 [...] try a setting: adds it to the page's address (the collision settings can
-//                                                      all be given there: VOXEL_OPTS in src/main.ts). Compared, never saved.
+//                                                      all be given there: VOXEL_OPTS in src/collision/room-collision.ts). Compared, never saved.
 //
 // With no scans named, the four demo rooms and Marishka. Collision is seeded, so the numbers repeat
 // exactly from run to run: any change is a change in the code or its settings.

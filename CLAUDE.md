@@ -51,10 +51,16 @@ enough to find one.
 
 | Where | What it holds |
 |---|---|
-| `src/main.ts` | App, controller (`updateController`, `navMove`), climb state machine, follow camera, scan lighting, the list of Debug tunables (`setupDebugMenu`) |
+| `src/main.ts` | Puts the app together (`hudActions`), loads the default scan and the figurine, and runs the frame loop (with `__step`, the fixed-step clock for repeatable runs) |
+| `src/app.ts` | What every part shares: page options (`q`, `TEL`, `MESHONLY`, `FREECAM`), `TARGET_RADIUS` and `GRAIN`, renderer, scene, camera, orbit, `hud`, the `room` and `player` objects, `TUNE`, `move`, `velocity`, and `figurine` (how it is moving: `state`, `supportY`) |
+| `src/debug-menu.ts` | The Debug card's tunables (`setupDebugMenu`) |
+| `src/telemetry.ts` | `?tel=1` only: `__dbg`, `__collisionHealth`, the matte view |
 | `src/three-internals.ts` | Every private part of three.js the app touches (`GaussianSplat`'s fields, the renderer's material conversion); check it on a three.js upgrade |
 | `src/worker-call.ts` | `workerCaller`: promise-based request/response for all the workers (a failed job rejects) |
 | **`src/scan/`** | **Getting a scan in:** |
+| `room.ts` | The room on screen: loading a scan (`loadFromURL`, `showScan`), the loading view and the arrival (`updateArrival`) |
+| `walk-fill.ts` | Running the walkable gap fill and its view switches |
+| `import.ts` | Importing a visitor's scan |
 | `scan-list.ts`, `scans.ts` | The example scans (`SCANS`, which are listed, `SCAN_DIR`) as plain data the Vite config and scripts also read; and `scanURL`, the one place a scan's address is decided (`VITE_SCAN_BASE`) |
 | `load-scan.worker.ts`, `parse-scan.ts` | Fetches and parses a scan off the main thread; `parseScan` picks PLY or SPZ by the file's bytes (also used by `inspect.html`) |
 | `orient-scan.ts` | Levels the floor and yaw-aligns walls to X/Z (seeded, deterministic) |
@@ -62,11 +68,18 @@ enough to find one.
 | `fill-scan-core.ts` (+ worker) | Walkable gap fill: flat splats added where the ground the figurine can stand on lets the backdrop through |
 | **`src/collision/`** | **Collision from the splats:** |
 | `collision.ts` | `MeshCollision` (three-mesh-bvh over the collision mesh) and `NavGrid` (walkable cells) |
+| `room-collision.ts` | The current room's collision: settings (`VOXEL_OPTS`, `useScanSettings`), building and rebuilding it, the walkable cells, the overlays |
 | `voxelize-core.ts` (+ `.worker.ts`, `voxelize.ts`) | Splat → density field → collision surface |
 | `voxel-cache.ts` | IndexedDB cache of the built surface. **Bump `SCHEMA` when the surface algorithm changes.** |
 | `collision-health.ts` | The collision health numbers, for `scripts/collisioncheck.mjs` (loaded only under `?tel=1`) |
 | **`src/loading/`** | **While a room loads and arrives:** `room-reveal.ts` (the scan's points start as a sheet of paper dots and rise to their places, in the scan's shader), `loading-scene.ts` (the stand-in dots before it has loaded), `paper-bits.ts` (the formulas both share), `paper-figurine.ts` (the figurine's paper look meanwhile) |
-| **`src/figurine/`** | `climb-side-anim.ts`: the sideways-climb animation generated from the `climb` clip |
+| **`src/figurine/`** | **The figurine:** |
+| `character.ts` | Model, animations, spawn (`resetToSpawn`), keys |
+| `controller.ts` | Per-frame movement (`updateController`, `navMove`, `meshMove`), wall push-out (`bodyOverlap`), `NAV` |
+| `climb.ts` | The climb state machine (`climbUpdate`, `climbWall`, `fitClimbBody`), context/climb.md |
+| `camera.ts` | The follow camera (`updateCamera`), the opening shot, the fixed debug camera |
+| `climb-side-anim.ts` | The sideways-climb animation generated from the `climb` clip |
+| **`src/lighting/`** | `scan-light.ts` (the light probe and its debug view) and `contact-shadow.ts`, context/lighting.md |
 | **`src/ui/`** | The on-screen UI: `hud.ts` (tiles, cards, screens), `debug-panel.ts`, `paper.ts` (building blocks), `ui.css` (all styles and tokens) |
 | **`src/dev-pages/`** | `inspect-room.ts`, the scan inspector (`inspect.html`; not part of the app) |
 | `deploy/scans-worker/`, `scripts/upload-scans.mjs` | The scan host (a Worker over R2, with its own `package.json` for wrangler) and the upload of the listed scans to it |
@@ -134,8 +147,14 @@ Visual and behavioural checks run headless in real Chrome through Playwright.
   and the measured cost beside it (`context/collision.md`, "Settings for one scan").
   Example scans only; never a branch on a scan's name in the pipeline. An uploaded scan
   gets the defaults, so what it needs must be measured from the scan.
-- **`main.ts` does not build UI.** It talks to the `hud` handle; DOM and styles live
-  in `src/ui/`, and every colour, font and size is a token in `ui.css`.
+- **Nothing outside `src/ui/` builds UI.** The rest talks to the `hud` handle (made in
+  `app.ts`); DOM and styles live in `src/ui/`, and every colour, font and size is a
+  token in `ui.css`.
+- **`app.ts` imports nothing that imports it back.** It holds what every part shares, so
+  it must load first: of the app's own files it imports only `ui/hud`, `scan/scans` and
+  `loading/room-reveal`, and what the HUD's controls do is filled in by `main.ts`
+  (`hudActions`). A value another file reassigns lives in a shared object (`figurine`,
+  `camLatch`, `NAV`) or behind a function, since an import cannot be assigned to.
 - **The controller talks to collision only through the `Collision` interface**, so
   backends stay swappable.
 - **Standing on something means the NavGrid says so.** Movement is confined to
@@ -181,7 +200,7 @@ Project-specific checks:
 - No allocations in per-frame paths (`updateController`, `climbUpdate`,
   `updateCamera`, the render loop). Reuse module-level scratch vectors.
 - `SCHEMA` in `src/collision/voxel-cache.ts` is bumped if the collision surface changes.
-- The controller still reaches collision only through the `Collision` interface.
+- The controller still reaches collision only through the `Collision` interface (`collision` is typed by it, so a method missing from the interface fails the typecheck).
 - `npm run typecheck` and `npm run build` pass.
 
 Report findings before changing anything, most severe first, each with the file

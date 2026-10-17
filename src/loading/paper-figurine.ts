@@ -2,7 +2,7 @@
 // around it, and drawn in the same hole-punch dots. As the room arrives its dots grow
 // until they close up, and then its own colours soak in. The room's light reaches the
 // figurine at the start of the arrival, while it is still plain paper, and is switched
-// over at once for that reason (main.ts, captureScanLight), so that change is never
+// over at once for that reason (captureScanLight in lighting/scan-light.ts), so that change is never
 // seen. Once the arrival is over the figurine is drawn exactly as it would be without
 // this file. See context/ui.md.
 

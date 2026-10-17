@@ -10,7 +10,7 @@ visitor ──► the app (Vercel: wee.samanthamlee.com, ~2 MB)
 ```
 
 A scan a visitor imports never leaves their browser: it is read into memory, cleaned
-in a worker, and loaded from a `blob:` URL (`importScan` in `main.ts`). Nothing about
+in a worker, and loaded from a `blob:` URL (`importScan` in `src/scan/import.ts`). Nothing about
 hosting involves it.
 
 **Live:** the app is https://wee.samanthamlee.com (Vercel project `wee-wonderer`, with
