@@ -152,6 +152,26 @@ try {
   const built = logs.slice(before).filter((l) => l.startsWith('loaded ') || l.startsWith('collision')).map((l) => l.split(':')[0]);
   check('a collision slider moved mid-load does not stop the load', ended && built.includes(`loaded ${FIRST.file}`) && built.some((l) => l.startsWith('collision')), built.join(' | '));
 
+  // --- importing a scan: read and cleaned in the browser, in any format the app reads
+  const statusText = () => page.evaluate(() => document.querySelector('.ww-status').textContent);
+  const loadsOf = (id) => logs.filter((l) => l.startsWith(`loaded ${id}:`)).length;
+  const importId = `upload:${SECOND.file}`;
+  await page.locator('input[type=file]').setInputFiles(`scans/${SECOND.file}`);
+  const cleaned = await soon(() => /kept [\d,]+ \/ [\d,]+ splats/.test(document.querySelector('.ww-status').textContent), null, LOAD_MS);
+  const cleanedSays = await statusText();
+  check(`an imported ${SECOND.file.split('.').pop()} is cleaned and arrives`, cleaned && await loaded() && await arrived() && loadsOf(importId) === 1, cleanedSays);
+  await page.getByRole('button', { name: 'Scans', exact: true }).click();
+  await page.locator('.ww-rooms').getByRole('button', { name: FIRST.label, exact: true }).click();
+  await loaded(); await arrived();
+  await page.getByRole('button', { name: 'Scans', exact: true }).click();
+  await page.locator('.ww-rooms').getByRole('button', { name: `${SECOND.file} (yours)`, exact: true }).click();
+  check('an import comes back from the Scans card', await loaded() && await arrived() && loadsOf(importId) === 2, `loaded ${loadsOf(importId)} times`);
+  await page.locator('input[type=file]').setInputFiles({ name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('not a scan') });
+  check('a file that is not a scan is refused by its name', await soon(() => /not a scan the app reads/.test(document.querySelector('.ww-status').textContent)), await statusText());
+  await page.locator('input[type=file]').setInputFiles({ name: 'broken.spz', mimeType: 'application/octet-stream', buffer: Buffer.alloc(4096, 7) });
+  const refused = await soon(() => /not a scan this app can read/.test(document.querySelector('.ww-status').textContent), null, LOAD_MS);
+  check('a scan file that cannot be read says so, with no loading view left up', refused && (await loading()) === 'false', await statusText());
+
   // --- a load that fails says so and does not leave the loading view up
   await page.goto(`${base}?scan=nope.ply`, { waitUntil: 'load' });
   const failedLoad = await soon(() => document.querySelector('.ww-status').dataset.kind === 'error' && document.querySelector('.ww-loading').dataset.on === 'false', null, LOAD_MS);

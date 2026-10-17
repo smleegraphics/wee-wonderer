@@ -183,9 +183,9 @@ was set after the fill, about 0.2 s later.
   Before, parsing the 453 MB Playroom blocked the main thread for about 10 s and a
   click on Begin did nothing until it ended.
 
-- **`scripts/uicheck.mjs` is the regression check for all of this**: 26 checks of
+- **`scripts/uicheck.mjs` is the regression check for all of this**: 30 checks of
   the title, keys, tiles, Credits and Controls cards, Debug card, loading note, progress bar, arrival, the scan
-  light's capture at load (`context/lighting.md`), room switch and a failed load. Run it after any change here. It waits for conditions,
+  light's capture at load (`context/lighting.md`), room switch, importing a scan and a failed load. Run it after any change here. It waits for conditions,
   not for fixed times: a fixed 200 ms wait failed about one run in five.
 - **Headless scripts start with the title screen dismissed.** A fresh browser profile
   counts as a first visit, and the title takes the keyboard. `shot.mjs`,
@@ -281,6 +281,6 @@ was set after the fill, about 0.2 s later.
   switch rooms, to see them again.
 
 - No touch controls; the HUD is laid out for a desktop window.
-- Drag-and-drop and file-picker import are not covered by a headless check.
+- Importing by drag-and-drop is not covered by a headless check (the file picker is, in `uicheck`).
 - A debug slider that rebuilds collision does not show the loading screen (by
   design: you want to watch the mesh change), so there is no progress cue for it.

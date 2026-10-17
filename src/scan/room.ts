@@ -24,7 +24,7 @@ import { estimateScanFill, requestScanLight, scanFill } from '../lighting/scan-l
 import { fillScan, installFillView, refillWalkable, reportWalkFill, walkableNow, walkFillOptions } from './walk-fill';
 
 export let currentFile = DEFAULT_SCAN;
-// last-loaded scan data, kept so debug tunables can re-voxelize without reloading the PLY
+// last-loaded scan data, kept so debug tunables can re-voxelize without reloading the scan
 export let lastCenters: THREE.BufferAttribute | null = null;
 export let lastOpacity: Float32Array | null = null;
 export let lastCov: Float32Array | null = null; // per-splat covariance (6/splat) for anisotropic voxelization
@@ -119,10 +119,16 @@ export function loadScanData(scan: ParsedScan, id: string): void {
   loadRoom({ scan }, id);
 }
 
+/** An imported scan's room id: its file name, marked so it is never taken for an example
+ *  scan. Its collision is not cached (isImported): re-cleaning changes it under the same id. */
+const IMPORTED = 'upload:';
+export const importedId = (name: string) => `${IMPORTED}${name}`;
+export const isImported = (id: string) => id.startsWith(IMPORTED);
+
 /** Where a room's scan comes from: an address to fetch and parse it from, or its splats. */
 type ScanSource = { url: string } | { scan: ParsedScan };
 
-// The .ply is fetched and parsed in a worker (load-scan.worker.ts): on the main
+// The scan is fetched and parsed in a worker (load-scan.worker.ts): on the main
 // thread a large scan froze the page for seconds.
 const parseScan = workerCaller<{ url: string }, ParsedScan, ScanLoadProgress>(
   new Worker(new URL('./load-scan.worker.ts', import.meta.url), { type: 'module' }), 'scan load');
