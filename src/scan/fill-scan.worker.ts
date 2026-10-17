@@ -6,7 +6,7 @@
 // Called through workerCaller (worker-call.ts) from walk-fill.ts.
 
 import { fillWalkable, appendFill, type Walkable, type WalkableFillOptions } from './fill-scan-core';
-import type { ParsedScan } from './load-scan.worker';
+import type { ParsedScan } from './parse-scan';
 
 interface Req { id: number; scan: ParsedScan; matrix: number[]; walk: Walkable; opts: WalkableFillOptions }
 

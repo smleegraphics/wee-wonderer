@@ -58,11 +58,11 @@ enough to find one.
 | `src/three-internals.ts` | Every private part of three.js the app touches (`GaussianSplat`'s fields, the renderer's material conversion); check it on a three.js upgrade |
 | `src/worker-call.ts` | `workerCaller`: promise-based request/response for all the workers (a failed job rejects) |
 | **`src/scan/`** | **Getting a scan in:** |
-| `room.ts` | The room on screen: loading a scan (`loadFromURL`, `showScan`), the loading view and the arrival (`updateArrival`) |
+| `room.ts` | The room on screen: loading a scan, from the scan host (`loadScan`) or already in memory (`loadScanData`, an import), through `loadRoom` and `showScan`; the loading view and the arrival (`updateArrival`) |
 | `walk-fill.ts` | Running the walkable gap fill and its view switches |
-| `import.ts` | Importing a visitor's scan |
+| `import.ts` | Importing a visitor's scan (`.ply` or `.spz`): cleaned in a worker started on the first import, kept by id for the Scans card and re-cleans |
 | `scan-list.ts`, `scans.ts` | The example scans (`SCANS`, which are listed, `SCAN_DIR`) as plain data the Vite config and scripts also read; and `scanURL`, the one place a scan's address is decided (`VITE_SCAN_BASE`) |
-| `load-scan.worker.ts`, `parse-scan.ts` | Fetches and parses a scan off the main thread; `parseScan` picks PLY or SPZ by the file's bytes (also used by `inspect.html`) |
+| `load-scan.worker.ts`, `parse-scan.ts` | Fetches and parses a scan off the main thread; `parseScan` picks PLY or SPZ by the file's bytes, and every scan becomes one form, `ParsedScan` |
 | `orient-scan.ts` | Levels the floor and yaw-aligns walls to X/Z (seeded, deterministic) |
 | `clean-scan-core.ts` (+ worker), `scripts/clean-scan.mjs` | Floater removal, in-browser and offline |
 | `fill-scan-core.ts` (+ worker) | Walkable gap fill: flat splats added where the ground the figurine can stand on lets the backdrop through |

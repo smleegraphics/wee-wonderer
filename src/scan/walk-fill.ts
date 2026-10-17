@@ -6,7 +6,7 @@ import { GaussianSplat } from 'three/addons/objects/GaussianSplat.js';
 import type { WalkableFillOptions, Walkable } from './fill-scan-core';
 import type { FilledScan } from './fill-scan.worker';
 import { workerCaller } from '../worker-call';
-import type { ParsedScan } from './load-scan.worker';
+import { scanBuffers, type ParsedScan } from './parse-scan';
 import { splatInternals } from '../three-internals';
 import { uniform, varying, float, instanceIndex, uint, Fn, vec4, mix } from 'three/tsl';
 import { GRAIN, hud, MESHONLY, TEL } from '../app';
@@ -57,7 +57,6 @@ applyFillView();
 
 export const fillScan = workerCaller<{ scan: ParsedScan; matrix: number[]; walk: Walkable; opts: WalkableFillOptions }, FilledScan>(
   new Worker(new URL('./fill-scan.worker.ts', import.meta.url), { type: 'module' }), 'walkable fill');
-export const scanBuffers = (scan: ParsedScan) => [scan.centers, scan.covariances, scan.colors, ...Object.values(scan.sphericalHarmonics)].map((a) => a.buffer as ArrayBuffer);
 
 /** Let FILL_VIEW decide how the splats after the scan's first `own`, which are the fill, and the scan's own are drawn. */
 export function installFillView(splat: GaussianSplat, own: number): void {

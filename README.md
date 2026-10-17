@@ -72,7 +72,7 @@ clips; contract in `context/character-README.md`).
   (`context/collision.md`, `context/climb.md`).
 - The figurine is lit from the scan itself and casts a contact shadow into it
   (`context/lighting.md`).
-- Import your own `.ply` scan: it is cleaned in your browser and never uploaded.
+- Import your own scan (`.ply` or `.spz`): it is cleaned in your browser and never uploaded.
 
 Known limits: keyboard only (no touch controls yet); best in a WebGPU browser
 (elsewhere three.js falls back to WebGL2); a casual phone scan with heavy floaters

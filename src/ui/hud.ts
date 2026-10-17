@@ -15,6 +15,8 @@ export interface Room { id: string; label: string }
 
 export interface HudOptions {
   rooms: Room[];
+  /** The scan file types an import takes, as extensions ('.ply'). */
+  importTypes: string[];
   onPickRoom(id: string): void;
   onImport(file: File): void;
   onReset(): void;
@@ -88,12 +90,12 @@ export function createHud(opts: HudOptions): Hud {
   // --- rooms list: the rooms, then the way to add your own ---
   const picker = el('input');
   picker.type = 'file';
-  picker.accept = '.ply';
+  picker.accept = opts.importTypes.join(',');
   picker.hidden = true;
   picker.onchange = () => { if (picker.files?.[0]) opts.onImport(picker.files[0]); picker.value = ''; };
   const importItem = el('li');
   const importButton = importItem.appendChild(el('button', 'ww-import', '+ Import your own scan'));
-  importButton.title = 'An uncompressed 3DGS .ply. You can also drop the file on the window.';
+  importButton.title = `A Gaussian-splat scan (${opts.importTypes.join(' or ')}). You can also drop the file on the window.`;
   importButton.onclick = () => picker.click();
   roomList.appendChild(importItem);
   const roomButtons = new Map<string, HTMLButtonElement>();
@@ -142,9 +144,9 @@ export function createHud(opts: HudOptions): Hud {
     if (kind === 'done') statusTimer = window.setTimeout(() => { statusEl.hidden = true; }, DONE_STATUS_MS);
   }
 
-  // --- drop a .ply anywhere to import it ---
+  // --- drop a scan anywhere to import it ---
   const drop = el('div', 'ww-screen ww-drop');
-  drop.appendChild(el('div', 'ww-card', 'Drop a .ply to import'));
+  drop.appendChild(el('div', 'ww-card', 'Drop a scan to import'));
   drop.hidden = true;
   let dragDepth = 0; // dragenter/dragleave fire per element crossed, so count them
   addEventListener('dragenter', (e) => { e.preventDefault(); dragDepth++; drop.hidden = false; });

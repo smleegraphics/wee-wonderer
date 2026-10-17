@@ -120,7 +120,7 @@ the controller is off, the figurine's keys are ignored); `updateLoading()` appli
 and starts the reveal when it ends. Call `updateLoading()` after changing anything it
 reads.
 
-**A room switch, in order** (`loadFromURL`): the replaced load's fetch is cancelled;
+**A room switch, in order** (`loadRoom`): the replaced load's fetch is cancelled;
 the old room starts leaving and `roomGone` is a promise for when it has; the new scan
 is fetched and unpacked in the worker meanwhile; `showScan` awaits `roomGone` before
 putting the new room in; the render loop calls `clearRoom()` when the old one reaches
@@ -218,7 +218,7 @@ was set after the fill, about 0.2 s later.
   real display (Kitchen showed none: about 20 ms a frame with it, 18 to 25 without).
 - **Fetch progress needs a `Content-Length`** and an uncompressed transfer. Without
   them the scan still loads, and the indicator waits at 0 until fetching ends.
-- **The loading screen needs every load to finish or fail.** `loadFromURL` ends it
+- **The loading screen needs every load to finish or fail.** `loadRoom` ends it
   through `finish`; the voxel worker now rejects on failure instead of going silent.
   A new async step in the load path must reject on failure too, or the cover stays up.
 - **Slider readouts show as many decimals as the step has**, so an integer slider

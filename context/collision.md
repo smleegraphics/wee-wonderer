@@ -444,7 +444,7 @@ measured layer would sit between 1 and 2.
   while `currentFile` is already the new one, and bumping `loadToken` tells the load it
   was replaced, so the loading view never ends. A slider moved mid-load used to do all
   of that, and cached the old room's collision under the new room's name (hence
-  `SCHEMA` g15). The load builds collision itself; when it ends, `loadFromURL` compares
+  `SCHEMA` g15). The load builds collision itself; when it ends, `loadRoom` compares
   `collisionKey` with the current settings and rebuilds if a slider moved meanwhile.
 - **`buildCollision` copies `VOXEL_OPTS` on entry** and uses the copy for both the cache
   key and the build, so a slider moved while it waits cannot store one setting's
@@ -503,8 +503,17 @@ axis-sliced panel fill broke.
 ## Scan cleanup
 
 Every real-capture 3DGS scan has a shell of floaters. `scripts/clean-scan.mjs`
-(offline) and `src/scan/clean-scan-core.ts` (in-browser, on import) drop splats failing
-on opacity, size, or local density, then level and crop to the room.
+(offline, `.ply` files) and `src/scan/clean-scan-core.ts` (in-browser, on import) drop
+splats failing on opacity, size, or local density, then level and crop to the room.
+
+- **The in-browser cleaner works on the parsed splats** (`ParsedScan`), so it cleans any
+  format the app reads. Opacity is each colour's alpha byte; size is the square root of
+  the covariance's largest eigenvalue, which is the splat's largest scale. It levels with
+  `orientScan`, the seeded fit the room itself is placed with, so the same file is always
+  cleaned the same way (with its own unseeded copy of the fit, the same import kept a
+  different number of splats each time). Measured on Counter: the `.ply` and `.spz` of
+  the same cleaned scan keep 110,823 and 111,077 (SPZ's rounding moves a few across the
+  thresholds); the raw `counter.ply` keeps 123,766 of 261,551, every time.
 
 - Production parameters: `alphaMin 0.35`, `minMass 4`, `scaleCapMul 4` (about half
   the splats kept).

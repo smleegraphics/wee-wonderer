@@ -11,7 +11,7 @@
 // Three-free: it runs in fill-scan.worker.ts. Everything is worked out in the leveled,
 // scaled world (+Y up); `m` maps the scan's own coordinates into it.
 
-import type { ParsedScan } from './load-scan.worker';
+import type { ParsedScan } from './parse-scan';
 
 /** The walkable cells (NavGrid.toField): one per place the figurine can stand. */
 export interface Walkable {

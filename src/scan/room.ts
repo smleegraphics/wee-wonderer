@@ -10,7 +10,8 @@ import { orientScan } from './orient-scan';
 import type { FilledScan } from './fill-scan.worker';
 import { voxelCacheKey } from '../collision/voxel-cache';
 import { workerCaller } from '../worker-call';
-import type { ParsedScan, ScanLoadProgress } from './load-scan.worker';
+import type { ScanLoadProgress } from './load-scan.worker';
+import { scanBuffers, type ParsedScan } from './parse-scan';
 import { updateReveal, HANDOVER, startReveal, startLeave, installReveal } from '../loading/room-reveal';
 import { type LoadingScene, createLoadingScene } from '../loading/loading-scene';
 import { type PaperFigurine, createPaperFigurine } from '../loading/paper-figurine';
@@ -20,7 +21,7 @@ import { buildCollision, collisionKey, disposeCollision, navVersion, rebuildColl
 import { charH, charLoaded, play, resetToSpawn } from '../figurine/character';
 import { installContactShadow } from '../lighting/contact-shadow';
 import { estimateScanFill, requestScanLight, scanFill } from '../lighting/scan-light';
-import { fillScan, installFillView, refillWalkable, reportWalkFill, scanBuffers, walkableNow, walkFillOptions } from './walk-fill';
+import { fillScan, installFillView, refillWalkable, reportWalkFill, walkableNow, walkFillOptions } from './walk-fill';
 
 export let currentFile = DEFAULT_SCAN;
 // last-loaded scan data, kept so debug tunables can re-voxelize without reloading the PLY
@@ -110,8 +111,16 @@ export let currentScan: { scan: ParsedScan; own: number; cellsUsed: number } | n
 
 /** Load an example scan from the scan host (scans.ts). */
 export function loadScan(file: string): void {
-  loadFromURL(scanURL(file), file);
+  loadRoom({ url: new URL(scanURL(file), location.href).href }, file); // absolute: a worker resolves URLs against its own script
 }
+
+/** Load a scan that is already in memory: an imported one, read and cleaned (import.ts). */
+export function loadScanData(scan: ParsedScan, id: string): void {
+  loadRoom({ scan }, id);
+}
+
+/** Where a room's scan comes from: an address to fetch and parse it from, or its splats. */
+type ScanSource = { url: string } | { scan: ParsedScan };
 
 // The .ply is fetched and parsed in a worker (load-scan.worker.ts): on the main
 // thread a large scan froze the page for seconds.
@@ -147,9 +156,10 @@ function loadStep(token: number, step: LoadStep | 'done', through = 0): void {
   hud.loadProgress(LOAD_STEPS[step].says, before + LOAD_STEPS[step].share * through);
 }
 
-/** Load a scan from any URL (an example scan from the scan host, or an imported scan's
- *  blob). `id` is the stable identity used for the collision cache and status. */
-export function loadFromURL(url: string, id: string): void {
+/** Bring in a room: the old one leaves, the new one's scan is fetched (or is already
+ *  here), placed, and its collision built. `id` is the stable identity used for the
+ *  collision cache and status. */
+function loadRoom(source: ScanSource, id: string): void {
   const token = newLoadToken();
   currentFile = id;
   useScanSettings(id);
@@ -168,7 +178,7 @@ export function loadFromURL(url: string, id: string): void {
     } else clearRoom(); // nothing to see leave (the first load, or after one that failed)
   }
   updateLoading();
-  loadStep(token, 'fetch');
+  loadStep(token, 'url' in source ? 'fetch' : 'build'); // splats already here have nothing to fetch or unpack
   // only the newest load may end the loading screen or report on itself
   const finish = (error?: unknown) => {
     if (token !== loadToken) return;
@@ -179,12 +189,14 @@ export function loadFromURL(url: string, id: string): void {
     if (error === undefined && collisionKey !== voxelCacheKey(id, VOXEL_SIZE, VOXEL_OPTS, TARGET_RADIUS)) rebuildCollision();
     if (error !== undefined) hud.status(`${id}: ${error instanceof Error ? error.message : String(error)}`, 'error');
   };
-  showScan(new URL(url, location.href).href, id, token, abort.signal).then(() => finish(), finish); // absolute: a worker resolves URLs against its own script
+  showScan(source, id, token, abort.signal).then(() => finish(), finish);
 }
 
-/** Fetch and parse the scan, put it in the room levelled and scaled, and build its collision. */
-async function showScan(url: string, id: string, token: number, cancelled: AbortSignal): Promise<void> {
-  const parsed = await parseScan({ url }, [], { signal: cancelled, onProgress: (p) => loadStep(token, p.step, p.step === 'fetch' ? p.fetched : 0) });
+/** Fetch and parse the scan (unless its splats are already here), put it in the room
+ *  levelled and scaled, and build its collision. */
+async function showScan(source: ScanSource, id: string, token: number, cancelled: AbortSignal): Promise<void> {
+  const parsed = 'scan' in source ? source.scan
+    : await parseScan({ url: source.url }, [], { signal: cancelled, onProgress: (p) => loadStep(token, p.step, p.step === 'fetch' ? p.fetched : 0) });
   await roomGone; // the old room has to be out of the way first; it usually is long before this
   if (token !== loadToken) return; // superseded while loading
   loadStep(token, 'build');

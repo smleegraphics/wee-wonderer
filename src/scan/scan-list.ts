@@ -13,6 +13,10 @@ export interface ScanEntry {
   collision?: VoxelOptions;
 }
 
+/** The scan files the app reads, by name: what an import offers and accepts. (Which format a
+ *  file is, is decided from its bytes: parse-scan.ts.) */
+export const SCAN_FILE_TYPES = ['.ply', '.spz'];
+
 /** The folder the scans are kept in locally, and the path the dev and preview servers serve it at. */
 export const SCAN_DIR = 'scans';
 

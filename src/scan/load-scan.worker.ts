@@ -5,16 +5,8 @@
 // that is no longer wanted can be cancelled while it is fetching (not once unpacking
 // has begun: that is one call into three.js).
 
-import type { BufferAttribute } from 'three';
-import { parseScan } from './parse-scan';
+import { parseScanArrays, scanBuffers } from './parse-scan';
 
-/** The arrays `createGaussianSplatGeometry` rebuilds the splat geometry from. */
-export interface ParsedScan {
-  centers: Float32Array;
-  covariances: Float32Array;
-  colors: Uint8ClampedArray;
-  sphericalHarmonics: Record<string, Uint32Array>; // sphericalHarmonics1..3, as many bands as the file has
-}
 
 /** How far the load has got: fetching (`fetched`: the part of the file received, 0..1), then unpacking it. */
 export type ScanLoadProgress = { step: 'fetch'; fetched: number } | { step: 'unpack' };
@@ -59,19 +51,8 @@ self.onmessage = async (e: MessageEvent<Req | Cancel>) => {
     fetching.delete(id);
     abort.signal.throwIfAborted(); // cancelled between the last bytes and here
     say({ step: 'unpack' });
-    const geometry = await parseScan(body);
-    const sphericalHarmonics: Record<string, Uint32Array> = {};
-    for (const name of Object.keys(geometry.attributes)) {
-      if (name.startsWith('sphericalHarmonics')) sphericalHarmonics[name] = (geometry.getAttribute(name) as BufferAttribute).array as Uint32Array;
-    }
-    const result: ParsedScan = {
-      centers: (geometry.getAttribute('position') as BufferAttribute).array as Float32Array,
-      covariances: (geometry.getAttribute('covariance') as BufferAttribute).array as Float32Array,
-      colors: (geometry.getAttribute('color') as BufferAttribute).array as Uint8ClampedArray,
-      sphericalHarmonics,
-    };
-    const buffers = [result.centers, result.covariances, result.colors, ...Object.values(sphericalHarmonics)].map((a) => a.buffer as ArrayBuffer);
-    (self as unknown as Worker).postMessage({ id, result }, buffers);
+    const result = await parseScanArrays(body);
+    (self as unknown as Worker).postMessage({ id, result }, scanBuffers(result));
   } catch (err) {
     fetching.delete(id);
     (self as unknown as Worker).postMessage({ id, error: err instanceof Error ? err.message : String(err) }); // (a cancelled load's caller has stopped listening)
