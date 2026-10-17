@@ -129,8 +129,8 @@ was set after the fill, about 0.2 s later.
   **`public/apple-touch-icon.png`** is the same at 180 px on the `--sky` colour, for an
   iPhone home screen.
 - **`public/social-preview.png`** (1200 × 630) is the title screen over Kitchen,
-  screenshot headless at that size with `.ww-corner` and `.ww-hint` hidden and Begin
-  made invisible. Retake it the same way when the title screen changes. The `og:image`
+  screenshot headless at that size with the HUD's corner tiles and any on-screen key
+  hints hidden and Begin made invisible. Retake it the same way when the title screen changes. The `og:image`
   address in `index.html` is the public site's (`context/deploy.md`): a link preview
   needs a full address.
 
