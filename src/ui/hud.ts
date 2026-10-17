@@ -192,6 +192,8 @@ export function createHud(opts: HudOptions): Hud {
     });
   });
   title.appendChild(el('p', 'ww-card', 'A tiny explorer in your real room'));
+  // The figurine moves by keyboard only, so a touch screen says so up front (shown by ui.css on touch-only devices).
+  title.appendChild(el('p', 'ww-card ww-touch-note', 'Best on a computer with a keyboard'));
   // The controls are folded away in play, so the title says how to move (not on a touch screen, which has no keys: ui.css).
   const keysNote = title.appendChild(el('p', 'ww-card ww-keys-note'));
   keysLine(keysNote, ['W', 'A', 'S', 'D'], 'to walk');
