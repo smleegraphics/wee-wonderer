@@ -22,6 +22,18 @@ purpose:** their addresses are not allowed, and they do not need scans. Do not w
 
 ## Scan files
 
+**Where they came from** (licences and credit wording in `CREDITS.md`):
+
+| Scan | Source |
+|---|---|
+| Kitchen, Living Room, Counter | Mip-NeRF 360's `kitchen`, `room`, `counter` (CC BY 4.0), trained with msplat by alexmkwizu: `https://huggingface.co/datasets/alexmkwizu/gaussian_training_datasets/resolve/main/tested_outputs/{kitchen,room,counter}.ply`, downloaded 2026-09-20 |
+| Curled Up Dog | Samantha Lee's own capture |
+| Playroom (unlisted) | Deep Blending's `playroom` from `huggingface.co/datasets/Voxel51/gaussian_splatting` (`FO_dataset/playroom/point_cloud/iteration_30000/point_cloud.ply`); licence unstated, so never shipped |
+
+The downloads were made with `curl`, which leaves no "Where from" on the file; they were
+traced from a Claude Code session transcript. Record a new scan's source here when it is
+added.
+
 The shipped scans are SPZ (`*-clean.spz`), converted from the cleaned `.ply`:
 
 ```bash

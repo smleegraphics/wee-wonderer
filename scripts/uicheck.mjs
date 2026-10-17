@@ -87,6 +87,13 @@ try {
   check('Space jumps after clicking a tile', await soon(() => window.__dbg.state === 'jump_start' || window.__dbg.state === 'air'), `state=${(await dbg()).state}`);
   await soon(() => window.__dbg.state === 'ground');
 
+  // --- the Credits card: opens from its tile, credits what needs crediting, folds on Escape
+  await page.getByRole('button', { name: 'Credits', exact: true }).click();
+  const credits = await page.evaluate(() => { const c = document.querySelector('.ww-credits'); return c && !c.hidden ? c.textContent : ''; });
+  await page.keyboard.press('Escape');
+  check('the Credits card opens and credits the figurine and the scans', /PolyOne Studio/.test(credits) && /Mip-NeRF 360/.test(credits) && /Samantha Lee/.test(credits)
+    && await page.evaluate(() => document.querySelector('.ww-credits').hidden));
+
   // --- the Debug card
   await page.keyboard.press('Backquote');
   check('` opens Debug', await page.evaluate(() => !document.querySelector('.ww-debug').hidden));

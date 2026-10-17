@@ -9,6 +9,7 @@ import '@fontsource/patrick-hand-sc/400.css';
 import './ui.css';
 import { el, piece, tile } from './paper';
 import { createDebugPanel, type DebugPanel } from './debug-panel';
+import { createCreditsCard } from './credits';
 
 export interface Room { id: string; label: string }
 
@@ -56,8 +57,9 @@ export function createHud(opts: HudOptions): Hud {
   const roomsTile = tile('rooms', 'Scans', 0);
   const resetTile = tile('reset', 'Back to the start', 1);
   const debugTile = tile('debug', 'Debug', 2);
+  const creditsTile = tile('credits', 'Credits', 1);
   const top = el('div', 'ww-corner ww-corner-top');
-  top.appendChild(roomsTile);
+  top.append(roomsTile, creditsTile);
   const bottom = el('div', 'ww-corner ww-corner-bottom');
   bottom.append(resetTile, debugTile);
 
@@ -66,7 +68,8 @@ export function createHud(opts: HudOptions): Hud {
   roomsCard.appendChild(el('h2', 'ww-heading', 'Scans'));
   const roomList = roomsCard.appendChild(el('ul'));
   const debug = createDebugPanel();
-  const cards = [{ tile: roomsTile, card: roomsCard }, { tile: debugTile, card: debug.el }];
+  const creditsCard = createCreditsCard();
+  const cards = [{ tile: roomsTile, card: roomsCard }, { tile: creditsTile, card: creditsCard }, { tile: debugTile, card: debug.el }];
   function unfold(target: HTMLElement | null): void {
     for (const c of cards) {
       c.card.hidden = c.card !== target;
@@ -201,7 +204,7 @@ export function createHud(opts: HudOptions): Hud {
   }
   title.hidden = true;
 
-  root.append(top, bottom, roomsCard, debug.el, hint, picker, drop, loading, title, statusEl);
+  root.append(top, bottom, roomsCard, creditsCard, debug.el, hint, picker, drop, loading, title, statusEl);
   document.body.appendChild(root);
   if (!titleSeen()) showTitle();
 
