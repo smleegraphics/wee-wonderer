@@ -186,6 +186,8 @@ export function createHud(opts: HudOptions): Hud {
     });
   });
   title.appendChild(el('p', 'ww-card', 'A tiny explorer in your real room'));
+  // The figurine moves by keyboard only, so a touch screen says so up front (shown by ui.css on touch-only devices).
+  title.appendChild(el('p', 'ww-card ww-touch-note', 'Best on a computer with a keyboard'));
   const begin = piece('button', 'ww-begin ww-primary', 0);
   begin.face.textContent = 'Begin';
   title.appendChild(begin.holder);
