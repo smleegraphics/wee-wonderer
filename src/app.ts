@@ -9,7 +9,7 @@ import { WebGPURenderer } from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { createHud } from './ui/hud';
 import { HANDOVER } from './loading/room-reveal';
-import { LISTED_SCANS } from './scan/scans';
+import { LISTED_SCANS, SCAN_FILE_TYPES } from './scan/scans';
 
 export const q = new URLSearchParams(location.search);
 export const TEL = q.get('tel') === '1'; // debug telemetry: CLIMB-* console events + window.__dbg
@@ -41,6 +41,7 @@ const app = document.getElementById('app')!;
 export const hudActions = { pickRoom: (_id: string): void => {}, importScan: (_file: File): void => {}, reset: (): void => {} };
 export const hud = createHud({
   rooms: LISTED_SCANS.map((s) => ({ id: s.file, label: s.label })),
+  importTypes: SCAN_FILE_TYPES,
   onPickRoom: (id) => hudActions.pickRoom(id),
   onImport: (file) => hudActions.importScan(file),
   onReset: () => hudActions.reset(),

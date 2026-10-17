@@ -11,8 +11,8 @@ import { charLoaded, jumpKey, mixer, onLoaded, resetToSpawn } from './figurine/c
 import { updateController } from './figurine/controller';
 import { updateContactShadow } from './lighting/contact-shadow';
 import { updateScanDebug, updateScanLight } from './lighting/scan-light';
-import { importScan, uploads } from './scan/import';
-import { loadFromURL, loadingViewOn, loadScan, updateArrival } from './scan/room';
+import { importScan, pickUpload } from './scan/import';
+import { loadingViewOn, loadScan, updateArrival } from './scan/room';
 import { applyMatteView, publishDebugState } from './telemetry';
 
 // ?tel=1 only: drive the figurine in fixed steps, for a script whose run has to repeat
@@ -38,10 +38,10 @@ if (TEL) (window as unknown as { __step?: (keys: string[], seconds: number, jump
     stepDone = done;
   });
 
-// What the on-screen UI's controls do. Demo scans load by filename; an uploaded id
-// resolves to its blob URL in `uploads`.
+// What the on-screen UI's controls do. An imported scan is brought back from memory;
+// anything else is an example scan, loaded by file name.
 Object.assign(hudActions, {
-  pickRoom: (id: string) => { const url = uploads.get(id); if (url) loadFromURL(url, id); else loadScan(id); },
+  pickRoom: (id: string) => { if (!pickUpload(id)) loadScan(id); },
   importScan: (file: File) => void importScan(file),
   reset: () => { if (charLoaded) resetToSpawn(); }, // the way out of any spot the figurine gets stuck in
 });

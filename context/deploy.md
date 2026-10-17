@@ -9,9 +9,9 @@ visitor ──► the app (Vercel: wee.samanthamlee.com, ~2 MB)
            the scan host (Cloudflare Worker over an R2 bucket, a workers.dev address)
 ```
 
-A scan a visitor imports never leaves their browser: it is read into memory, cleaned
-in a worker, and loaded from a `blob:` URL (`importScan` in `src/scan/import.ts`). Nothing about
-hosting involves it.
+A scan a visitor imports (`.ply` or `.spz`) never leaves their browser: it is read into
+memory, parsed and cleaned in a worker, and its splats go straight into the room
+(`importScan` in `src/scan/import.ts`). Nothing about hosting involves it.
 
 **Live:** the app is https://wee.samanthamlee.com (Vercel project `wee-wonderer`, with
 its `.vercel.app` alias removed). The scan host is
@@ -53,10 +53,13 @@ Unpacking in the worker went from about 500 ms to about 45 ms. They look the sam
 1.2e-4 scan units here), which moves Kitchen's collision a little
 (`context/collision.md`, "SPZ moves Kitchen's collision").
 
-`parseScan` (`src/scan/parse-scan.ts`, used by `load-scan.worker.ts` and `inspect.html`) picks the parser by the file's bytes, not its name (an imported
-scan's `blob:` URL has none): a file starting with the text `ply` is PLY, anything else
-goes to three's `SPZLoader`, which reads SPZ versions 1 to 4 and throws on what is
-neither. Importing a scan still takes `.ply` only: the cleanup worker parses PLY.
+`parseScan` (`src/scan/parse-scan.ts`) picks the parser by the file's bytes, not its
+name: a file starting with the text `ply` is PLY, anything else goes to three's
+`SPZLoader`, which reads SPZ versions 1 to 4 and throws on what is neither. Every scan
+then becomes one form, `ParsedScan` (centres, covariances, colours with opacity,
+spherical harmonics), whatever its file was: the load worker, the import cleanup worker
+and `inspect.html` all go through it, so a format it reads is one the whole app reads.
+The file types an import offers are listed once, `SCAN_FILE_TYPES` in `scan-list.ts`.
 
 ## Where scans come from
 

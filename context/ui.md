@@ -120,7 +120,7 @@ the controller is off, the figurine's keys are ignored); `updateLoading()` appli
 and starts the reveal when it ends. Call `updateLoading()` after changing anything it
 reads.
 
-**A room switch, in order** (`loadFromURL`): the replaced load's fetch is cancelled;
+**A room switch, in order** (`loadRoom`): the replaced load's fetch is cancelled;
 the old room starts leaving and `roomGone` is a promise for when it has; the new scan
 is fetched and unpacked in the worker meanwhile; `showScan` awaits `roomGone` before
 putting the new room in; the render loop calls `clearRoom()` when the old one reaches
@@ -183,9 +183,9 @@ was set after the fill, about 0.2 s later.
   Before, parsing the 453 MB Playroom blocked the main thread for about 10 s and a
   click on Begin did nothing until it ended.
 
-- **`scripts/uicheck.mjs` is the regression check for all of this**: 26 checks of
+- **`scripts/uicheck.mjs` is the regression check for all of this**: 30 checks of
   the title, keys, tiles, Credits and Controls cards, Debug card, loading note, progress bar, arrival, the scan
-  light's capture at load (`context/lighting.md`), room switch and a failed load. Run it after any change here. It waits for conditions,
+  light's capture at load (`context/lighting.md`), room switch, importing a scan and a failed load. Run it after any change here. It waits for conditions,
   not for fixed times: a fixed 200 ms wait failed about one run in five.
 - **Headless scripts start with the title screen dismissed.** A fresh browser profile
   counts as a first visit, and the title takes the keyboard. `shot.mjs`,
@@ -218,7 +218,7 @@ was set after the fill, about 0.2 s later.
   real display (Kitchen showed none: about 20 ms a frame with it, 18 to 25 without).
 - **Fetch progress needs a `Content-Length`** and an uncompressed transfer. Without
   them the scan still loads, and the indicator waits at 0 until fetching ends.
-- **The loading screen needs every load to finish or fail.** `loadFromURL` ends it
+- **The loading screen needs every load to finish or fail.** `loadRoom` ends it
   through `finish`; the voxel worker now rejects on failure instead of going silent.
   A new async step in the load path must reject on failure too, or the cover stays up.
 - **Slider readouts show as many decimals as the step has**, so an integer slider
@@ -281,6 +281,6 @@ was set after the fill, about 0.2 s later.
   switch rooms, to see them again.
 
 - No touch controls; the HUD is laid out for a desktop window.
-- Drag-and-drop and file-picker import are not covered by a headless check.
+- Importing by drag-and-drop is not covered by a headless check (the file picker is, in `uicheck`).
 - A debug slider that rebuilds collision does not show the loading screen (by
   design: you want to watch the mesh change), so there is no progress cue for it.

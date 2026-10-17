@@ -10,7 +10,7 @@ import { workerCaller } from '../worker-call';
 import { SCANS } from '../scan/scans';
 import { GRAIN, hud, MESHONLY, num, q, scene, TARGET_RADIUS, VOXEL_SIZE } from '../app';
 import { charH } from '../figurine/character';
-import { currentFile, lastCenters, lastCov, lastMatrix, lastOpacity, loadToken, newLoadToken, scanLoading } from '../scan/room';
+import { isImported, currentFile, lastCenters, lastCov, lastMatrix, lastOpacity, loadToken, newLoadToken, scanLoading } from '../scan/room';
 import { refillWalkable } from '../scan/walk-fill';
 
 /** The spacing of the walkable cells: a grain, however fine the collision grid is. (Coarser
@@ -117,9 +117,9 @@ function voxelizeInWorker(centers: THREE.BufferAttribute, opacity: Float32Array,
 // build from landing after the user has already swapped to another scan.
 export async function buildCollision(file: string, token: number, centers: THREE.BufferAttribute, opacity: Float32Array, cov: Float32Array | null, matrixWorld: THREE.Matrix4): Promise<void> {
   const t0 = performance.now();
-  // uploads aren't cached: re-cleaning changes the splat under a stable id, so the
-  // key wouldn't reflect it — always re-voxelize an upload.
-  const useCache = !file.startsWith('upload:');
+  // imports aren't cached: re-cleaning changes the splat under a stable id, so the
+  // key wouldn't reflect it — always re-voxelize an import.
+  const useCache = !isImported(file);
   const opts = { ...VOXEL_OPTS }; // as they are now: a slider can move while this waits, and the key must match what is built
   const key = voxelCacheKey(file, VOXEL_SIZE, opts, TARGET_RADIUS);
   let surf: VoxelSurface | null = useCache ? await voxelCacheGet(key) : null;
