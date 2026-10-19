@@ -1,9 +1,10 @@
 // The current room's collision: its settings (VOXEL_OPTS: the defaults, the scan's own,
 // then the session's), building it in a worker (cached), rebuilding it from the Debug
-// sliders, the walkable cells (NavGrid) and the two debug overlays (context/collision.md).
+// sliders, the walkable cells (NavGrid) and the debug overlays (context/collision.md).
 
 import * as THREE from 'three';
 import { type VoxelOptions, type VoxelSurface, surfaceToGeometry } from './voxelize';
+import { CLEANUP_ADDED, CLEANUP_REMOVED, type VoxelGrids } from './voxelize-core';
 import { type Collision, type NavGrid, type PlatformField, MeshCollision } from './collision';
 import { voxelCacheKey, voxelCacheGet, voxelCachePut } from './voxel-cache';
 import { workerCaller } from '../worker-call';
@@ -59,8 +60,32 @@ export let collisionDebug: THREE.Mesh | null = null;
 // minCells drops floater specks. Tuned live to see how scans decompose.
 export let showPlatforms = q.get('platforms') === '1';
 export let platformDebug: THREE.InstancedMesh | null = null;
-/** The Debug card's checkboxes for the two overlays, kept in step when a key (V, P) changes them. */
-export const overlayBoxes: { voxel: HTMLInputElement | null; platform: HTMLInputElement | null } = { voxel: null, platform: null };
+// The voxel grid the surface is made from, as cubes: one per solid voxel on the outside.
+// Density voxels: before cleanup, coloured by how far over the isovalue its density is.
+// Cleanup voxels: after cleanup, coloured by what cleanup did (kept, added, removed).
+// Both come from one voxelize of their own (not cached), made the first time either is
+// shown for the current collision, and made again when the collision is rebuilt.
+export let showDensity = false;
+export let showCleanup = false;
+let densityDebug: THREE.InstancedMesh | null = null;
+let cleanupDebug: THREE.InstancedMesh | null = null;
+let gridsBuild = 0; // goes up with each request and each dispose: grids that land after either are dropped
+let gridsPending = false;
+/** The share of the grid's voxels at or below the density that gets the deepest colour (just solid is the palest).
+ *  Read off each grid, since how dense its surfaces are varies from scan to scan. */
+const DENSITY_FULL_SHARE = 0.95;
+const DENSITY_LOW = new THREE.Color(0xe0f2fe), DENSITY_HIGH = new THREE.Color(0x1e40af); // blues: purple is the Cleanup overlay's "added"
+const CLEANUP_COLOURS = { kept: new THREE.Color(0xc9ced6), added: new THREE.Color(0x7c3aed), removed: new THREE.Color(0xf07846) };
+/** What the two voxel overlays show of their grids (the Debug card's sliders):
+ *  densityFrom: Density voxels draws the voxels at least this dense (× the isovalue; 1 = all of them) at full size,
+ *    and ones up to DENSITY_GROW below it part grown, so lowering it brings them in smoothly.
+ *  cleanup: how far through cleanup Cleanup voxels is: 0 = before (what it will remove in orange), 0 to 1 the
+ *    removed voxels shrink away, 1 to 2 the added ones (purple) grow in, 2 = after. */
+export const VOXEL_VIEW = { densityFrom: 1, cleanup: 2 };
+const DENSITY_GROW = 0.25;
+let grids: VoxelGrids | null = null; // the grids the overlays are drawn from, kept for the sliders
+/** The Debug card's checkboxes for the overlays, kept in step when a key (V, P) changes them. */
+export const overlayBoxes: { voxel: HTMLInputElement | null; platform: HTMLInputElement | null; density: HTMLInputElement | null; cleanup: HTMLInputElement | null } = { voxel: null, platform: null, density: null, cleanup: null };
 export let lastVoxelSize = GRAIN;
 export let groundY: number | null = null; // the height of the ground the figurine plays on in this scan (the voxelizer's), or null
 export const PLATFORM_OPTS = { stepFactor: 0.35, minCells: 6, climbDeg: 70, bridge: 2, fill: 3 }; // climbDeg: surfaces steeper than this (from horizontal) are walls to climb, gentler ones are ground to walk. minCells: an area, in grains². bridge, fill: how wide a gap in a surface is bridged, and how wide a hole in it filled, in grains
@@ -87,7 +112,20 @@ export function disposeCollision(): void {
     collisionDebug = null;
   }
   disposePlatformOverlay();
+  disposeGridOverlays();
   collision = null;
+}
+
+function disposeGridOverlays(): void {
+  gridsBuild++; gridsPending = false;
+  for (const mesh of [densityDebug, cleanupDebug]) {
+    if (!mesh) continue;
+    scene.remove(mesh);
+    mesh.geometry.dispose();
+    (mesh.material as THREE.Material).dispose();
+  }
+  densityDebug = cleanupDebug = null;
+  grids = null;
 }
 
 function disposePlatformOverlay(): void {
@@ -99,15 +137,16 @@ function disposePlatformOverlay(): void {
 }
 
 // Voxelization runs in a Web Worker so the ~1s+ first build doesn't freeze the frame.
-const voxelize = workerCaller<{ positions: Float32Array; opacity: Float32Array; cov: Float32Array | null; count: number; matrix: number[]; voxelSize: number; unit: number; opts: VoxelOptions }, VoxelSurface>(
+// It answers with the surface, or with `voxels` the voxel grids (the voxel overlays).
+const voxelize = workerCaller<{ positions: Float32Array; opacity: Float32Array; cov: Float32Array | null; count: number; matrix: number[]; voxelSize: number; unit: number; opts: VoxelOptions; voxels: boolean }, VoxelSurface | VoxelGrids>(
   new Worker(new URL('./voxelize.worker.ts', import.meta.url), { type: 'module' }), 'collision build');
 
-function voxelizeInWorker(centers: THREE.BufferAttribute, opacity: Float32Array, cov: Float32Array | null, matrixWorld: THREE.Matrix4, opts: VoxelOptions): Promise<VoxelSurface> {
+function voxelizeInWorker(centers: THREE.BufferAttribute, opacity: Float32Array, cov: Float32Array | null, matrixWorld: THREE.Matrix4, opts: VoxelOptions, voxels: boolean): Promise<VoxelSurface | VoxelGrids> {
   const positions = (centers.array as Float32Array).slice(); // copies so we can transfer
   const op = opacity.slice();                                 // (originals kept for re-voxelize)
   const cv = cov ? cov.slice() : null;
   return voxelize(
-    { positions, opacity: op, cov: cv, count: centers.count, matrix: Array.from(matrixWorld.elements), voxelSize: VOXEL_SIZE, unit: GRAIN, opts },
+    { positions, opacity: op, cov: cv, count: centers.count, matrix: Array.from(matrixWorld.elements), voxelSize: VOXEL_SIZE, unit: GRAIN, opts, voxels },
     cv ? [positions.buffer, op.buffer, cv.buffer] : [positions.buffer, op.buffer],
   );
 }
@@ -126,7 +165,7 @@ export async function buildCollision(file: string, token: number, centers: THREE
   const cached = surf !== null;
   if (token !== loadToken) return; // superseded while awaiting the cache
   if (!surf) {
-    surf = await voxelizeInWorker(centers, opacity, cov, matrixWorld, opts);
+    surf = await voxelizeInWorker(centers, opacity, cov, matrixWorld, opts, false) as VoxelSurface;
     if (token !== loadToken) return; // superseded while voxelizing
     if (useCache) void voxelCachePut(key, surf);
   }
@@ -145,6 +184,7 @@ export async function buildCollision(file: string, token: number, centers: THREE
   lastVoxelSize = surf.voxelSize;
   groundY = surf.groundY ?? null; // (?? : a surface cached before this was recorded has none)
   rebuildPlatformOverlay();
+  if (showDensity || showCleanup) buildGridOverlays();
   console.log(
     `collision${cached ? ' (cached)' : ''}: ${surf.occupiedCount.toLocaleString()} voxels, ` +
     `${surf.triangleCount.toLocaleString()} tris @ ${surf.voxelSize.toFixed(3)}u, detail ${surf.detail ?? 1} ` +
@@ -169,6 +209,85 @@ export function setVoxelOverlay(on: boolean): void {
   showVoxels = on;
   if (collisionDebug) collisionDebug.visible = on;
   if (overlayBoxes.voxel) overlayBoxes.voxel.checked = on;
+}
+
+/** Show/hide the Density voxels overlay, building the grids the first time either voxel overlay is shown for this collision. */
+export function setDensityOverlay(on: boolean): void {
+  showDensity = on;
+  if (overlayBoxes.density) overlayBoxes.density.checked = on;
+  if (densityDebug) densityDebug.visible = on;
+  else if (on && collision) buildGridOverlays();
+}
+
+/** Show/hide the Cleanup voxels overlay (as setDensityOverlay). */
+export function setCleanupOverlay(on: boolean): void {
+  showCleanup = on;
+  if (overlayBoxes.cleanup) overlayBoxes.cleanup.checked = on;
+  if (cleanupDebug) cleanupDebug.visible = on;
+  else if (on && collision) buildGridOverlays();
+}
+
+/** Voxelize the current scan again for its voxel grids, with the settings the collision
+ *  was built with, and make both overlays from them. */
+function buildGridOverlays(): void {
+  if (!lastCenters || !lastOpacity || gridsPending) return;
+  disposeGridOverlays();
+  const build = gridsBuild;
+  gridsPending = true;
+  voxelizeInWorker(lastCenters, lastOpacity, lastCov, lastMatrix, { ...VOXEL_OPTS }, true).then((res) => {
+    if (build !== gridsBuild) return; // the room or its collision changed meanwhile
+    gridsPending = false;
+    grids = res as VoxelGrids;
+    const { density, cleanup } = grids;
+    const sorted = Float32Array.from(density.value).sort();
+    const full = Math.max(1.01, sorted[Math.floor((sorted.length - 1) * DENSITY_FULL_SHARE)] ?? 1.01);
+    densityDebug = cubes(grids.voxelSize, density.centers, (i, c) => c.lerpColors(DENSITY_LOW, DENSITY_HIGH, Math.min(1, Math.log(density.value[i]) / Math.log(full))));
+    densityDebug.visible = showDensity;
+    cleanupDebug = cubes(grids.voxelSize, cleanup.centers, (i, c) => c.copy(
+      cleanup.change[i] === CLEANUP_ADDED ? CLEANUP_COLOURS.added : cleanup.change[i] === CLEANUP_REMOVED ? CLEANUP_COLOURS.removed : CLEANUP_COLOURS.kept));
+    cleanupDebug.visible = showCleanup;
+    applyVoxelView();
+    let added = 0, removed = 0;
+    for (const ch of cleanup.change) { if (ch === CLEANUP_ADDED) added++; else if (ch === CLEANUP_REMOVED) removed++; }
+    const pick = (q: number) => (sorted[Math.floor((sorted.length - 1) * q)] ?? 0).toFixed(1);
+    console.log(`voxel overlays: ${density.value.length.toLocaleString()} outer solid voxels before cleanup ` +
+      `(density × isovalue: median ${pick(0.5)}, 95th pct ${pick(DENSITY_FULL_SHARE)}, densest ${pick(1)}); ` +
+      `cleanup added ${added.toLocaleString()}, removed ${removed.toLocaleString()} (of those on the outside) @ ${grids.voxelSize.toFixed(3)}u`);
+  }).catch((err: unknown) => { gridsPending = false; hud.status(err instanceof Error ? err.message : String(err), 'error'); });
+}
+
+const viewAt = new THREE.Matrix4();
+/** Size the overlays' cubes to VOXEL_VIEW (a hidden one is scaled to nothing). Call after changing it. */
+export function applyVoxelView(): void {
+  if (!grids || !densityDebug || !cleanupDebug) return;
+  const { density, cleanup } = grids;
+  const from = Math.max(1, VOXEL_VIEW.densityFrom), p = VOXEL_VIEW.cleanup;
+  for (let i = 0; i < density.value.length; i++)
+    place(densityDebug, i, density.centers, THREE.MathUtils.smoothstep(density.value[i], from * (1 - DENSITY_GROW), from));
+  for (let i = 0; i < cleanup.change.length; i++) {
+    const ch = cleanup.change[i];
+    place(cleanupDebug, i, cleanup.centers, ch === CLEANUP_REMOVED ? 1 - THREE.MathUtils.clamp(p, 0, 1) : ch === CLEANUP_ADDED ? THREE.MathUtils.clamp(p - 1, 0, 1) : 1);
+  }
+  densityDebug.instanceMatrix.needsUpdate = cleanupDebug.instanceMatrix.needsUpdate = true;
+}
+
+/** Put cube `i` of `mesh` at its centre, at `scale` of its full size. */
+function place(mesh: THREE.InstancedMesh, i: number, centers: Float32Array, scale: number): void {
+  const s = Math.max(scale, 1e-4); // (not 0: a matrix with no size cannot be inverted for picking)
+  mesh.setMatrixAt(i, viewAt.makeScale(s, s, s).setPosition(centers[i * 3], centers[i * 3 + 1], centers[i * 3 + 2]));
+}
+
+/** One cube per centre, a little smaller than a voxel so the grid reads as a grid, coloured by `colour`. */
+function cubes(voxelSize: number, centers: Float32Array, colour: (i: number, c: THREE.Color) => THREE.Color): THREE.InstancedMesh {
+  const n = centers.length / 3, size = voxelSize * 0.9;
+  const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(size, size, size), new THREE.MeshStandardMaterial({ roughness: 1, metalness: 0 }), n);
+  const at = new THREE.Matrix4(), c = new THREE.Color();
+  for (let i = 0; i < n; i++) {
+    mesh.setMatrixAt(i, at.makeTranslation(centers[i * 3], centers[i * 3 + 1], centers[i * 3 + 2]));
+    mesh.setColorAt(i, colour(i, c));
+  }
+  scene.add(mesh);
+  return mesh;
 }
 
 export function setPlatformOverlay(on: boolean): void {
