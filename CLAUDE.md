@@ -95,6 +95,13 @@ Visual and behavioural checks run headless in real Chrome through Playwright.
   about 3 s to build collision; use a wait of 18000 or more.
 - **See the collision mesh:** `?meshonly=1` hides the splat and draws the mesh solid
   and lit. `?voxel=1` (or `V`) overlays it as a wireframe.
+- **See the voxel grid it is made from:** the Debug card's Density voxels (the grid before
+  cleanup, blue by density) and Cleanup voxels (after cleanup: grey kept, purple added,
+  orange removed). Both come from one extra voxelize, not cached, that logs
+  `voxel overlays: …` (with the grid's density spread) when it lands; it uses the settings
+  in `VOXEL_OPTS`. Two sliders under them (`VOXEL_VIEW`) step through what they show: the
+  lowest density drawn, and cleanup from before (0) to after (2). A script can move them
+  frame by frame for an animation.
 - **Frame a region:** `?az=&el=&dist=&cx=&cy=&cz=` parks a fixed orbit camera
   (`dist` in `TARGET_RADIUS` units). Without it the camera follows the figurine.
 - **Telemetry and internal state:** `?tel=1` logs `CLIMB-*` events to the console
