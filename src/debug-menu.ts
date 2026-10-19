@@ -1,7 +1,7 @@
 // The Debug card's tunables (the wrench tile, or the ` key).
 
 import { hud } from './app';
-import { overlayBoxes, PLATFORM_OPTS, rebuildCollision, rebuildPlatformOverlay, setPlatformOverlay, setVoxelOverlay, showPlatforms, showVoxels, VOXEL_OPTS, voxelSet, type VoxelSettings, voxelSliders } from './collision/room-collision';
+import { applyVoxelView, overlayBoxes, PLATFORM_OPTS, rebuildCollision, rebuildPlatformOverlay, setCleanupOverlay, setDensityOverlay, setPlatformOverlay, setVoxelOverlay, showCleanup, showDensity, showPlatforms, showVoxels, VOXEL_OPTS, VOXEL_VIEW, voxelSet, type VoxelSettings, voxelSliders } from './collision/room-collision';
 import { NAV } from './figurine/controller';
 import { CONTACT_SHADOW } from './lighting/contact-shadow';
 import { applyScanLight, requestScanLight, SCAN_LIGHT } from './lighting/scan-light';
@@ -17,6 +17,18 @@ export function setupDebugMenu(): void {
   overlayBoxes.platform = overlays.addToggle('Platforms (P)', showPlatforms, setPlatformOverlay,
     'Spike 1: color the walkable surfaces the collision decomposes into — floor, ' +
     'couch, counter. Distinct colors = distinct platforms (reached by climbing/jumping).');
+  overlayBoxes.density = overlays.addToggle('Density voxels', showDensity, setDensityOverlay,
+    'Draw the density grid the collision is made from, before cleanup: a cube for each voxel dense enough to be solid ' +
+    '(the outside ones), pale blue when just over the isovalue, deep blue when far over it. Builds it the first time it is shown.');
+  overlayBoxes.cleanup = overlays.addToggle('Cleanup voxels', showCleanup, setCleanupOverlay,
+    'Draw the voxel grid after cleanup, coloured by what cleanup did: grey where it kept the voxel, purple where it filled ' +
+    'one in (holes closed, floor and panels filled), orange where it took one away (small stray clumps; see Cleanup progress).');
+  overlays.addSlider('Density shown from (× isovalue)', VOXEL_VIEW.densityFrom, 1, 200, 0.01, (v) => { VOXEL_VIEW.densityFrom = v; applyVoxelView(); },
+    'Density voxels: draw only the voxels at least this dense, as a multiple of the isovalue (1 = every solid one). ' +
+    'Raise it to see which parts of the scan are barely solid: they go first.');
+  overlays.addSlider('Cleanup progress', VOXEL_VIEW.cleanup, 0, 2, 0.01, (v) => { VOXEL_VIEW.cleanup = v; applyVoxelView(); },
+    'Cleanup voxels: 0 = before cleanup, with what it will remove in orange; to 1 those shrink away; to 2 what it fills in ' +
+    '(purple) grows in; 2 = after.');
 
   const light = hud.debug.section('Lighting and shadow');
   light.addToggle('Contact shadow', CONTACT_SHADOW.on, (on) => { CONTACT_SHADOW.on = on; },
