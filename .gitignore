@@ -10,3 +10,6 @@ dist/
 scans/
 public/*.ply
 .wrangler/
+
+# made by scripts/media/ (CLAUDE.md, "Making media")
+media-out/
