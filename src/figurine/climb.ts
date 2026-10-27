@@ -2,9 +2,10 @@
 // the rules in context/climb.md.
 
 import * as THREE from 'three';
-import type { WallHit } from '../collision/collision';
-import { CAPSULE_RADIUS, figurine, move, player, TEL, TUNE, velocity, WORLD_DOWN } from '../app';
-import { collision, navGrid, wallSlopeMax } from '../collision/room-collision';
+import type { PlatformField, WallHit } from '../collision/collision';
+import type { ReachInput } from '../collision/reach-graph';
+import { CAPSULE_RADIUS, figurine, GRAIN, move, player, TEL, TUNE, velocity, WORLD_DOWN } from '../app';
+import { collision, lastVoxelSize, navGrid, wallSlopeMax } from '../collision/room-collision';
 import { camLatch } from './camera';
 import { actions, charH, play } from './character';
 import { bodyOverlap, lastGood, lerpAngle, STEP_DOWN_MAX, WALL_LIFT, wallFeet } from './controller';
@@ -58,6 +59,33 @@ export function isWall(w: WallHit): boolean {
 export function climbWall(origin: THREE.Vector3, dir: THREE.Vector3, max: number): WallHit | null {
   const w = collision ? collision.wallAhead(origin, dir, max) : null;
   return w && w.front ? w : null;
+}
+
+/** Is there a face the figurine could climb from standing at (ax, ay, az) up to the
+ *  surface at (bx, by, bz)? That is, a wall in front of it, on the way from one to the
+ *  other, at every height from its feet to where a mantle takes over. Probed as the climb
+ *  itself probes (climbWall, isWall). For the movement model (reach-graph.ts), which the
+ *  collision health numbers and the room's shape for the game both use. */
+const faceFrom = new THREE.Vector3(), faceDir = new THREE.Vector3();
+export function climbableFace(ax: number, ay: number, az: number, bx: number, by: number, bz: number): boolean {
+  const away = faceDir.set(bx - ax, 0, bz - az).length();
+  if (away < 1e-6) return false; // straight overhead: nothing to climb from here
+  faceDir.divideScalar(away);
+  const up = lastVoxelSize, top = by - charH * CLIMB.mantleUp; // (probed at every cell of the grid, up to where a mantle reaches: a surface this far above the feet)
+  for (let h = Math.min(ay + up / 2, (ay + by) / 2); ; h = Math.min(top, h + up)) {
+    const w = climbWall(faceFrom.set(ax, h, az), faceDir, away + GRAIN);
+    if (!w || !isWall(w)) return false;
+    if (h >= top) return true;
+  }
+}
+
+/** The movement model's input for walkable cells `walk`: how this figurine jumps, falls,
+ *  runs and climbs, in world units (reach-graph.ts). */
+export function reachModel(walk: PlatformField): ReachInput {
+  return {
+    walk, unit: GRAIN, climbable: climbableFace,
+    move: { jumpVel: TUNE.jumpVel * charH, gravity: -TUNE.gravity * charH, runSpeed: TUNE.runSpeed * charH, climbOver: CAPSULE_RADIUS * charH * CLIMB.mantleOver },
+  };
 }
 
 /** The walkable ground a climber on a wall in direction (dx,dz), feet at `y`, would

@@ -1,7 +1,8 @@
 # Wee Wonderer
 
 Cozy browser toy: a tiny rigged figurine explores a Gaussian-splat scan of a real
-room (walk, run, jump, climb). three.js on WebGPU. The current arc is reliable
+room (walk, run, jump, climb), played as a theme chosen from the room's shape (the
+floor is lava, the spilled pack). three.js on WebGPU. The current arc is reliable
 movement on casual phone-quality scans, with collision derived automatically from
 the splat.
 
@@ -17,6 +18,7 @@ The two docs below are the ones to read before touching movement.
 - **Frame rate, or anything that changes how much the graphics card draws** → `context/frame-time.md`
 - **Where scans are served from, the scan host, uploading scans, deploying** → `context/deploy.md`
 - **Anything on screen that is not the 3D view: tiles, cards, the Debug card, title and loading screens, fonts, colours** → `context/ui.md`
+- **The game: themes (the floor is lava, the spilled pack), what a room needs for one, placing things in a room** → `context/game.md`
 
 ## Commands
 
@@ -28,6 +30,10 @@ npm run build      # typecheck + production bundle
 
 After `npm install` (or any lockfile change), restart a running dev server: until then it
 answers 504 "Outdated Optimize Dep" for three.js and the app does not start.
+
+The repo lives under `~/Documents`, which a file-sync provider manages: it can leave
+conflict copies of newly written files beside them (`game 2.ts`). They fail the typecheck
+as duplicates. Diff one against its original before removing it.
 
 Scans are not in the repo: they live in the gitignored `scans/` folder, which the dev and
 preview servers serve at `/scans/` (never `public/`: Vite copies it into every build).
@@ -72,6 +78,7 @@ enough to find one.
 | `voxelize-core.ts` (+ `.worker.ts`, `voxelize.ts`) | Splat → density field → collision surface |
 | `voxel-cache.ts` | IndexedDB cache of the built surface. **Bump `SCHEMA` when the surface algorithm changes.** |
 | `collision-health.ts` | The collision health numbers, for `scripts/collisioncheck.mjs` (loaded only under `?tel=1`) |
+| `reach-graph.ts` | The movement model: which walkable surface the figurine can get to from which (jump, drop, climb). The collision health numbers and the game both use it |
 | **`src/loading/`** | **While a room loads and arrives:** `room-reveal.ts` (the scan's points start as a sheet of paper dots and rise to their places, in the scan's shader), `loading-scene.ts` (the stand-in dots before it has loaded), `paper-bits.ts` (the formulas both share), `paper-figurine.ts` (the figurine's paper look meanwhile) |
 | **`src/figurine/`** | **The figurine:** |
 | `character.ts` | Model, animations, spawn (`resetToSpawn`), keys |
@@ -79,6 +86,7 @@ enough to find one.
 | `climb.ts` | The climb state machine (`climbUpdate`, `climbWall`, `fitClimbBody`), context/climb.md |
 | `camera.ts` | The follow camera (`updateCamera`), the opening shot, the fixed debug camera |
 | `climb-side-anim.ts` | The sideways-climb animation generated from the `climb` clip |
+| **`src/game/`** | **The game** (context/game.md): `game.ts` (sets up and runs the room's theme), `room-shape.ts` (what the game reads off a room), `theme.ts`, `hint.ts` (the arrow shown when the player is stuck), and a file per theme (`lava.ts`, `spilled-pack.ts`) |
 | **`src/lighting/`** | `scan-light.ts` (the light probe and its debug view) and `contact-shadow.ts`, context/lighting.md |
 | **`src/ui/`** | The on-screen UI: `hud.ts` (tiles, cards, screens), `debug-panel.ts`, `paper.ts` (building blocks), `ui.css` (all styles and tokens) |
 | **`src/dev-pages/`** | `inspect-room.ts`, the scan inspector (`inspect.html`; not part of the app) |
@@ -97,8 +105,8 @@ Visual and behavioural checks run headless in real Chrome through Playwright.
 - **Telemetry and internal state:** `?tel=1` logs `CLIMB-*` events to the console
   and publishes `window.__dbg` every frame (state, position, climb facing, camera
   distances, `probe`, `reveal`: how much of the room is in place, 0 while
-  waiting and 1 once it has arrived, and `lightView`: where the scan light's debug
-  panorama is on screen while that view is on). Without `?tel=1` there is no `__dbg`. `window.__wwReady` is
+  waiting and 1 once it has arrived, `lightView`: where the scan light's debug
+  panorama is on screen while that view is on, and `game`: the room's theme and its state). Without `?tel=1` there is no `__dbg`. `window.__wwReady` is
   always set once the first frames have rendered.
 - **UI regression check:** `node scripts/uicheck.mjs` runs 30 checks of the title,
   keys, tiles, Credits and Controls cards, Debug card, loading view, the scan light's capture at load, room switch,
@@ -131,6 +139,13 @@ Visual and behavioural checks run headless in real Chrome through Playwright.
 - **The title screen** shows on a first visit and takes the keyboard. The scripts
   dismiss it up front; a Playwright script of your own must set
   `localStorage['ww.titleSeen'] = '1'` before load (see `context/ui.md`).
+- **The room's theme moves the start.** With lava, the figurine starts on a raised surface
+  (Living Room: the couch), not the ground, and touching the ground puts it back. A script
+  that needs the old start, or no rule, unticks "Floor is lava" in the Debug card's Game
+  section (`drive.mjs` has no step for a checkbox yet), or reads `__dbg.game`.
+- **Scripts that read live module state** (`navField`, `charH`) must import the URL the
+  app loaded, `?t=` suffix and all (find it in `performance.getEntriesByType('resource')`):
+  a plain `import('/src/…')` gets a fresh copy with no room in it.
 - **Blind walks rarely reach walls.** Holding one key from spawn usually ends at a
   walkable-area edge. Counter and Kitchen have climbable objects near spawn;
   Playroom and Living Room mostly need a human to aim at a wall.

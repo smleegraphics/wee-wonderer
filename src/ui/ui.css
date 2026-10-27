@@ -116,6 +116,9 @@ button.ww-piece[aria-expanded='true'] > .ww-face, .ww-primary > .ww-face { backg
 .ww-status { position: absolute; z-index: 4; top: var(--edge); left: 50%; translate: -50% 0; max-width: 60%; padding: 8px 16px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .ww-status[data-kind='error'] { color: var(--danger); cursor: pointer; }
 
+/* ---- goal: bottom-centre, between the corners' tiles; the loading note there is gone by the time a room has a goal */
+.ww-goal { position: absolute; bottom: var(--edge); left: 50%; translate: -50% 0; max-width: calc(100% - 4 * (var(--edge) + var(--tile))); padding: 8px 16px; text-align: center; transform: rotate(calc(-0.5deg * var(--wonk))); }
+
 /* ---- full-window screens ---------------------------------------------------- */
 .ww-screen { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 22px; padding: 24px; text-align: center; }
 .ww-drop { z-index: 1; pointer-events: none; background: color-mix(in srgb, var(--mark) 55%, transparent); }

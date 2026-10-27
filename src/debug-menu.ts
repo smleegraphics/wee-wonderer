@@ -3,6 +3,8 @@
 import { hud } from './app';
 import { overlayBoxes, PLATFORM_OPTS, rebuildCollision, rebuildPlatformOverlay, setPlatformOverlay, setVoxelOverlay, showPlatforms, showVoxels, VOXEL_OPTS, voxelSet, type VoxelSettings, voxelSliders } from './collision/room-collision';
 import { NAV } from './figurine/controller';
+import { GAME, replayGame, themeFit } from './game/game';
+import { LAVA } from './game/lava';
 import { CONTACT_SHADOW } from './lighting/contact-shadow';
 import { applyScanLight, requestScanLight, SCAN_LIGHT } from './lighting/scan-light';
 import { CLEAN_OPTS, recleanUpload } from './scan/import';
@@ -17,6 +19,12 @@ export function setupDebugMenu(): void {
   overlayBoxes.platform = overlays.addToggle('Platforms (P)', showPlatforms, setPlatformOverlay,
     'Spike 1: color the walkable surfaces the collision decomposes into — floor, ' +
     'couch, counter. Distinct colors = distinct platforms (reached by climbing/jumping).');
+
+  const game = hud.debug.section('Game');
+  game.addToggle('Floor is lava', GAME.lava, (on) => { GAME.lava = on; replayGame(); hud.status(themeFit(), 'done'); },
+    `Play the room as "the floor is lava" where it suits it: at least ${LAVA.minTops} raised surfaces the figurine can go between ` +
+    'without touching the ground. Off, or where it does not suit, the room is the spilled pack. Changing it starts the room\'s game again ' +
+    'and says which themes suit this room.');
 
   const light = hud.debug.section('Lighting and shadow');
   light.addToggle('Contact shadow', CONTACT_SHADOW.on, (on) => { CONTACT_SHADOW.on = on; },

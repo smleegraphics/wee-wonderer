@@ -7,8 +7,9 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { camera, DEFAULT_SCAN, FREECAM, hud, hudActions, move, renderer, scene, TEL } from './app';
 import { setupDebugMenu } from './debug-menu';
 import { camLatch, updateCamera, updateFreeCam } from './figurine/camera';
-import { charLoaded, jumpKey, mixer, onLoaded, resetToSpawn } from './figurine/character';
+import { charLoaded, jumpKey, mixer, onLoaded } from './figurine/character';
 import { updateController } from './figurine/controller';
+import { restartGame, updateGame } from './game/game';
 import { updateContactShadow } from './lighting/contact-shadow';
 import { updateScanDebug, updateScanLight } from './lighting/scan-light';
 import { importScan, pickUpload } from './scan/import';
@@ -43,7 +44,7 @@ if (TEL) (window as unknown as { __step?: (keys: string[], seconds: number, jump
 Object.assign(hudActions, {
   pickRoom: (id: string) => { if (!pickUpload(id)) loadScan(id); },
   importScan: (file: File) => void importScan(file),
-  reset: () => { if (charLoaded) resetToSpawn(); }, // the way out of any spot the figurine gets stuck in
+  reset: () => { if (charLoaded) restartGame(); }, // the way out of any spot the figurine gets stuck in: back to where the room's game starts
 });
 
 const clock = new THREE.Clock();
@@ -60,6 +61,7 @@ async function main(): Promise<void> {
     const dt = stepped ? (still ? 0 : STEP_DT) : Math.min(clock.getDelta(), 0.05);
     const waiting = loadingViewOn();
     if (charLoaded && !still) { if (!waiting) updateController(dt); if (FREECAM) updateFreeCam(); else updateCamera(dt); }
+    updateGame(dt);
     mixer?.update(dt);
     if (charLoaded) { updateContactShadow(dt); updateScanLight(dt); updateScanDebug(); }
     updateArrival(dt);

@@ -20,6 +20,8 @@ that unfold from them.
   view is the room alone. The title screen says how to walk and jump instead
   (`.ww-keys-note`, hidden on touch screens, which have no keys).
 - **Status note** (top-centre).
+- **Goal card** (bottom-centre, `hud.setGoal`): what the room's theme asks and how far along it
+  is (context/game.md), shown while playing; hidden while a room loads or leaves.
 - **Loading view** while a scan is fetched and its collision built, and until the
   figurine has loaded. There is no room yet: the figurine stands idle on a rippling
   sheet of hole-punch dots, itself drawn as paper dots, with a note that names
