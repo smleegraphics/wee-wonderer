@@ -1,7 +1,7 @@
 # Wee Wonderer
 
 Cozy browser toy: a tiny rigged figurine explores a Gaussian-splat scan of a real
-room (walk, run, jump, climb). three.js on WebGPU. The current arc is reliable
+room (walk, sprint, jump and double-jump, climb). three.js on WebGPU. The current arc is reliable
 movement on casual phone-quality scans, with collision derived automatically from
 the splat.
 
@@ -11,6 +11,7 @@ The two docs below are the ones to read before touching movement.
 ## Read before you work on...
 
 - **Collision mesh, voxelizer, floor, walls, scan cleanup** → `context/collision.md`
+- **Walking, sprinting, jumping, abilities (the double jump), the movement settings, characters and their animation** → `context/movement.md`
 - **Climbing, jumping onto walls, the follow camera, climb animation** → `context/climb.md`
 - **Lights, the environment map, the contact shadow, rendering the splats from another camera** → `context/lighting.md`
 - **Filling see-through ground with extra splats, or measuring how see-through a scan is** → `context/splat-fill.md`
@@ -52,7 +53,7 @@ enough to find one.
 | Where | What it holds |
 |---|---|
 | `src/main.ts` | Puts the app together (`hudActions`), loads the default scan and the figurine, and runs the frame loop (with `__step`, the fixed-step clock for repeatable runs) |
-| `src/app.ts` | What every part shares: page options (`q`, `TEL`, `MESHONLY`, `FREECAM`), `TARGET_RADIUS` and `GRAIN`, renderer, scene, `camera` (shown) and `orbitCamera` (OrbitControls' own, never drawn from; context/climb.md, "Follow camera"), orbit, `hud`, the `room` and `player` objects, `TUNE`, `move`, `velocity`, and `figurine` (how it is moving: `state`, `supportY`) |
+| `src/app.ts` | What every part shares: page options (`q`, `TEL`, `MESHONLY`, `FREECAM`), `TARGET_RADIUS` and `GRAIN`, renderer, scene, `camera` (shown) and `orbitCamera` (OrbitControls' own, never drawn from; context/climb.md, "Follow camera"), orbit, `hud`, the `room` and `player` objects, `TUNE` (the climb's and camera's tunables), `move` (the keys held), `velocity`, and `figurine` (how it is moving: `state`, `supportY`) |
 | `src/debug-menu.ts` | The Debug card's tunables (`setupDebugMenu`) |
 | `src/telemetry.ts` | `?tel=1` only: `__dbg`, `__collisionHealth`, the matte view |
 | `src/three-internals.ts` | Every private part of three.js the app touches (`GaussianSplat`'s fields, the renderer's material conversion); check it on a three.js upgrade |
@@ -74,11 +75,12 @@ enough to find one.
 | `collision-health.ts` | The collision health numbers, for `scripts/collisioncheck.mjs` (loaded only under `?tel=1`) |
 | **`src/loading/`** | **While a room loads and arrives:** `room-reveal.ts` (the scan's points start as a sheet of paper dots and rise to their places, in the scan's shader), `loading-scene.ts` (the stand-in dots before it has loaded), `paper-bits.ts` (the formulas both share), `paper-figurine.ts` (the figurine's paper look meanwhile) |
 | **`src/figurine/`** | **The figurine:** |
-| `character.ts` | Model, animations, spawn (`resetToSpawn`), keys |
-| `controller.ts` | Per-frame movement (`updateController`, `navMove`, `meshMove`), wall push-out (`bodyOverlap`), `NAV` |
+| `character.ts` | The character's model and its moves (`play`), spawn (`resetToSpawn`, `placeFigurine`), keys |
+| `characters.ts` | The characters as data: model, height, which clip shows each move, abilities, settings (context/movement.md) |
+| `controller.ts` | Per-frame movement (`updateController`): momentum, the jump and its grace, walking off edges, the fall, wall push-out (`bodyOverlap`) |
+| `movement.ts`, `abilities.ts` | The movement settings (`MOVE`, the Movement section of the Debug card) and the abilities a loadout is made of (the double jump) |
 | `climb.ts` | The climb state machine (`climbUpdate`, `climbWall`, `fitClimbBody`), context/climb.md |
 | `camera.ts` | The follow camera (`updateCamera`), the opening shot, the fixed debug camera |
-| `climb-side-anim.ts` | The sideways-climb animation generated from the `climb` clip |
 | **`src/lighting/`** | `scan-light.ts` (the light probe and its debug view) and `contact-shadow.ts`, context/lighting.md |
 | **`src/ui/`** | The on-screen UI: `hud.ts` (tiles, cards, screens), `debug-panel.ts`, `paper.ts` (building blocks), `ui.css` (all styles and tokens) |
 | **`src/dev-pages/`** | `inspect-room.ts`, the scan inspector (`inspect.html`; not part of the app) |
@@ -125,6 +127,11 @@ Visual and behavioural checks run headless in real Chrome through Playwright.
   exactly (same scan, seed and code, same result): it drives the figurine through
   `window.__step` (`?tel=1`), which moves it in fixed frames instead of by the clock.
   `seconds` is game time. A script that needs a repeatable run should do the same.
+  `__step(keys, seconds, jump, draw)` with `draw` false works the frames out without
+  drawing them, about 11 times faster: use it for anything that reads only positions.
+- **Jump check:** `node scripts/jumpcheck.mjs [scan]` makes real running jumps (plain, and
+  with the double jump) and fails if their height or reach is more than 10% off the
+  movement model's. Run it after changing jumping, the movement defaults or the model.
 - **Drive it:** press keys with Playwright and poll `__dbg`. Do not judge movement
   from screenshots alone. `scripts/drive.mjs` also clicks UI by name: `tile:Debug`,
   `room:Kitchen`, `range:Isovalue (fill)=0.4`.
@@ -154,12 +161,17 @@ Visual and behavioural checks run headless in real Chrome through Playwright.
   it must load first: of the app's own files it imports only `ui/hud`, `scan/scans` and
   `loading/room-reveal`, and what the HUD's controls do is filled in by `main.ts`
   (`hudActions`). A value another file reassigns lives in a shared object (`figurine`,
-  `camLatch`, `NAV`) or behind a function, since an import cannot be assigned to.
+  `camLatch`, `MOVE`) or behind a function, since an import cannot be assigned to.
 - **The controller talks to collision only through the `Collision` interface**, so
   backends stay swappable.
-- **Standing on something means the NavGrid says so.** Movement is confined to
-  validated walkable cells; the raw mesh is used for walls and probes, not for
-  deciding where the figurine may stand.
+- **Standing on something means the NavGrid says so.** Walking moves only onto
+  validated walkable cells, and a fall lands only on them; walking off their edge falls
+  (onto cells below). The raw mesh is used for walls and probes, not for deciding where
+  the figurine may stand.
+- **Code asks for a move, never a character.** `play('fall')`, `character.climbs`, the
+  loadout's abilities: nothing branches on which character is in play (context/movement.md).
+- **The movement model matches the game.** What `collision-health.ts` says a jump reaches
+  is checked against real jumps by `scripts/jumpcheck.mjs`; change one, run the other.
 - **A scan's splat arrays hold more than the scan.** Fill splats follow the scan's
   own. Collision, orientation and anything else that reasons about the room use the
   first `own` only (see `showSplat`).
@@ -180,7 +192,8 @@ When reviewing a change here, look for these, in this order:
 1. **Regressions.** There is no unit-test suite, so reading the diff is not enough.
    Drive the app (see "Testing without a human") and check the rules listed in the
    relevant `context/` doc still hold. For anything touching movement or climbing,
-   run `scripts/climbfuzz.mjs`; it must report no violations.
+   run `scripts/climbfuzz.mjs`; it must report no violations. For jumping or the
+   movement settings, run `scripts/jumpcheck.mjs` too.
 2. **Bandaids.** A fix must address why the bug happens. Flag special cases,
    tolerances and early-returns that hide a symptom, and any fix whose comment
    cannot state the root cause.

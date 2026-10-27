@@ -1,5 +1,9 @@
 # Mini Figurine — Character Handoff
 
+*In the game this model is `public/characters/chibi.glb`, and its clips are mapped to the
+game's moves in `src/figurine/characters.ts` (`context/movement.md`). The jump no longer waits
+for `jump_start` to finish before lifting off. The rest below is the July handoff as written.*
+
 Rigged, animated character for the browser splat-explorer prototype.
 Sam → Nima, July 2026. Sam is offline until ~July 24; everything Nima
 needs to build the controller against should be in this folder.

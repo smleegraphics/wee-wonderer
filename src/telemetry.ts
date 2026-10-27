@@ -2,12 +2,13 @@
 // numbers for scripts/collisioncheck.mjs, the matte view for scripts/holes.mjs).
 
 import * as THREE from 'three';
-import { camera, CAPSULE_RADIUS, figurine, FREECAM_OPTS, GRAIN, orbit, player, surround, TARGET_RADIUS, TEL, TUNE, WORLD_DOWN, WORLD_UP } from './app';
+import { camera, CAPSULE_RADIUS, figurine, FREECAM_OPTS, GRAIN, orbit, player, surround, TARGET_RADIUS, TEL, velocity, WORLD_DOWN, WORLD_UP } from './app';
 import { cellsPerGrain, collision, collisionDebug, lastVoxelSize, navField, platformDebug } from './collision/room-collision';
 import { camSwinging, camWant } from './figurine/camera';
-import { actions, activeAction, charH } from './figurine/character';
-import { CLIMB, climbCling, climbDir, climbStartsHere, climbWall, isWall } from './figurine/climb';
-import { bodyOverlap } from './figurine/controller';
+import { activeMove, charH } from './figurine/character';
+import { chestInside, CLIMB, climbCling, climbDir, climbStartsHere, climbTiltShown, climbWall, isWall } from './figurine/climb';
+import { airJumpHeights, bodyOverlap } from './figurine/controller';
+import { launchSpeed, MOVE } from './figurine/movement';
 import { scanDebugThumb, scanDebugThumbRect } from './lighting/scan-light';
 import { currentSplat, lastCenters, lastMatrix, lastOpacity, revealProgress } from './scan/room';
 import { applyFillView, FILL_VIEW, WALK_FILL } from './scan/walk-fill';
@@ -20,7 +21,7 @@ import { applyFillView, FILL_VIEW, WALK_FILL } from './scan/walk-fill';
  *  deep the climber's body is in the mesh, in capsule radii. */
 const dbgAt = new THREE.Vector3(), dbgDir = new THREE.Vector3();
 export function publishDebugState(): void {
-  const P = player.position, ca = actions['climb'];
+  const P = player.position;
   let probe: unknown = null, sunk: number | null = null; // sunk: how deep the body is in the mesh, in capsule radii
   if (collision && figurine.state === 'climb') {
     const c = collision;
@@ -30,12 +31,13 @@ export function publishDebugState(): void {
     sunk = +(bodyOverlap(P.x, P.y, P.z, CAPSULE_RADIUS * charH) / (CAPSULE_RADIUS * charH)).toFixed(2);
   }
   (window as unknown as { __dbg?: unknown }).__dbg = {
-    state: figurine.state, cling: climbCling, probe, sunk,
+    state: figurine.state, cling: climbCling, probe, sunk, tilt: +climbTiltShown().toFixed(1),
+    inside: figurine.state === 'climb' ? chestInside(P.x, P.y, P.z, climbDir) : null, // the climber's chest inside something solid (the climb fuzz's rule)
     px: +P.x.toFixed(3), py: +P.y.toFixed(3), pz: +P.z.toFixed(3),
+    speed: +(Math.hypot(velocity.x, velocity.z) / charH).toFixed(2), vy: +(velocity.y / charH).toFixed(2), // body heights a second: across, and up
     climbYaw: +THREE.MathUtils.radToDeg(Math.atan2(climbDir.x, climbDir.z)).toFixed(1),
     camDist: +camera.position.distanceTo(orbit.target).toFixed(2), camWant: +camWant.toFixed(2), camSwinging,
-    anim: activeAction ? activeAction.getClip().name : 'none',
-    climbPaused: ca ? ca.paused : null,
+    move: activeMove, // the move the figurine is showing (characters.ts)
     reveal: +revealProgress.toFixed(3), // how much of the room is in place: 0 while waiting, 1 once it has arrived
     lightView: scanDebugThumb?.visible ? scanDebugThumbRect() : null, // where the scan light's panorama is on screen, while its debug view is on
   };
@@ -70,7 +72,7 @@ if (TEL) (window as unknown as { __collisionHealth?: () => Promise<unknown> })._
     spawn: [player.position.x, player.position.y, player.position.z],
     unit: GRAIN,
     realCells: Math.round(WALK_FILL.patch * cellsPerGrain() ** 2), // the same line the gap fill draws between ground and a scrap
-    move: { jumpVel: TUNE.jumpVel * charH, gravity: -TUNE.gravity * charH, runSpeed: TUNE.runSpeed * charH, climbOver: CAPSULE_RADIUS * charH * CLIMB.mantleOver },
+    move: { jumpVel: launchSpeed(MOVE.jumpHeight) * charH, gravity: MOVE.gravity * charH, runSpeed: MOVE.sprintSpeed * charH, climbOver: CAPSULE_RADIUS * charH * CLIMB.mantleOver, fallGravity: MOVE.fallGravity, airJumpVels: airJumpHeights().map((h) => launchSpeed(h) * charH) },
     climbable: climbableFace,
     blocked: (ox, oy, oz, dx, dy, dz) => !!collision && collision.wallAhead(faceFrom.set(ox, oy, oz), faceDir.set(dx, dy, dz), TARGET_RADIUS * 4) !== null, // (further than any scan reaches)
     eyeHeight: charH * 0.5,

@@ -84,7 +84,7 @@ try {
   await page.getByRole('button', { name: 'Back to the start' }).click();
   check('Back to the start returns to the spawn point', await soon((p) => [window.__dbg.px, window.__dbg.py, window.__dbg.pz].join(',') === p, spawn), await pos());
   await page.keyboard.press('Space');
-  check('Space jumps after clicking a tile', await soon(() => window.__dbg.state === 'jump_start' || window.__dbg.state === 'air'), `state=${(await dbg()).state}`);
+  check('Space jumps after clicking a tile', await soon(() => window.__dbg.state === 'air'), `state=${(await dbg()).state}`);
   await soon(() => window.__dbg.state === 'ground');
 
   // --- the Credits card: opens from its tile, credits what needs crediting, folds on Escape

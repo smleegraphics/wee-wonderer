@@ -1,6 +1,6 @@
 // Regression check for climbing: random walking, jumping and climbing, sampling the
-// rule that a climber is never inside something solid (window.__dbg.probe — see
-// publishDebugState in src/telemetry.ts). Needs the dev server running.
+// rule that a climber is never inside something solid (window.__dbg.inside, chestInside in
+// src/figurine/climb.ts; `probe` says which way the surfaces are). Needs the dev server running.
 //
 //   node scripts/climbfuzz.mjs [scan] [seconds] [seed]
 //   node scripts/climbfuzz.mjs counter-clean.spz 90 1
@@ -12,7 +12,8 @@
 // A run repeats exactly: the same scan, seed and code take the same path and report the
 // same. It starts once the room has arrived, and drives the figurine through
 // window.__step (?tel=1), which moves it only for the time asked for, in fixed frames,
-// whatever the frame rate. `seconds` is that game time, not the time the run takes.
+// whatever the frame rate. `seconds` is that game time, not the time the run takes. The
+// frames are not drawn (__step's `draw` false): the same run, about 11 times faster.
 import { chromium } from 'playwright';
 
 const scan = process.argv[2] ?? 'counter-clean.spz';
@@ -45,9 +46,10 @@ const check = async () => {
   if (!p) return; // not climbing
   samples++;
   if (typeof d.sunk === 'number') { sunkSum += d.sunk; sunkMax = Math.max(sunkMax, d.sunk); if (d.sunk > DEEP) sunkDeep++; }
-  // `below` is not counted: flattening the floor leaves its top and underside
-  // coincident, so a ray straight down can report either side of a floor it is above.
-  if (![p.ahead, p.behind, p.above].some((v) => v.endsWith('B'))) return;
+  // Inside a solid: most of six rays from the chest meet a surface from behind (chestInside in
+  // climb.ts, the rule the climb itself keeps). One ray was fooled by holes in a scan's mesh: a ray
+  // through a hole in the wall ahead meets the far side of the object from behind.
+  if (!d.inside) return;
   violations++;
   console.log(`VIOLATION inside a solid: at ${d.px}, ${d.py}, ${d.pz} cling=${d.cling} probe=${JSON.stringify(p)}\n   after: ${recent.join(' | ')}`);
 };
@@ -61,7 +63,7 @@ while (played < seconds) {
   const hops = 2 + Math.floor(rnd() * 6);
   for (let i = 0; i < hops; i++) {
     const jump = rnd() < 0.7, wait = 0.2 + rnd() * 0.3;
-    await page.evaluate(([k, s, j]) => window.__step(k, s, j), [held, wait, jump]);
+    await page.evaluate(([k, s, j]) => window.__step(k, s, j, false), [held, wait, jump]);
     played += wait;
     await check();
   }

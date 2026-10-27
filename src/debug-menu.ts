@@ -2,7 +2,8 @@
 
 import { hud } from './app';
 import { overlayBoxes, PLATFORM_OPTS, rebuildCollision, rebuildPlatformOverlay, setPlatformOverlay, setVoxelOverlay, showPlatforms, showVoxels, VOXEL_OPTS, voxelSet, type VoxelSettings, voxelSliders } from './collision/room-collision';
-import { NAV } from './figurine/controller';
+import { CLIMB_TILT } from './figurine/climb';
+import { MOVE, moveSet, type MoveSettings, moveSliders } from './figurine/movement';
 import { CONTACT_SHADOW } from './lighting/contact-shadow';
 import { applyScanLight, requestScanLight, SCAN_LIGHT } from './lighting/scan-light';
 import { CLEAN_OPTS, recleanUpload } from './scan/import';
@@ -17,6 +18,32 @@ export function setupDebugMenu(): void {
   overlayBoxes.platform = overlays.addToggle('Platforms (P)', showPlatforms, setPlatformOverlay,
     'Spike 1: color the walkable surfaces the collision decomposes into — floor, ' +
     'couch, counter. Distinct colors = distinct platforms (reached by climbing/jumping).');
+
+  const moving = hud.debug.section('Movement');
+  /** A slider for one movement setting: it holds for the session, whatever character is in play (moveSet). */
+  const moveSlider = (key: keyof MoveSettings, label: string, min: number, max: number, step: number, help: string) => {
+    moveSliders[key] = moving.addSlider(label, MOVE[key], min, max, step, (v) => { moveSet[key] = MOVE[key] = v; }, help);
+  };
+  moveSlider('walkSpeed', 'Walk speed', 0.5, 4, 0.1, 'Walking pace, in body heights a second.');
+  moveSlider('sprintSpeed', 'Sprint speed', 1, 8, 0.1, 'Top speed with Shift held, in body heights a second.');
+  moveSlider('sprintRamp', 'Sprint build-up (s)', 0.05, 2, 0.05, 'Seconds from a walk to a full sprint with Shift held, and back down on letting go.');
+  moveSlider('accelTime', 'Start-up (s)', 0.01, 0.5, 0.01, 'Seconds from standing to walking pace. Lower = snappier starts.');
+  moveSlider('stopTime', 'Stopping (s)', 0.01, 0.5, 0.01, 'Seconds from walking pace to standing on letting go. Lower = stops on a dime.');
+  moveSlider('airControl', 'Air control', 0, 1, 0.05, 'How much you can steer in the air, as a share of on the ground. 0 = a jump goes where it was aimed.');
+  moveSlider('jumpHeight', 'Jump height', 0.2, 2, 0.05, 'How high a full jump rises, in body heights. Changes what the game thinks can be reached (lava routes, hints).');
+  moveSlider('airJumpHeight', 'Air jump height', 0.1, 2, 0.05, 'How high the double jump rises from where it is made, in body heights.');
+  moveSlider('gravity', 'Gravity', 2, 30, 0.5, 'How strongly a jump is pulled down, in body heights a second². Higher = quicker, snappier jumps (keep the height by raising Jump height).');
+  moveSlider('fallGravity', 'Fall gravity ×', 1, 3, 0.05, 'Gravity while falling, as a multiple of rising. Above 1 drops faster than it rose: a snappier, less floaty jump.');
+  moveSlider('jumpCut', 'Short-hop cut', 0.1, 1, 0.05, 'Letting go of Space while rising keeps this share of the upward speed: lower = a tap is a smaller hop. 1 = every jump is full height.');
+  moveSlider('coyoteTime', 'Late jump grace (s)', 0, 0.3, 0.01, 'Seconds after walking off an edge that Space still jumps as if from the ground.');
+  moveSlider('jumpBuffer', 'Early jump grace (s)', 0, 0.3, 0.01, 'Seconds before landing that a press of Space is remembered and jumps on touching down.');
+  moveSlider('turnRate', 'Turning', 2, 30, 1, 'How quickly the figurine turns to face where it is going.');
+
+  const climbing = hud.debug.section('Climbing');
+  climbing.addToggle('Tilt with the wall', CLIMB_TILT.on, (on) => { CLIMB_TILT.on = on; },
+    'While climbing, lean the figure with the wall: into a face that leans away, back under one that leans over it. The figure only: the body that collides stays upright.');
+  climbing.addSlider('Most tilt (deg)', CLIMB_TILT.max, 0, 90, 1, (v) => { CLIMB_TILT.max = v; },
+    'The furthest the figure leans either way while climbing.');
 
   const light = hud.debug.section('Lighting and shadow');
   light.addToggle('Contact shadow', CONTACT_SHADOW.on, (on) => { CONTACT_SHADOW.on = on; },
@@ -55,9 +82,6 @@ export function setupDebugMenu(): void {
     'Distance between the added splats, in collision voxels. Smaller = more, smaller splats. Works the fill out again.');
 
   const ground = hud.debug.section('Ground and platforms');
-  ground.addToggle('Reliable ground (nav)', NAV.on, (on) => { NAV.on = on; },
-    'Spike 2: stand on / confine to the hole-filled NavGrid so the figurine can\'t ' +
-    'fall through gaps or walk off platform edges. Off = raw mesh collision only.');
   ground.addSlider('Step limit', PLATFORM_OPTS.stepFactor, 0.1, 1, 0.05, (v) => {
     PLATFORM_OPTS.stepFactor = v; rebuildPlatformOverlay();
   }, 'Max height (in char-heights) two neighboring cells can differ and still be ONE ' +
@@ -68,6 +92,10 @@ export function setupDebugMenu(): void {
   ground.addSlider('Climb threshold (deg)', PLATFORM_OPTS.climbDeg, 30, 89, 1, (v) => { PLATFORM_OPTS.climbDeg = v; rebuildPlatformOverlay(); },
     'Surfaces steeper than this angle (from the ground) are walls you CLIMB; gentler ones are ' +
     'ground you walk on. Lower = more things count as walls; higher = only near-vertical faces.');
+  ground.addSlider('Grab below threshold (deg)', PLATFORM_OPTS.grabBelow, 0, 30, 1, (v) => { PLATFORM_OPTS.grabBelow = v; },
+    'A jump grabs surfaces this many degrees gentler than the Climb threshold, so a slope between the two is both: ' +
+    'ground you walk up, and a face you can jump at. 0 = one cutoff for both. Small scanned objects come out with sloped ' +
+    'sides in the collision mesh (Kitchen\'s bulldozer: 62° to 68°).');
 
   const surface = hud.debug.section('Collision surface');
   /** A slider for one collision setting. Moving it sets that for the session (voxelSet) and rebuilds. */

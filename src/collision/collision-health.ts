@@ -13,7 +13,7 @@ export interface HealthInput {
   spawn: [number, number, number]; // where the figurine starts
   unit: number; // the length (and its square, the area) the numbers are given in
   realCells: number; // a platform of at least this many cells is somewhere to be, not a scrap
-  move: { jumpVel: number; gravity: number; runSpeed: number; climbOver: number }; // how the figurine moves, in world units: take-off speed, gravity (positive), speed in the air, and how far over a lip a climb steps
+  move: { jumpVel: number; gravity: number; runSpeed: number; climbOver: number; fallGravity?: number; airJumpVels?: number[] }; // how the figurine moves, in world units: take-off speed, gravity rising (positive), speed in the air, how far over a lip a climb steps, gravity falling as a multiple of rising (1 if left out), and the take-off speed of each jump it can make in the air (none if left out)
   /** Is there a face the figurine could climb from standing at (ax, ay, az) up to the surface at (bx, by, bz)? Asked of the collision mesh itself. */
   climbable: (ax: number, ay: number, az: number, bx: number, by: number, bz: number) => boolean;
   /** Does a straight line from (ox, oy, oz) along the unit direction (dx, dy, dz) meet the collision mesh (backstop plane included)? */
@@ -127,6 +127,26 @@ function standing(input: HealthInput): Pick<CollisionHealth, 'cells' | 'platform
   };
 }
 
+/** The movement model's jump: the jump, then each air jump made at the top of the one before,
+ *  which is how high and how far the figurine can get with them. `rise`: the highest it gets;
+ *  `carry(dy)`: how far it has gone across, at a run, when it comes back down to `dy` above where
+ *  it left (below, if negative), rising at `gravity` to each top and falling from the last at
+ *  `gravity` × `fallGravity`. scripts/jumpcheck.mjs checks real jumps against this. */
+export function jumpArc(move: HealthInput['move']): { rise: number; carry: (dy: number) => number } {
+  const g = move.gravity, fall = g * (move.fallGravity ?? 1), launches = [move.jumpVel, ...(move.airJumpVels ?? [])];
+  const rise = launches.reduce((h, v) => h + (v * v) / (2 * g), 0);
+  const carry = (dy: number) => {
+    let t = 0, base = 0, longest = 0; // seconds to the start of each launch, the height it starts from
+    for (const v of launches) {
+      const top = base + (v * v) / (2 * g);
+      if (dy <= top) longest = Math.max(longest, t + v / g + Math.sqrt((2 * (top - dy)) / fall));
+      t += v / g; base = top;
+    }
+    return move.runSpeed * longest;
+  };
+  return { rise, carry };
+}
+
 /** How much of what is walkable the figurine can get to from where it starts.
  *
  *  A model of its movement, not the controller itself. From any cell it can reach a cell
@@ -153,9 +173,7 @@ function reach(input: HealthInput): Pick<CollisionHealth, 'jumpShare' | 'reachSh
   const col = (i: number) => Math.round((P[i * 3] - minX) / step) * nz + Math.round((P[i * 3 + 2] - minZ) / step);
   const head = new Int32Array(nx * nz).fill(-1), next = new Int32Array(cells), members: number[][] = Array.from({ length: walk.platformCount }, () => []);
   for (let i = 0; i < cells; i++) { const c = col(i); next[i] = head[c]; head[c] = i; members[walk.platformId[i]].push(i); }
-  const rise = (move.jumpVel * move.jumpVel) / (2 * move.gravity);
-  /** How far a jump carries by the time it is `dy` above where it left (below, if negative). */
-  const carry = (dy: number) => move.runSpeed * (move.jumpVel + Math.sqrt(Math.max(0, move.jumpVel * move.jumpVel - 2 * move.gravity * dy))) / move.gravity;
+  const { rise, carry } = jumpArc(move);
 
   const spread = (climbing: 'no' | 'faces' | 'anywhere'): Uint8Array => {
     const reached = new Uint8Array(walk.platformCount), queue = [start];

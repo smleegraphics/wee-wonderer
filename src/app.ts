@@ -90,13 +90,15 @@ scene.add(room);
 export const player = new THREE.Group();
 scene.add(player);
 
-export const TUNE = { walkSpeed: 1.6, runSpeed: 4.0, jumpVel: 3.2, gravity: -9.0, climbSpeed: 1.2, climbTurn: 6, climbBlend: 10, fade: 0.18, turnLerp: 12, camIn: 20, camOut: 3, camSwing: 4 };
+/** The climb's and the camera's tunables. How the figurine walks, sprints and jumps is MOVE
+ *  (figurine/movement.ts). */
+export const TUNE = { climbSpeed: 1.2, climbTurn: 6, turnLerp: 12, camIn: 20, camOut: 3, camSwing: 4 };
 
-export const move = { f: 0, b: 0, l: 0, r: 0, run: false };
-export const velocity = new THREE.Vector3(); // gravity/jump; horizontal input is applied per-frame
+export const move = { f: 0, b: 0, l: 0, r: 0, run: false, jump: false }; // the keys held: directions, Shift (sprint), Space (jump)
+export const velocity = new THREE.Vector3(); // world units a second: the figurine's speed, horizontal (with momentum) and vertical (jumping, falling)
 /** How the figurine is moving: written by the controller, the climb and a respawn alike. */
 export const figurine = {
-  state: 'ground' as 'ground' | 'jump_start' | 'air' | 'land' | 'climb',
+  state: 'ground' as 'ground' | 'air' | 'climb',
   supportY: 0,        // height of the platform the player is standing on
   smoothFeetY: 0,     // damped feet height for RENDER only (physics stays crisp)
   wasGrounded: false,

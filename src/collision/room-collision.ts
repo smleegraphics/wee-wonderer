@@ -63,12 +63,20 @@ export let platformDebug: THREE.InstancedMesh | null = null;
 export const overlayBoxes: { voxel: HTMLInputElement | null; platform: HTMLInputElement | null } = { voxel: null, platform: null };
 export let lastVoxelSize = GRAIN;
 export let groundY: number | null = null; // the height of the ground the figurine plays on in this scan (the voxelizer's), or null
-export const PLATFORM_OPTS = { stepFactor: 0.35, minCells: 6, climbDeg: 70, bridge: 2, fill: 3 }; // climbDeg: surfaces steeper than this (from horizontal) are walls to climb, gentler ones are ground to walk. minCells: an area, in grains². bridge, fill: how wide a gap in a surface is bridged, and how wide a hole in it filled, in grains
-/** Walk it or climb it — one cutoff, the "Climb threshold" slider: a surface steeper
- *  than that is a wall. The NavGrid won't stand on it (this is its `slopeMin`) and the
- *  climb will hang on it. Returned as the largest |normal.y| a wall may have. */
+export const PLATFORM_OPTS = { stepFactor: 0.35, minCells: 6, climbDeg: 70, grabBelow: 10, bridge: 2, fill: 3 }; // climbDeg: surfaces steeper than this (from horizontal) are walls, gentler ones are ground to walk. grabBelow: a jump grabs surfaces down to this many degrees gentler than climbDeg (context/climb.md, rule 9). minCells: an area, in grains². bridge, fill: how wide a gap in a surface is bridged, and how wide a hole in it filled, in grains
+/** Walk it or not — the "Climb threshold" slider: a surface steeper than that is a wall, and
+ *  the NavGrid will not stand on it (this is its `slopeMin`). Returned as the largest |normal.y|
+ *  a wall may have. */
 export function wallSlopeMax(): number {
   return Math.cos(THREE.MathUtils.degToRad(PLATFORM_OPTS.climbDeg));
+}
+/** Grab it or not: a surface steeper than the climb threshold less `grabBelow` can be climbed,
+ *  jumped into (isWall). Never steeper than the walking cutoff, so no surface is neither: between
+ *  the two it is both, ground to walk up or a face to jump at. One cutoff for both (the old rule)
+ *  could not keep Curled Up Dog's 60°-70° flanks walkable and Kitchen's bulldozer's 62°-68°
+ *  sides grabbable (context/climb.md, rule 9). As the largest |normal.y| a climbable face may have. */
+export function grabSlopeMax(): number {
+  return Math.cos(THREE.MathUtils.degToRad(Math.max(0, PLATFORM_OPTS.climbDeg - PLATFORM_OPTS.grabBelow)));
 }
 // Spike 2: the reliable ground. The controller stands on the NavGrid (no
 // fall-through), is confined to it (no walking off), and recovers to `lastGood`.
