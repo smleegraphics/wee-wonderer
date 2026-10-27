@@ -1,6 +1,6 @@
-// Does the movement model (collision-health.ts's reach: how high a jump rises and how far it
+// Does the movement model (collision-health.ts's jumpArc: how high a jump rises and how far it
 // carries) match the game? Real running jumps, made headless through window.__step, against the
-// model's arithmetic from the same settings: a plain jump, and one with every air jump the
+// model itself, fed the same settings: a plain jump, and one with every air jump the
 // figurine has made at the top of the one before (how the model assumes them). Exits 1 if a
 // number is out by more than TOLERANCE. Needs the dev server running.
 //
@@ -29,11 +29,10 @@ const setup = await page.evaluate(async () => {
   const app = await live('/src/app.ts'), ch = await live('/src/figurine/character.ts'), ctl = await live('/src/figurine/controller.ts');
   const mv = await live('/src/figurine/movement.ts'), rc = await live('/src/collision/room-collision.ts');
   const h = ch.charH, M = mv.MOVE, p = app.player.position.clone();
-  const g = M.gravity, fall = g * M.fallGravity, run = M.sprintSpeed;
-  const model = (launches) => { // body heights: rise, and carry back down to take-off height (as collision-health.ts)
-    let t = 0, base = 0, rise = 0;
-    for (const v of launches) { rise = base + (v * v) / (2 * g); t += v / g; base = rise; }
-    return { rise, carry: run * (t + Math.sqrt((2 * rise) / fall)) };
+  const { jumpArc } = await import('/src/collision/collision-health.ts'); // the model itself, not a copy (it holds no state, so a fresh import is it)
+  const model = (launches) => { // body heights: rise, and carry back down to take-off height
+    const arc = jumpArc({ jumpVel: launches[0], airJumpVels: launches.slice(1), gravity: M.gravity, fallGravity: M.fallGravity, runSpeed: M.sprintSpeed, climbOver: 0 });
+    return { rise: arc.rise, carry: arc.carry(0) };
   };
   // clear all the way up through the highest jump: something overhead in the air takes its speed
   const highest = model([mv.launchSpeed(M.jumpHeight), ...ctl.airJumpHeights().map((ah) => mv.launchSpeed(ah))]).rise + 1;

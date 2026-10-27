@@ -82,7 +82,7 @@ export function updateController(dt: number): void {
   wishDir.set(0, 0, 0).addScaledVector(camFwd, move.f - move.b).addScaledVector(camRight, move.l - move.r);
   const moving = wishDir.lengthSq() > 0;
   if (moving) wishDir.normalize();
-  if (!collision || !navGrid) return;
+  if (!collision || !navGrid) return; // (no room yet: the NavGrid is rebuilt in the same step as the collision, so there is never one without the other)
 
   let grounded: boolean;
   let wasClimbing = false;
@@ -147,7 +147,19 @@ function tryJump(): void {
     play('jumpStart', 0.06);
     return;
   }
+  // In the air the press is the air jump, unless the figurine touches down within the early-jump
+  // grace anyway: then it waits for the ground and jumps from there (a weak hop a hair above the
+  // floor, with the air jump spent, was what an early press used to give while one was left).
+  if (figurine.state === 'air' && landingWithin(MOVE.jumpBuffer)) return;
   if (figurine.state === 'air' && abilities.some((a) => a.airJump?.(airMove))) pressedAgo = -1;
+}
+
+/** Falling, will the figurine touch the walkable ground below it within `seconds`? */
+function landingWithin(seconds: number): boolean {
+  const p = player.position, g = navGrid?.surfaceBelow(p.x, p.z, p.y) ?? null;
+  if (g === null || velocity.y > 0) return false;
+  const pull = MOVE.gravity * MOVE.fallGravity * charH, down = -velocity.y, drop = p.y - g;
+  return (Math.sqrt(down * down + 2 * pull * drop) - down) / pull <= seconds;
 }
 
 /** How deep the body, feet at (x,y,z), is sunk into the collision mesh — 0 when it
@@ -191,7 +203,7 @@ function walk(dt: number): boolean {
   }
   const here = nav.surfaceNear(p.x, p.z, figurine.supportY, band);
   if (here !== null) { p.y = here; figurine.supportY = here; lastGood.copy(p); return true; }
-  if (nav.nearest(lastGood.x, lastGood.z, figurine.supportY, navRecover)) { p.copy(navRecover); figurine.supportY = navRecover.y; lastGood.copy(p); } // recovered
+  if (nav.nearest(lastGood.x, lastGood.z, figurine.supportY, navRecover)) { p.copy(navRecover); figurine.supportY = navRecover.y; lastGood.copy(p); velocity.x = velocity.z = 0; } // recovered: and stopped, or its momentum drives it back off the cells every frame
   return true;
 }
 

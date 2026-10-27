@@ -128,10 +128,10 @@ export interface Collision {
   wallAhead(origin: THREE.Vector3, dir: THREE.Vector3, max: number): WallHit | null;
   /** How near the segment `a`–`b` (a body's axis, `a` its foot) comes to a surface in front of
    *  it: one facing it, within 60° of the level direction `dir`, no lower than `a`, no further than `max`. The distance,
-   *  or `max` if there is none. The nearest point is left in `out`; and in `facing`, the way the
+   *  or `max` if there is none. In `facing`, the way the
    *  surfaces within `touch` of the axis face, averaged by their area, counting only those no
    *  more upright-facing than `steep` (|normal.y| at most: walls, not the tops of things); zero if none. */
-  nearestAhead(a: THREE.Vector3, b: THREE.Vector3, dir: THREE.Vector3, max: number, out: THREE.Vector3, touch: number, steep: number, facing: THREE.Vector3): number;
+  nearestAhead(a: THREE.Vector3, b: THREE.Vector3, dir: THREE.Vector3, max: number, touch: number, steep: number, facing: THREE.Vector3): number;
   /** Distance to the first surface along `dir` (unit) from `origin`, else `max`.
    *  Used to keep the follow-camera from clipping through walls. */
   rayDistance(origin: THREE.Vector3, dir: THREE.Vector3, max: number): number;
@@ -168,7 +168,6 @@ export class MeshCollision implements Collision {
   // nearestAhead's search, read by its hoisted callbacks
   private aheadDir = new THREE.Vector3();
   private aheadBest = 0;
-  private aheadPoint = new THREE.Vector3();
   private aheadAxis = new THREE.Vector3();
   private aheadNormal = new THREE.Vector3();
   private aheadTo = new THREE.Vector3();
@@ -186,7 +185,6 @@ export class MeshCollision implements Collision {
       if (dist <= this.aheadTouch && Math.abs(this.aheadNormal.y) <= this.aheadSteep) this.aheadFacing.addScaledVector(this.aheadNormal, tri.getArea());
       if (dist >= this.aheadBest) return;
       this.aheadBest = dist;
-      this.aheadPoint.copy(this.triPoint);
     },
   };
   // Built once (not per moveCapsule call) to avoid closure allocation on the hot path.
@@ -217,7 +215,7 @@ export class MeshCollision implements Collision {
     this.bvh = new MeshBVH(geometry, { indirect: true });
   }
 
-  nearestAhead(a: THREE.Vector3, b: THREE.Vector3, dir: THREE.Vector3, max: number, out: THREE.Vector3, touch: number, steep: number, facing: THREE.Vector3): number {
+  nearestAhead(a: THREE.Vector3, b: THREE.Vector3, dir: THREE.Vector3, max: number, touch: number, steep: number, facing: THREE.Vector3): number {
     this.seg.start.copy(a); this.seg.end.copy(b);
     // around the axis by `max`, but not below its foot: only surfaces level with the axis or
     // above it count (below is the feet, which a caller covers otherwise), and the floor under
@@ -227,7 +225,6 @@ export class MeshCollision implements Collision {
     this.aheadDir.copy(dir); this.aheadBest = max; this.aheadTouch = Math.min(touch, max); this.aheadSteep = steep;
     this.aheadFacing.set(0, 0, 0);
     this.bvh.shapecast(this.aheadCbs);
-    out.copy(this.aheadPoint);
     facing.copy(this.aheadFacing);
     if (facing.lengthSq() > 1e-20) facing.normalize();
     return this.aheadBest;

@@ -38,11 +38,12 @@ the movement settings, an ability, or how a character is animated. Climbing has 
    speed × dt − ½ × gravity × dt². Adding the pull to the speed first lost half a frame's
    rise each jump (0.05 body heights at 30 frames a second), so a jump's height depended on
    the frame rate and the movement model overestimated it.
-3. **The movement model is what the game does.** `collision-health.ts`'s `reach` works out
+3. **The movement model is what the game does.** `collision-health.ts`'s `jumpArc` works out
    from the settings and the loadout how high a jump rises and how far it carries: the jump,
    then each air jump at the top of the one before, rising at `gravity`, falling at
    `gravity × fallGravity`, at sprint speed across. `scripts/jumpcheck.mjs` checks it against
-   real running jumps (0 to 3% off). Change one, run the other.
+   real running jumps (0 to 3% off), importing `jumpArc` itself rather than a copy of its
+   arithmetic, so the two cannot drift. Change one, run the other.
 4. **Nothing asks which character it is.** Code asks for a move (`play('fall')`), whether
    the character climbs, and what its loadout can do.
 5. **Everything is in body heights** (speeds a second, heights, accelerations), so a

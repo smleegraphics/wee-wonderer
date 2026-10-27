@@ -127,6 +127,26 @@ function standing(input: HealthInput): Pick<CollisionHealth, 'cells' | 'platform
   };
 }
 
+/** The movement model's jump: the jump, then each air jump made at the top of the one before,
+ *  which is how high and how far the figurine can get with them. `rise`: the highest it gets;
+ *  `carry(dy)`: how far it has gone across, at a run, when it comes back down to `dy` above where
+ *  it left (below, if negative), rising at `gravity` to each top and falling from the last at
+ *  `gravity` × `fallGravity`. scripts/jumpcheck.mjs checks real jumps against this. */
+export function jumpArc(move: HealthInput['move']): { rise: number; carry: (dy: number) => number } {
+  const g = move.gravity, fall = g * (move.fallGravity ?? 1), launches = [move.jumpVel, ...(move.airJumpVels ?? [])];
+  const rise = launches.reduce((h, v) => h + (v * v) / (2 * g), 0);
+  const carry = (dy: number) => {
+    let t = 0, base = 0, longest = 0; // seconds to the start of each launch, the height it starts from
+    for (const v of launches) {
+      const top = base + (v * v) / (2 * g);
+      if (dy <= top) longest = Math.max(longest, t + v / g + Math.sqrt((2 * (top - dy)) / fall));
+      t += v / g; base = top;
+    }
+    return move.runSpeed * longest;
+  };
+  return { rise, carry };
+}
+
 /** How much of what is walkable the figurine can get to from where it starts.
  *
  *  A model of its movement, not the controller itself. From any cell it can reach a cell
@@ -153,21 +173,7 @@ function reach(input: HealthInput): Pick<CollisionHealth, 'jumpShare' | 'reachSh
   const col = (i: number) => Math.round((P[i * 3] - minX) / step) * nz + Math.round((P[i * 3 + 2] - minZ) / step);
   const head = new Int32Array(nx * nz).fill(-1), next = new Int32Array(cells), members: number[][] = Array.from({ length: walk.platformCount }, () => []);
   for (let i = 0; i < cells; i++) { const c = col(i); next[i] = head[c]; head[c] = i; members[walk.platformId[i]].push(i); }
-  // The arc: the jump, then each air jump made at the top of the one before, which is how
-  // high and how far the figurine can get with them.
-  const g = move.gravity, fall = g * (move.fallGravity ?? 1), launches = [move.jumpVel, ...(move.airJumpVels ?? [])];
-  const rise = launches.reduce((h, v) => h + (v * v) / (2 * g), 0);
-  /** How far that arc carries by the time it comes back down to `dy` above where it left (below, if
-   *  negative): rising at `g` to each top, falling from the last at `fall`. */
-  const carry = (dy: number) => {
-    let t = 0, base = 0, longest = 0; // seconds to the start of each launch, the height it starts from
-    for (const v of launches) {
-      const top = base + (v * v) / (2 * g);
-      if (dy <= top) longest = Math.max(longest, t + v / g + Math.sqrt((2 * (top - dy)) / fall));
-      t += v / g; base = top;
-    }
-    return move.runSpeed * longest;
-  };
+  const { rise, carry } = jumpArc(move);
 
   const spread = (climbing: 'no' | 'faces' | 'anywhere'): Uint8Array => {
     const reached = new Uint8Array(walk.platformCount), queue = [start];

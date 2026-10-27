@@ -19,9 +19,10 @@ const climbProbe = new THREE.Vector3(); // scratch for the forward wall raycast
 const climbSide = new THREE.Vector3();  // scratch: sideways direction along the wall
 const climbFrom = new THREE.Vector3();  // scratch: where the body was before the snap to the face, which might not fit
 const climbFrame = new THREE.Vector3(); // scratch: where the body was at the start of the frame
-const axisFrom = new THREE.Vector3(), axisTo = new THREE.Vector3(), axisAt = new THREE.Vector3(), axisFacing = new THREE.Vector3(); // scratch: the body's axis, its nearest point of the wall, and how the wall it touches faces
+const axisFrom = new THREE.Vector3(), axisTo = new THREE.Vector3(), axisFacing = new THREE.Vector3(); // scratch: the body's axis, and how the wall it touches faces
 let climbAtEdge = false;                // sideways shuffle is stopped at the wall's edge (telemetry de-dupe)
 export let climbCling = false;                 // topped out with nowhere to stand → hanging
+let overTried = false;                  // hanging at a top, a way over was looked for here and there was none
 let climbUnfit = false;                 // this frame's move was undone (telemetry de-dupe)
 let climbInGap = false;                 // going up through a gap in the face (telemetry de-dupe)
 let climbBlocked = false;               // the body is being pushed out of something (telemetry de-dupe)
@@ -111,15 +112,15 @@ export function tryStartClimb(dx: number, dz: number, feetY: number): boolean {
   const wall = climbStartsHere(p.x, feetY, p.z, climbTry), ledge = !wall && climbStart.ledge;
   if (!wall && !ledge) { if (TEL) console.log(`CLIMB-NO (mid-air) y=${feetY.toFixed(2)} ${climbStart.why}`); return false; }
   const { dist, up } = climbStart;
-  const midAir = figurine.state === 'air';
   climbDir.copy(climbTry);
   climbCling = false;
   figurine.state = 'climb';
   velocity.set(0, 0, 0);
   player.rotation.y = Math.atan2(climbDir.x, climbDir.z); // face the wall
+  tiltWanted = 0; overTried = false; // a new wall: no lean until it is measured, and a way over not yet looked for
   play('climb', 0.1);
   camLatch.handsOff = true;
-  if (TEL) console.log(`CLIMB-${ledge ? 'LEDGE' : 'START'}${midAir ? ' (mid-air)' : ''} y=${p.y.toFixed(2)} dist=${dist.toFixed(2)} up=${up.toFixed(2)}`);
+  if (TEL) console.log(`CLIMB-${ledge ? 'LEDGE' : 'START'} (mid-air) y=${p.y.toFixed(2)} dist=${dist.toFixed(2)} up=${up.toFixed(2)}`);
   return true;
 }
 
@@ -131,11 +132,11 @@ const TILT_TOUCH = 0.5; // capsule radii past the climbing gap: the surfaces thi
 let tiltWanted = 0;  // radians: the lean the wall's facing asks for (forward positive)
 let tiltShown = 0;   // radians: the lean shown, eased toward that (or upright, off the wall)
 
-/** The figure's lean this frame, radians forward, eased toward the wall's facing while climbing
- *  and back to upright otherwise. */
 /** The lean shown, in degrees (telemetry). */
 export const climbTiltShown = () => THREE.MathUtils.radToDeg(tiltShown);
 
+/** The figure's lean this frame, radians forward, eased toward the wall's facing while climbing
+ *  and back to upright otherwise. */
 export function climbTilt(dt: number): number {
   const max = THREE.MathUtils.degToRad(CLIMB_TILT.max);
   const want = figurine.state === 'climb' && !climbCling && CLIMB_TILT.on ? THREE.MathUtils.clamp(tiltWanted, -max, max) : 0; // (hanging at a top: upright)
@@ -259,10 +260,12 @@ export function climbUpdate(dt: number): boolean {
 
   let v = move.f - move.b;                     // W = up, S = down
   let h = move.r - move.l;                     // D = figurine's right, A = its left
+  if (h !== 0 || v < 0) overTried = false;    // moved: what is over the top may have changed
   if (climbCling && v > 0) {                   // hanging at a top: W goes over it if there is any way over (overTheTop)
-    const over = overTheTop(CLIMB.pullUp);
+    const over = overTried ? null : overTheTop(CLIMB.pullUp);
     if (over === 'stood') return true;
     if (over === 'moved') return false;
+    overTried = true;                          // none from here: not looked for again until the climber moves
     v = 0;
   }
   play(climbCling ? 'ledgeHang' : 'climb', 0.15);
@@ -333,7 +336,7 @@ export function climbUpdate(dt: number): boolean {
     // face that bulges out higher up (the side of Counter's bowl) pressed the chest and head
     // into it, and the push out of it cancelled every step up. Where the body is nearest the
     // wall is where the gap is kept, so it leans out over a bulge and in under a recess.
-    const nearest = collision.nearestAhead(axisFrom.set(p.x, p.y + probeUp, p.z), axisTo.set(p.x, p.y + charH * CLIMB.head, p.z), climbDir, followReach, axisAt, gap + radius * TILT_TOUCH, grabSlopeMax(), axisFacing);
+    const nearest = collision.nearestAhead(axisFrom.set(p.x, p.y + probeUp, p.z), axisTo.set(p.x, p.y + charH * CLIMB.head, p.z), climbDir, followReach, gap + radius * TILT_TOUCH, grabSlopeMax(), axisFacing);
     // The figure lies parallel to the wall it touches: its up is the world's up made
     // perpendicular to the way the touching faces face, averaged by area. A face turned to the
     // sky (leaning away) tips it forward, one turned to the ground (over it) tips it back. Only
@@ -396,16 +399,20 @@ export function climbUpdate(dt: number): boolean {
  *  foot of an object, the body touching nothing). The overlap test cannot tell either: a body
  *  wholly inside crosses no surface and reads 0. The climb fuzz asks the same (`__dbg.inside`). */
 const INSIDE_RAYS = 4; // of the six, meeting a surface from behind
+const INSIDE_LOOK = ['ahead', 'behind', 'left', 'right', 'up', 'down']; // (telemetry names, in the order below)
 const insideAt = new THREE.Vector3(), insideDir = new THREE.Vector3();
-let insideWhy = ''; // which rays found it inside (telemetry)
+let insideWhy = ''; // which rays found it inside (telemetry: built only under ?tel=1)
 export function chestInside(x: number, y: number, z: number, dir: THREE.Vector3): boolean {
   if (!collision) return false;
   insideAt.set(x, y + charH * CLIMB.chest, z);
   let behind = 0;
-  insideWhy = '';
-  for (const [name, dx, dy, dz] of [['ahead', dir.x, 0, dir.z], ['behind', -dir.x, 0, -dir.z], ['left', -dir.z, 0, dir.x], ['right', dir.z, 0, -dir.x], ['up', 0, 1, 0], ['down', 0, -1, 0]] as const) {
-    const w = collision.wallAhead(insideAt, insideDir.set(dx, dy, dz), charH * 4);
-    if (w && !w.front) { behind++; insideWhy += `${name} `; }
+  if (TEL) insideWhy = '';
+  for (let i = 0; i < 6; i++) {
+    // ahead along `dir`, behind, left, right, up, down
+    if (i < 4) insideDir.set(i === 0 ? dir.x : i === 1 ? -dir.x : i === 2 ? -dir.z : dir.z, 0, i === 0 ? dir.z : i === 1 ? -dir.z : i === 2 ? dir.x : -dir.x);
+    else insideDir.set(0, i === 4 ? 1 : -1, 0);
+    const w = collision.wallAhead(insideAt, insideDir, charH * 4);
+    if (w && !w.front) { behind++; if (TEL) insideWhy += `${INSIDE_LOOK[i]} `; }
   }
   return behind >= INSIDE_RAYS;
 }

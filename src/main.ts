@@ -39,7 +39,7 @@ if (TEL) (window as unknown as { __step?: (keys: string[], seconds: number, jump
     move.jump = jump || keys.includes('Space'); // Space held: a jump rises to its full height while it is, and is cut short once it is not (MOVE.jumpCut)
     if (jump) jumpKey();
     const frames = Math.max(1, Math.round(seconds / STEP_DT));
-    if (!draw) { for (let i = 0; i < frames; i++) simulate(STEP_DT); done(); return; }
+    if (!draw) { for (let i = 0; i < frames; i++) simulate(STEP_DT, i === frames - 1); done(); return; } // (telemetry once, for the last: only it is read)
     stepFrames = frames;
     stepDone = done;
   });
@@ -57,14 +57,14 @@ let frames = 0;
 
 /** Everything a frame does but draw: the figurine, the camera, the lights, the room arriving.
  *  A dt of 0 holds everything still (a __step script between calls). */
-function simulate(dt: number): void {
+function simulate(dt: number, publish = true): void {
   const waiting = loadingViewOn();
   if (charLoaded && dt > 0) { if (!waiting) updateController(dt); if (FREECAM) updateFreeCam(); else updateCamera(dt); }
   mixer?.update(dt);
   if (charLoaded) { updateContactShadow(dt); updateScanLight(dt); updateScanDebug(); }
   updateArrival(dt);
-  if (TEL) publishDebugState();
-  if (TEL) applyMatteView();
+  if (TEL && publish) publishDebugState();
+  if (TEL && publish) applyMatteView();
 }
 
 async function main(): Promise<void> {
