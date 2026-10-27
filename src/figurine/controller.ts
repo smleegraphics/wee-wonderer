@@ -34,7 +34,7 @@ const navRecover = new THREE.Vector3();
 let abilities: Ability[] = [];  // the loadout in play (characters.ts, abilities.ts)
 let sprint = 0;       // 0 walking .. 1 sprinting: eases with Shift over MOVE.sprintRamp
 let coyote = 0;       // seconds left in which a jump still counts as from the ground
-let buffered = 0;     // seconds left in which a jump press waits to be made
+let pressedAgo = -1;  // seconds since a jump press not yet made (-1: none); made while within MOVE.jumpBuffer
 let cutArmed = false; // rising from a jump whose height letting go of Space can still cut
 
 /** The abilities in play. */
@@ -46,7 +46,7 @@ export const airJumpHeights = () => abilities.flatMap((a) => a.airJumps?.() ?? [
 export function jumpKey(): void {
   move.jump = true;
   if (figurine.state === 'climb') { climbJumpOff(); cutArmed = true; return; }
-  buffered = MOVE.jumpBuffer;
+  pressedAgo = 0; // tried this frame whatever the grace, then for MOVE.jumpBuffer after
 }
 /** Space let go: a jump still rising is cut short (MOVE.jumpCut). */
 export function jumpRelease(): void { move.jump = false; }
@@ -54,7 +54,8 @@ export function jumpRelease(): void { move.jump = false; }
 /** Stood still somewhere new (a start, a respawn): no speed, nothing pending, everything spent in the air back. */
 export function resetMotion(): void {
   velocity.set(0, 0, 0);
-  sprint = coyote = buffered = 0;
+  sprint = coyote = 0;
+  pressedAgo = -1;
   cutArmed = false;
   for (const a of abilities) a.landed?.();
 }
@@ -95,9 +96,10 @@ export function updateController(dt: number): void {
       return;
     }
     steer(dt, moving);
-    buffered = Math.max(0, buffered - dt);
-    if (buffered > 0) tryJump();
+    if (pressedAgo > MOVE.jumpBuffer) pressedAgo = -1; // a press too long ago: dropped
+    if (pressedAgo >= 0) tryJump();
     grounded = figurine.state === 'ground' ? walk(dt) : fall(dt);
+    if (pressedAgo >= 0) pressedAgo += dt;
   }
   figurine.wasGrounded = grounded;
 
@@ -119,11 +121,11 @@ function steer(dt: number, moving: boolean): void {
   const top = (MOVE.walkSpeed + (MOVE.sprintSpeed - MOVE.walkSpeed) * sprint) * charH;
   want.copy(wishDir).multiplyScalar(moving ? top : 0);
   const walk = MOVE.walkSpeed * charH;
-  let rate = (moving ? walk / Math.max(MOVE.accelTime, 1e-3) : walk / Math.max(MOVE.stopTime, 1e-3)) * dt;
-  if (figurine.state !== 'ground') rate *= MOVE.airControl;
-  const dx = want.x - velocity.x, dz = want.z - velocity.z, d = Math.hypot(dx, dz);
+  const rate = (moving ? walk / Math.max(MOVE.accelTime, 1e-3) : walk / Math.max(MOVE.stopTime, 1e-3)) * dt;
   // Above top speed (Shift let go mid-sprint) the excess goes at the sprint ramp's pace, not the stop's.
-  const ease = Math.max(rate, d > 0 && Math.hypot(velocity.x, velocity.z) > top ? (MOVE.sprintSpeed - MOVE.walkSpeed) * charH * dt / Math.max(MOVE.sprintRamp, 1e-3) : 0);
+  const excess = Math.hypot(velocity.x, velocity.z) > top ? (MOVE.sprintSpeed - MOVE.walkSpeed) * charH * dt / Math.max(MOVE.sprintRamp, 1e-3) : 0;
+  const dx = want.x - velocity.x, dz = want.z - velocity.z, d = Math.hypot(dx, dz);
+  const ease = Math.max(rate, excess) * (figurine.state === 'ground' ? 1 : MOVE.airControl); // in the air, all of it at the air's share
   if (d <= ease) { velocity.x = want.x; velocity.z = want.z; }
   else { velocity.x += (dx / d) * ease; velocity.z += (dz / d) * ease; }
   const speed = Math.hypot(velocity.x, velocity.z);
@@ -135,12 +137,12 @@ function tryJump(): void {
   if (figurine.state === 'ground' || coyote > 0) {
     velocity.y = launchSpeed(MOVE.jumpHeight) * charH;
     figurine.state = 'air';
-    buffered = coyote = 0;
+    pressedAgo = -1; coyote = 0;
     cutArmed = true;
     play('jumpStart', 0.06);
     return;
   }
-  if (figurine.state === 'air' && abilities.some((a) => a.airJump?.(airMove))) buffered = 0;
+  if (figurine.state === 'air' && abilities.some((a) => a.airJump?.(airMove))) pressedAgo = -1;
 }
 
 /** How deep the body, feet at (x,y,z), is sunk into the collision mesh — 0 when it
@@ -177,7 +179,7 @@ function walk(dt: number): boolean {
       // something stops it: slide, one axis at a time (the second from wherever the first
       // left it — both at once is the step just refused), losing the speed into it
       if (dx !== 0 && stepTo(p.x + dx, p.z, band, radius) === 'blocked') velocity.x = 0;
-      if (dz !== 0 && stepTo(p.x, p.z + dz, band, radius) === 'blocked') velocity.z = 0;
+      if (dz !== 0 && figurine.state === 'ground' && stepTo(p.x, p.z + dz, band, radius) === 'blocked') velocity.z = 0; // (not once the first walked off an edge)
     }
     if (figurine.state === 'air') return false; // walked off an edge
     pushOutOfWalls(figurine.supportY, radius);
@@ -236,7 +238,7 @@ function fall(dt: number): boolean {
       // (Living Room's couch back stands 1.5 cells past the seat's last one).
       const ground = climbGround(p.y + radius * 0.5, -nx, -nz, 2 * radius + navGrid!.step);
       if (!ground) { if (TEL) console.log(`CLIMB-NO (mid-air) no ground below y=${p.y.toFixed(2)}`); }
-      else if (tryStartClimb(-nx, -nz, p.y)) return false;
+      else if (tryStartClimb(-nx, -nz, p.y)) { pressedAgo = -1; return false; } // (a press waiting in the air is not for after the climb)
     }
     const into = velocity.x * nx + velocity.z * nz; // no more driving into it
     if (into < 0) { velocity.x -= into * nx; velocity.z -= into * nz; }
@@ -262,7 +264,7 @@ function landed(impact: number): void {
   play(impact > LAND_HARD ? 'land' : 'idle', 0.1);
   coyote = 0; cutArmed = false;
   for (const a of abilities) a.landed?.();
-  if (buffered > 0) tryJump();
+  if (pressedAgo >= 0) tryJump();
 }
 
 /** The move for how it is moving: on the ground by speed (idle, walk, sprint, with the pace

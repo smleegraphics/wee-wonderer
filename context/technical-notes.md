@@ -60,6 +60,10 @@ feels magical.
 
 ## Controller reference (implemented in the harness)
 
+*The game's controller has since been rewritten (states ground / air / climb, an instant
+jump, no jump_start or land state): see `context/movement.md`. What follows is the July
+harness, kept as history.*
+
 State machine: ground / jump_start / air / land / climb. Edge-fall goes
 straight to jump_loop (no jump_start). Climb grabs the nearest wall face,
 snaps flush, W/S to ascend, mantles over the top. Contextual UI prompt

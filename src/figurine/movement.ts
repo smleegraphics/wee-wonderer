@@ -3,9 +3,9 @@
 // heights a second, heights in body heights, times in seconds, so a bigger or smaller
 // character moves the same way relative to itself (context/movement.md).
 
-/** The defaults. The jump's rise and the sprint's top speed are today's (a rise of 0.57 and a
- *  run of 4.0), so the movement model (reach-graph.ts) and what it says can be reached are
- *  unchanged until it learns the air jump. */
+/** The defaults. The jump's rise and the sprint's top speed are the old controller's (a rise of
+ *  0.57 and a run of 4.0); the movement model (collision-health.ts's reach) reads them, so changing
+ *  them changes what it says can be reached (scripts/jumpcheck.mjs). */
 export const MOVE_DEFAULTS = {
   walkSpeed: 1.6,     // walking pace: the walk clip reads right at this (character README)
   sprintSpeed: 4.0,   // top speed with Shift held: the run clip reads right at this
@@ -29,9 +29,13 @@ export const MOVE: MoveSettings = { ...MOVE_DEFAULTS };
 /** Settings changed in the Debug card this session: they hold whatever character is in play. */
 export const moveSet: Partial<MoveSettings> = {};
 
-/** Make MOVE the defaults with `own` (a character's settings) and the session's on top. */
+/** Each setting's Debug slider: call to show a value on it. */
+export const moveSliders: Partial<Record<keyof MoveSettings, (v: number) => void>> = {};
+
+/** Make MOVE the defaults with `own` (a character's settings) and the session's on top, and show them on the sliders. */
 export function useMoveSettings(own: Partial<MoveSettings>): void {
   Object.assign(MOVE, MOVE_DEFAULTS, own, moveSet);
+  for (const key of Object.keys(MOVE) as (keyof MoveSettings)[]) moveSliders[key]?.(MOVE[key]);
 }
 
 /** The take-off speed (body heights a second) that rises `height` under MOVE.gravity. */

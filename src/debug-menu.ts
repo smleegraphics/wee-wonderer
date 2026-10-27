@@ -2,7 +2,7 @@
 
 import { hud } from './app';
 import { overlayBoxes, PLATFORM_OPTS, rebuildCollision, rebuildPlatformOverlay, setPlatformOverlay, setVoxelOverlay, showPlatforms, showVoxels, VOXEL_OPTS, voxelSet, type VoxelSettings, voxelSliders } from './collision/room-collision';
-import { MOVE, moveSet, type MoveSettings } from './figurine/movement';
+import { MOVE, moveSet, type MoveSettings, moveSliders } from './figurine/movement';
 import { CONTACT_SHADOW } from './lighting/contact-shadow';
 import { applyScanLight, requestScanLight, SCAN_LIGHT } from './lighting/scan-light';
 import { CLEAN_OPTS, recleanUpload } from './scan/import';
@@ -20,8 +20,9 @@ export function setupDebugMenu(): void {
 
   const moving = hud.debug.section('Movement');
   /** A slider for one movement setting: it holds for the session, whatever character is in play (moveSet). */
-  const moveSlider = (key: keyof MoveSettings, label: string, min: number, max: number, step: number, help: string) =>
-    moving.addSlider(label, MOVE[key], min, max, step, (v) => { moveSet[key] = MOVE[key] = v; }, help);
+  const moveSlider = (key: keyof MoveSettings, label: string, min: number, max: number, step: number, help: string) => {
+    moveSliders[key] = moving.addSlider(label, MOVE[key], min, max, step, (v) => { moveSet[key] = MOVE[key] = v; }, help);
+  };
   moveSlider('walkSpeed', 'Walk speed', 0.5, 4, 0.1, 'Walking pace, in body heights a second.');
   moveSlider('sprintSpeed', 'Sprint speed', 1, 8, 0.1, 'Top speed with Shift held, in body heights a second.');
   moveSlider('sprintRamp', 'Sprint build-up (s)', 0.05, 2, 0.05, 'Seconds from a walk to a full sprint with Shift held, and back down on letting go.');

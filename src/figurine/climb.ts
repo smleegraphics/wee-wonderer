@@ -10,9 +10,9 @@ import { CHARACTER, charH, pauseMove, play } from './character';
 import { bodyOverlap, lastGood, lerpAngle, WALL_LIFT, wallFeet } from './controller';
 import { launchSpeed, MOVE } from './movement';
 
-// Automatic: walking into a wall enters climb. The figurine ascends the face,
-// following it up; when the wall ends it tops out — onto a surface if there's one
-// to stand on, otherwise it clings at the top until you jump (Space) off.
+// A jump into a wall grabs it (the controller's fall, tryStartClimb). The figurine ascends the
+// face, following it up; when the wall ends it tops out — onto a surface if there's one to
+// stand on, otherwise it clings at the top until you jump (Space) off.
 export const climbDir = new THREE.Vector3();   // horizontal direction into the wall we're on
 const climbTry = new THREE.Vector3();   // scratch: a candidate direction, until a climb actually starts
 const climbProbe = new THREE.Vector3(); // scratch for the forward wall raycast
@@ -31,9 +31,6 @@ export const CLIMB = {
   lipGrip: -0.1,    // clinging at the top, the feet are past it: grip just below them
   startReach: 0.5,  // how far ahead of the body a wall starts a climb
   followReach: 0.4, // how far off the face may be while following it
-  lipReach: 0.6,    // how far past a ledge's edge to look back for its face...
-  lipProbe: 0.3,    // ...and how far below the lip
-  hang: 0.2,        // feet this far below the lip after grabbing it
   gap: 1.1,         // body centre held this many radii off the face (just clear of it)
   mantleOver: 2,    // a mantle steps this many radii over the lip...
   mantleNear: 0.4,  // ...onto a surface within this of the feet...
@@ -91,9 +88,8 @@ export function climbStartsHere(x: number, feetY: number, z: number, dir: THREE.
 }
 
 /** True if a wall is right in front (in the `dx,dz` direction); if so, enter the climb
- *  at `feetY` — the ground we're standing on, or wherever the feet are when a jump
- *  carries us into the wall. */
-export function tryStartClimb(dx: number, dz: number, feetY = figurine.supportY): boolean {
+ *  with the feet at `feetY`, where a jump has carried them into the wall. */
+export function tryStartClimb(dx: number, dz: number, feetY: number): boolean {
   if (!collision || !CHARACTER.climbs) return false;
   climbTry.set(dx, 0, dz);
   if (climbTry.lengthSq() < 1e-9) return false;
