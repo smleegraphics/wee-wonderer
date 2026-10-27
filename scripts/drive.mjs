@@ -4,8 +4,9 @@
 //        room:Kitchen (pick a room by its name)   tile:Debug (click an icon tile by its name)
 //        range:Light strength=2 (set a Debug slider by its label)   title:1 (start on the title screen)
 import { chromium } from 'playwright';
+import { APP_URL } from './app-url.mjs';
 
-const url = process.argv[2] ?? 'http://localhost:5173/';
+const url = process.argv[2] ?? `${APP_URL}/`;
 const steps = process.argv.slice(3);
 const startOnTitle = steps.includes('title:1');
 

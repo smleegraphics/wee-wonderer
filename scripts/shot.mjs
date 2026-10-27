@@ -4,11 +4,12 @@
 //   node scripts/shot.mjs [url] [outPath] [extraWaitMs]
 //
 // Optional camera query params the app understands (see FREECAM_OPTS in app.ts): az, el, dist.
-// Example: node scripts/shot.mjs "http://localhost:5173/?az=1.2&el=0.3" shot.png
+// Example: node scripts/shot.mjs "http://localhost:5173/?az=1.2&el=0.3" shot.png (the default address is WW_URL, scripts/app-url.mjs)
 
 import { chromium } from 'playwright';
+import { APP_URL } from './app-url.mjs';
 
-const url = process.argv[2] ?? 'http://localhost:5173/';
+const url = process.argv[2] ?? `${APP_URL}/`;
 const out = process.argv[3] ?? 'shot.png';
 const extraWait = Number(process.argv[4] ?? 0);
 

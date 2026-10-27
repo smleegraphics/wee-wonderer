@@ -18,6 +18,7 @@
 import { chromium } from 'playwright';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { APP_URL } from './app-url.mjs';
 
 const BASELINE = fileURLToPath(new URL('./collision-baseline.json', import.meta.url));
 const args = process.argv.slice(2), save = args.includes('--save');
@@ -102,7 +103,7 @@ try {
   {
     const page = await browser.newPage();
     await page.addInitScript(() => localStorage.setItem('ww.titleSeen', '1'));
-    await page.goto('http://localhost:5173/?scan=nope.ply', { waitUntil: 'load' }); // any page of the app will do: only its module server is used
+    await page.goto(`${APP_URL}/?scan=nope.ply`, { waitUntil: 'load' }); // any page of the app will do: only its module server is used
     failed += await selfTest(page);
     await page.close();
   }
@@ -110,7 +111,7 @@ try {
     const page = await browser.newPage();
     page.on('pageerror', (e) => { failed++; console.log(`FAIL  ${scan}: page error — ${e.message}`); });
     await page.addInitScript(() => localStorage.setItem('ww.titleSeen', '1'));
-    await page.goto(`http://localhost:5173/?scan=${scan}&tel=1${trial.map((t) => '&' + t).join('')}`, { waitUntil: 'load' });
+    await page.goto(`${APP_URL}/?scan=${scan}&tel=1${trial.map((t) => '&' + t).join('')}`, { waitUntil: 'load' });
     await page.waitForFunction(() => window.__wwReady === true && window.__dbg?.reveal === 1, undefined, { timeout: 280000 });
     measured[scan] = await page.evaluate(() => window.__collisionHealth());
     await page.close();

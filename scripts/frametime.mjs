@@ -8,6 +8,7 @@
 // With no scans named, Kitchen and Playroom (the lightest and heaviest demo rooms).
 
 import { chromium } from 'playwright';
+import { APP_URL } from './app-url.mjs';
 
 const args = process.argv.slice(2);
 const flag = (name, def) => { const i = args.indexOf(name); return i >= 0 ? Number(args[i + 1]) : def; };
@@ -21,7 +22,7 @@ try {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: ratio });
     const page = await context.newPage();
     await page.addInitScript(() => localStorage.setItem('ww.titleSeen', '1'));
-    await page.goto(`http://localhost:5173/?scan=${scan}&tel=1`, { waitUntil: 'load' });
+    await page.goto(`${APP_URL}/?scan=${scan}&tel=1`, { waitUntil: 'load' });
     await page.waitForFunction(() => window.__wwReady === true && window.__dbg?.reveal === 1, undefined, { timeout: 280000 });
     await page.waitForTimeout(3000); // past the first frames after arrival
     const gpu = await page.evaluate(async () => { const a = await navigator.gpu?.requestAdapter(); return a ? `${a.info?.vendor} ${a.info?.architecture}` : 'no WebGPU adapter'; });
