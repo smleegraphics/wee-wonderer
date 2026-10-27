@@ -19,8 +19,10 @@ const climbProbe = new THREE.Vector3(); // scratch for the forward wall raycast
 const climbSide = new THREE.Vector3();  // scratch: sideways direction along the wall
 const climbFrom = new THREE.Vector3();  // scratch: where the body was before the snap to the face, which might not fit
 const climbFrame = new THREE.Vector3(); // scratch: where the body was at the start of the frame
+const axisFrom = new THREE.Vector3(), axisTo = new THREE.Vector3(), axisAt = new THREE.Vector3(); // scratch: the body's axis, and its nearest point of the wall
 let climbAtEdge = false;                // sideways shuffle is stopped at the wall's edge (telemetry de-dupe)
 export let climbCling = false;                 // topped out with nowhere to stand → hanging
+let climbUnfit = false;                 // this frame's move was undone (telemetry de-dupe)
 let climbInGap = false;                 // going up through a gap in the face (telemetry de-dupe)
 let climbBlocked = false;               // the body is being pushed out of something (telemetry de-dupe)
 
@@ -246,8 +248,13 @@ export function climbUpdate(dt: number): boolean {
   if (wall) { climbCling = false; climbInGap = false; } // wall above the feet again (the lip rose) → not topped out
   else if (climbCling) wall = climbWall(climbProbe.set(p.x, p.y + probeUp, p.z), climbDir, followReach);
   if (wall) {
+    // Hold the gap to the wall over the whole body, grip to head, not at the grip alone: a
+    // face that bulges out higher up (the side of Counter's bowl) pressed the chest and head
+    // into it, and the push out of it cancelled every step up. Where the body is nearest the
+    // wall is where the gap is kept, so it leans out over a bulge and in under a recess.
+    const nearest = collision.nearestAhead(axisFrom.set(p.x, p.y + probeUp, p.z), axisTo.set(p.x, p.y + charH * CLIMB.head, p.z), climbDir, followReach, axisAt);
     climbFrom.copy(p);
-    p.addScaledVector(climbDir, wall.distance - gap);
+    p.addScaledVector(climbDir, Math.min(wall.distance, nearest) - gap);
     // steer into the face along its normal, so a curved / angled wall is followed
     // around. Eased: scan surfaces are lumpy, and per-triangle normals jitter.
     const hn = Math.hypot(wall.nx, wall.nz);
@@ -281,7 +288,11 @@ export function climbUpdate(dt: number): boolean {
   // move is made.
   let fits = fitClimbBody(radius);
   if (!fits && wall) { p.copy(climbFrom); fits = fitClimbBody(radius); }
-  if (!fits) p.copy(climbFrame);
+  if (!fits) {
+    if (TEL && !climbUnfit) console.log(`CLIMB-UNFIT y=${p.y.toFixed(2)} sunk=${(bodyOverlap(p.x, p.y, p.z, radius) / radius).toFixed(2)}r inside=${chestInside(p.x, p.y, p.z, climbDir)}`);
+    p.copy(climbFrame);
+  }
+  climbUnfit = !fits;
   return false;
 }
 

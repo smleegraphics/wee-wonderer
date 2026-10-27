@@ -108,6 +108,18 @@ These were each found by a bug. Breaking one brings the bug back.
       and the step stood. Both are needed (without `chestInside` the violation comes back);
       the same check on starting a climb made no difference and was left out.
 
+13. **The gap to the wall is held over the whole body.** The grip ray (just above the feet)
+    still decides whether there is a wall, the top, gaps and corners; but the body is held
+    `CLIMB.gap` from the nearest the wall comes to its axis, grip to head
+    (`Collision.nearestAhead`: surfaces facing it, within 60° of the climbing direction, not
+    below the grip). With the grip ray alone, a face that bulges out higher up (the side of
+    Counter's bowl) pressed the chest and head into it, and the push out of it cancelled every
+    step up: 12 of 112 jumps at Counter's objects ended stuck on the face, 1 now, and 45 reached
+    a top instead of 36. It costs 0.18 ms a frame while climbing (0.38 ms before its search
+    stopped at the axis's foot: the floor under the body was most of the triangles tested).
+    Three rays (feet, chest, head) were the cheaper idea, rejected as still sampling: a bulge
+    between them, or beside the body, would be missed.
+
 ## Follow camera
 
 A spring arm from the figurine to the camera (`updateCamera`).
@@ -182,10 +194,11 @@ character only.
 
 ## Known limitations
 
-- **No body collision while climbing.** The wall is followed with one probe near
-  the feet, so the body can pass into objects beside or above the wall. The
-  remaining invariant violations are this. Adding a capsule check risks blocking
-  climbs on lumpy walls that work today.
+- **The body is checked against the wall in front, not everything round it.** The gap is
+  kept over the whole body (rule 13) and a move that ends inside something is undone (rule
+  12), but nothing steers the body around an object beside the wall: it stops instead.
+- **A crevice between two objects can still hold a climber** that falls into it and re-grabs
+  (2 of 112 in the object test): no pushes or undone frames, no headway. Not investigated.
 - **A gap the probe cannot see past still reads as the top.** `wallAbove` looks within the
   following reach; where the face resumes further back than that, or more than `gapAbove`
   higher, the climber hangs. Measured with the cling detector (a scratch script: hold W on
