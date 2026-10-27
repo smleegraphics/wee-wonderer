@@ -23,7 +23,9 @@ the movement settings, an ability, or how a character is animated. Climbing has 
 - **Walking off an edge falls**, if there is somewhere below to land. An edge with nothing
   below (the scan's rim) or a body pushed into something there (a wall's foot) stops it, and
   it slides along the edge. A drop of up to `STEP_DOWN_MAX` is stepped down.
-- **Walls stop a walk; jumping into one climbs it** (`context/climb.md`).
+- **Walls stop a walk; jumping into one climbs it, and jumping at a ledge grabs it**
+  (`context/climb.md`). A jump press waits `jumpBuffer` but not through a climb: grabbing a
+  wall drops it.
 
 ## Rules that must hold
 
@@ -98,6 +100,7 @@ A model need not have a clip for every move: `clips` can hold a frame of another
 | `land` | once, on a landing faster than `LAND_HARD` | `idle` | (falls back) |
 | `airJump` | once, from its start again for each air jump | `jumpStart` | (falls back) |
 | `climb` | loop, paused while not moving on the wall | — | `climb` |
+| `ledgeHang` | loop, while hanging from a lip | `climb` | (falls back) |
 
 A character for the game wants all of these, and could add a sideways climb (there is none:
 the generated one was tied to the chibi's bones, `context/climb.md`).

@@ -6,7 +6,7 @@
 import type { MoveSettings } from './movement';
 
 /** The moves a character animates. */
-export type Move = 'idle' | 'walk' | 'sprint' | 'jumpStart' | 'rise' | 'fall' | 'land' | 'airJump' | 'climb';
+export type Move = 'idle' | 'walk' | 'sprint' | 'jumpStart' | 'rise' | 'fall' | 'land' | 'airJump' | 'climb' | 'ledgeHang';
 
 /** How a move plays a clip: the whole clip by name, or one frame of it held as a pose (`hold`:
  *  seconds into the clip), for a move the model has no clip of its own for. */
@@ -14,12 +14,12 @@ export type ClipUse = string | { clip: string; hold: number };
 
 /** How each move plays: looping, or once (then holding its last frame). A held frame is held either way. */
 export const MOVE_PLAYS: Record<Move, 'loop' | 'once'> = {
-  idle: 'loop', walk: 'loop', sprint: 'loop', climb: 'loop',
+  idle: 'loop', walk: 'loop', sprint: 'loop', climb: 'loop', ledgeHang: 'loop',
   jumpStart: 'once', rise: 'once', fall: 'once', land: 'once', airJump: 'once',
 };
 
 /** A move with no clip given plays this one instead (and so on down the chain). */
-export const MOVE_FALLBACK: Partial<Record<Move, Move>> = { sprint: 'walk', airJump: 'jumpStart', rise: 'fall', fall: 'idle', land: 'idle', jumpStart: 'rise' };
+export const MOVE_FALLBACK: Partial<Record<Move, Move>> = { sprint: 'walk', airJump: 'jumpStart', rise: 'fall', fall: 'idle', land: 'idle', jumpStart: 'rise', ledgeHang: 'climb' };
 
 export interface CharacterEntry {
   id: string;

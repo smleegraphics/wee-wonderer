@@ -11,7 +11,14 @@ of it is in `src/figurine/` (`climb.ts`, `controller.ts`, `camera.ts`) unless no
   slider (70° by default) less "Grab below threshold" (10°): see rule 9.
 - On the wall, W/S go up and down, A/D go along the face. A/D are the figurine's own
   left and right, never camera-relative. Diagonals combine at the same speed.
-- At the top: mantle onto a walkable surface if there is one, otherwise cling.
+- Going up through a dent or gap in an uneven face: carry on, if the face picks up again
+  within `CLIMB.gapAbove` (0.8 body heights) above the grip.
+- At the top: mantle onto the nearest walkable surface over the lip (looked for out to
+  `mantleOver` radii). Otherwise hang from the lip (the `ledgeHang` move): W pulls up onto a
+  surface up to `pullUp` (a body height) above the feet, A/D go along the lip, S climbs back
+  down, Space jumps off.
+- Jump at a ledge (a face at chest height that ends below the head): grab it. Holding W tops
+  out over it at once; with nothing to stand on it hangs.
 - Walk off a ledge: fall (the lip grab is gone; jump back at the face to climb it).
 - Space jumps off, away from the face.
 
@@ -27,7 +34,8 @@ How the figurine walks, jumps and falls around this is `context/movement.md`.
 | `isWall` / `grabSlopeMax` | The one definition of a face to climb: steeper than the climb threshold less `grabBelow`. `grabSlopeMax` and `wallSlopeMax` (the walking cutoff, the NavGrid's `slopeMin`) are in `collision/room-collision.ts`, beside `PLATFORM_OPTS` they are read from. |
 | `climbWall` | The only way climb code probes for a surface. Rejects surfaces seen from behind. |
 | `climbGround` | Walkable ground a climber would come down onto: beneath it, or back from the wall up to a reach (a cell on the wall; the body's width plus a cell for a grab from the air). |
-| `tryStartClimb` | The start check, made in the air on touching a wall: a face at chest and head height. A refusal logs why (`CLIMB-NO`). |
+| `tryStartClimb` | The start check, made in the air on touching a wall: a face at chest and head height (a wall, `CLIMB-START`), or at chest height ending below the head (a ledge, `CLIMB-LEDGE`). A refusal logs why (`CLIMB-NO`). |
+| `tryMantle` / `wallAbove` | Topping out onto a surface over the lip (within a reach up: `mantleUp` climbing, `pullUp` from a hang), and telling a gap in the face from its top. |
 | `climbUpdate` | Movement on the wall, wall following, edges, corners, top-out, stepping off. Returns true on the frame it ends standing. |
 | `pushOutOfWalls` | Sideways capsule push-out shared by walking and airborne movement. |
 | `climbJumpOff` | Launch up and away. |
@@ -67,13 +75,15 @@ These were each found by a bug. Breaking one brings the bug back.
    it). Now a face is grabbable from the climb threshold less `grabBelow`, which can
    only be at or below the walking cutoff: between the two a surface is both, never
    neither. Climbs start only by jumping, so "both" never turns a walk into a climb.
-   With `grabBelow` 10: 9 of 16, and no room's reach lower.
+   With `grabBelow` 10: 9 of 16, and no room's reach lower. With the ledge grab too, 18 of 32
+   jumps (standing and running) grab it.
 10. **`climbUpdate` says when it ended on the ground.** The controller once assumed
     "not grounded" after every climb update, which flipped the state to `air` for a
     frame on every mantle and step-off.
 11. **A failed climb attempt must not write `climbDir`.** The camera reads it. Use
     `climbTry` until the climb actually starts.
-12. **Every move that places the climber goes through `fitClimbBody`.** It pushes the
+12. **Every move that places the climber goes through `fitClimbBody`, and a frame whose move
+    still does not fit is not made.** It pushes the
     body out of an overlap up to a radius and refuses anything deeper (the way out is
     then ambiguous, and a push can go through a thin shell), so the caller undoes or
     refuses that move. Two moves used to skip it, for the same reason: each finds the
@@ -85,10 +95,18 @@ These were each found by a bug. Breaking one brings the bug back.
       was left 1.2 radii inside. Now a snap that goes too deep is not made that frame;
       the sideways and vertical moves still apply. Clamping the snap to a radius was
       rejected: it pulls in and pushes out every frame, which jitters.
-    - The lip grab measures the face just below the lip and hung the body inside the
+    - The lip grab (walking off a ledge; since removed) measured the face just below the lip and hung the body inside the
       lip (0.82 radii on Counter `.spz`, seed 6). It was pushed out only on the next
       frame with a key held: a resting frame returns before the push. Now the grab is
       pushed clear as it is made, or refused if it is too deep.
+    - A move that still does not fit once the snap is undone is not made at all: the
+      frame goes back to where it started (`climbFrame`). And `fitClimbBody` also refuses a
+      chest inside something solid (`chestInside`: the first surface a ray meets ahead,
+      behind or above is seen from behind), which the overlap test cannot see: a body
+      wholly inside crosses no surface and reads 0. Living Room, climbfuzz seed 2: a
+      sideways step at a wall's edge went into a thin solid beside it, the snap was undone
+      and the step stood. Both are needed (without `chestInside` the violation comes back);
+      the same check on starting a climb made no difference and was left out.
 
 ## Follow camera
 
@@ -131,8 +149,8 @@ character only.
 
 ## Testing
 
-- `?tel=1` logs `CLIMB-START`, `CLIMB-MANTLE`, `CLIMB-CLING`, `CLIMB-EDGE`,
-  `CLIMB-CORNER` and the `CLIMB-NO` refusal, with why: no ground to drop back to, or
+- `?tel=1` logs `CLIMB-START`, `CLIMB-LEDGE`, `CLIMB-MANTLE`, `CLIMB-GAP`, `CLIMB-CLING`,
+  `CLIMB-EDGE`, `CLIMB-CORNER` and the `CLIMB-NO` refusal, with why: no ground to drop back to, or
   which probe (chest, head) found nothing within reach or too shallow a face.
 - `__dbg.probe` (while climbing) reports the nearest surface ahead, behind, above
   and below the chest, each tagged `F` or `B`. **A `B` ahead, behind or above means
@@ -168,8 +186,10 @@ character only.
   the feet, so the body can pass into objects beside or above the wall. The
   remaining invariant violations are this. Adding a capsule check risks blocking
   climbs on lumpy walls that work today.
-- **A gap in a lumpy face reads as the top.** On the Counter plant, pressing W
-  partway up can cling as if topped out.
+- **A gap the probe cannot see past still reads as the top.** `wallAbove` looks within the
+  following reach; where the face resumes further back than that, or more than `gapAbove`
+  higher, the climber hangs. Measured with the cling detector (a scratch script: hold W on
+  every climb, record the clings): 15 clings in 4 runs before the gap rule, 1 to 2 after.
 - **Small tops are not standable.** Jumping onto something with no walkable cells
   (a can) falls through or is pushed out.
 - **No ceiling collision in the air.** The airborne push-out is horizontal only, on
