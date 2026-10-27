@@ -74,7 +74,8 @@ export const CHARACTERS: CharacterEntry[] = [
   },
   {
     // character-female-f from "Mini Characters" 1.0 by Kenney, CC0 1.0 (CREDITS.md), cut down to
-    // the clips below with its colour map embedded.
+    // the clips below with its colour map embedded, and its walk and run hop taken down
+    // (context/movement.md, "The mini's hop").
     // No climb clip: the climb holds holding-both, arms out in front.
     id: 'mini',
     label: 'Poppy',
