@@ -8,7 +8,7 @@ import type { VoxelSurface } from './voxelize';
 
 const DB_NAME = 'wee-wonderer';
 const STORE = 'voxel-surface';
-const SCHEMA = 'g32'; // bump when the surface-generation algorithm changes (invalidates old entries)
+const SCHEMA = 'g33'; // bump when the surface-generation algorithm changes (invalidates old entries); g33: the levelling's floor search (orient-scan.ts) moves every room by up to a few degrees
 
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
