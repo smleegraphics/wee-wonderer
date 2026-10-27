@@ -95,13 +95,12 @@ try {
     && await page.evaluate(() => document.querySelector('.ww-credits').hidden));
 
   // --- the Characters card: lists every character, switches to one, remembers it
-  const charLoaded = (id) => soon((i) => window.__charLog?.includes(i), id);
-  await page.evaluate(() => { window.__charLog = ''; const log = console.log; console.log = (...a) => { const t = a.join(' '); if (t.startsWith('character:')) window.__charLog += t; log(...a); }; });
   await page.getByRole('button', { name: 'Characters', exact: true }).click();
   const listed = await page.evaluate(() => [...document.querySelectorAll('.ww-characters li button')].map((b) => b.textContent));
   await page.getByRole('button', { name: 'Robot', exact: true }).click();
-  check('the Characters card lists every character and switches to one', listed.join() === 'Chibi,Robot,Human' && await charLoaded('character: robot')
-    && await page.evaluate(() => document.querySelector('.ww-characters [aria-current="true"]')?.textContent === 'Robot' && localStorage.getItem('ww.character') === 'robot'), listed.join());
+  // marked current, and remembered, once it is in play (both are set when the load is done)
+  check('the Characters card lists every character and switches to one', listed.join() === 'Chibi,Robot,Human'
+    && await soon(() => document.querySelector('.ww-characters [aria-current="true"]')?.textContent === 'Robot' && localStorage.getItem('ww.character') === 'robot'), listed.join());
   await page.evaluate(() => localStorage.removeItem('ww.character'));
 
   // --- the controls are folded away, in a card of their own

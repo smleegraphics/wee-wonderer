@@ -184,6 +184,18 @@ function pushOutOfWalls(feetY: number, radius: number): number {
   return Math.hypot(wallCorr.x, wallCorr.z);
 }
 
+/** After the body changes size or width where it is (another character): stand it on the
+ *  ground (back where it last stood, if it was in the air or on a wall, whose fit was for
+ *  the old body) and push it clear of the walls at its new width. */
+export function refitBody(): void {
+  if (figurine.state !== 'ground') placeFigurine(lastGood, false);
+  else resetMotion();
+  if (pushOutOfWalls(figurine.supportY, BODY.radius * charH) > 0) {
+    const s = navGrid?.surfaceNear(player.position.x, player.position.z, figurine.supportY, charH * PLATFORM_OPTS.stepFactor) ?? null;
+    if (s !== null) { player.position.y = figurine.supportY = s; lastGood.copy(player.position); } // (pushed off the cells, walk() puts it back on the nearest, which can be into the wall again: the cells know headroom, not width)
+  }
+}
+
 /** On the ground: move on the walkable cells (continuing, stepping, over a gap narrower than
  *  the body, or sliding along what stops it), and off an edge into the air if there is
  *  somewhere below to land. Returns whether it is still on the ground. */

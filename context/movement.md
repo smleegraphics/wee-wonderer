@@ -94,13 +94,19 @@ same whichever is chosen:
 
 The Characters tile picks one (`loadCharacter`): the model is swapped in place, with no
 reload, and the choice is kept in `localStorage['ww.character']`. `character` in
-`character.ts` is the one in play.
+`character.ts` is the one in play. Of loads asked for in a row only the last is put in play
+(a slower earlier one, or its failure, is dropped), and picking the one in play does nothing.
+The new body takes the old one's place with `refitBody`: on the ground (back where it last
+stood, if it was in the air or on a wall, whose fit was for the old body) and pushed clear of
+walls at its width. The NavGrid is rebuilt only for a character of another height.
 
 **Pacing is measured, not typed in** (`clip-pace.ts`): the speed at which a walk or run
 clip keeps a planted foot still, from how far the lowest bone each side travels back over
-a cycle (no bone names). The clip then plays at the figurine's speed over that, within
-`PACE_RANGE` (half to twice). Measured: robot 0.69 / 0.91, chibi 0.41 / 1.09, human 1.16 /
-2.18 body heights a second (walk / run), all under the game's 1.6 and 4.0.
+a cycle, relative to the skeleton's root bone, so root motion does not count (no bone
+names). The clip then plays at the figurine's speed over that, within `PACE_RANGE` (half to
+twice); a clip that cannot be measured (no feet found) is taken to be made for the game's
+walk or sprint speed. Measured: robot 0.69 / 0.91, chibi 0.41 / 1.09, human 1.18 / 2.17
+body heights a second (walk / run), all under the game's 1.6 and 4.0.
 
 **Adding a character:** put its GLB in `public/characters/`, add an entry, credit it in
 `CREDITS.md` and the Credits card. An FBX with its actions as separate takes can be
@@ -160,3 +166,7 @@ the generated one was tied to the chibi's bones, `context/climb.md`).
 - **The movement model ignores walls in the way of a jump** and assumes every air jump is
   made at the top of the last, so what it says can be reached is an upper bound.
 - **No ceiling collision in the air** (`context/climb.md`).
+- **The walkable cells know headroom, not width.** Where a wider body cannot stand clear (a
+  narrow top), pushing it out of the wall takes it off the cells and the walk's recovery puts
+  it back in: up to 0.45 radii deep, measured switching to the chibi on Counter. Walking there
+  does the same.

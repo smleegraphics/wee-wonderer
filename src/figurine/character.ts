@@ -2,14 +2,14 @@
 
 import * as THREE from 'three';
 import { type GLTF, GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { BODY, camera, figurine, hud, move, orbit, player, q } from '../app';
+import { BODY, camera, figurine, hud, move, orbit, player, q, TEL } from '../app';
 import { collision, groundY, navGrid, PLATFORM_OPTS, rebuildPlatformOverlay, setPlatformOverlay, setVoxelOverlay, showPlatforms, showVoxels } from '../collision/room-collision';
 import { loadout } from './abilities';
 import { camLatch, frameOpeningShot } from './camera';
 import { type CharacterEntry, CHARACTERS, type ClipUse, type Move, MOVE_FALLBACK, MOVE_PLAYS } from './characters';
 import { clipPace, findFeet } from './clip-pace';
-import { jumpKey, jumpRelease, lastGood, resetMotion, setLoadout } from './controller';
-import { useMoveSettings } from './movement';
+import { jumpKey, jumpRelease, lastGood, refitBody, resetMotion, setLoadout } from './controller';
+import { MOVE, useMoveSettings } from './movement';
 import { requestScanLight } from '../lighting/scan-light';
 import { loadingViewOn, setUpLoadingView, updateLoading } from '../scan/room';
 
@@ -29,7 +29,8 @@ let activeAction: THREE.AnimationAction | null = null;
 let heldAt = new Map<THREE.AnimationAction, number>(); // the actions that hold one frame, and its time
 let paces: Partial<Record<Move, number>> = {}; // the speed each walk/run clip reads right at, body heights a second (clip-pace.ts)
 export let charLoaded = false;
-let wanted = character.id; // the character last asked for: a slower load of an earlier one is dropped
+let loads = 0;   // loads asked for so far: only the last one asked for is put in play (a slower earlier one is dropped)
+let wanted = ''; // the character that load is of (or the one in play once it is done or failed)
 
 function savedCharacter(): CharacterEntry {
   let id: string | null = null;
@@ -40,16 +41,20 @@ function savedCharacter(): CharacterEntry {
 /** Load character `id` (characters.ts) and put it in play where the figurine is. */
 export function loadCharacter(id: string): void {
   const entry = CHARACTERS.find((c) => c.id === id);
-  if (!entry) return;
+  if (!entry || id === wanted) return; // already in play, or on its way
+  const ticket = ++loads;
   wanted = id;
-  new GLTFLoader().load(`${import.meta.env.BASE_URL}${entry.model}`, (gltf) => { if (wanted === id) useCharacter(entry, gltf); }, undefined,
-    (err) => hud.status(`${entry.label}: ${entry.model} did not load (${String(err)})`, 'error'));
+  new GLTFLoader().load(`${import.meta.env.BASE_URL}${entry.model}`, (gltf) => { if (ticket === loads) useCharacter(entry, gltf); }, undefined, (err) => {
+    if (ticket !== loads) return; // a load given up on: its failure is not news
+    wanted = charLoaded ? character.id : '';
+    hud.status(`${entry.label}: ${entry.model} did not load (${String(err)})`, 'error');
+  });
 }
 
 /** Put a loaded character in play: its model in place of the last one's, its moves, its size and
  *  width, how it moves and what it can do. The first one also starts the figurine off. */
 function useCharacter(entry: CharacterEntry, gltf: GLTF): void {
-  const first = !charLoaded;
+  const first = !charLoaded, before = character;
   if (charModel) { player.remove(charModel); disposeModel(charModel); }
   if (mixer && model) { mixer.stopAllAction(); mixer.uncacheRoot(model); }
   character = entry;
@@ -69,7 +74,6 @@ function useCharacter(entry: CharacterEntry, gltf: GLTF): void {
   model.scale.setScalar(entry.height / Math.max(bounds.max.y - bounds.min.y, 1e-6));
   model.updateMatrixWorld(true);
   bounds.setFromObject(model, true);
-  const was = charH;
   charH = Math.max(bounds.max.y - bounds.min.y, 1e-4);
   model.position.y = -bounds.min.y; // feet at the player's origin
   charModel = new THREE.Group(); // carries that lift: the controller moves `charModel` for its smoothing alone
@@ -86,20 +90,23 @@ function useCharacter(entry: CharacterEntry, gltf: GLTF): void {
 
   charLoaded = true;
   setUpLoadingView(model);
-  if (collision && (first || charH !== was)) rebuildPlatformOverlay(); // the NavGrid's headroom and steps are in body heights
+  // the NavGrid's headroom and steps are in body heights (compared as set, not as measured: the
+  // measured height carries rounding from the bounds, so it never quite equals the last one's)
+  if (collision && (first || entry.height !== before.height)) rebuildPlatformOverlay();
   if (first) {
     resetToSpawn();
     updateLoading(); // after the figurine is in its place: if the room was only waiting for it, this starts the room arriving around it
-  }
+  } else refitBody(); // another size or width where the last one was: on the ground, clear of walls
   requestScanLight();
   hud.setCurrentCharacter(entry.id);
-  console.log(`character: ${entry.id}, ${charH.toFixed(3)} tall, can ${[entry.climbs ? 'climb' : '', ...entry.abilities].filter(Boolean).join(', ') || 'nothing extra'}; ` +
+  if (TEL) console.log(`character: ${entry.id}, ${charH.toFixed(3)} tall, can ${[entry.climbs ? 'climb' : '', ...entry.abilities].filter(Boolean).join(', ') || 'nothing extra'}; ` +
     `walk reads right at ${paces.walk?.toFixed(2) ?? '?'}, sprint at ${paces.sprint?.toFixed(2) ?? '?'} body heights a second`);
 }
 
-/** Every geometry, material and texture under `root`, freed. */
+/** Every geometry, material, texture and skeleton under `root`, freed. */
 function disposeModel(root: THREE.Object3D): void {
   root.traverse((o) => {
+    if ((o as THREE.SkinnedMesh).isSkinnedMesh) (o as THREE.SkinnedMesh).skeleton.dispose(); // its bone texture, if it made one
     const mesh = o as THREE.Mesh;
     mesh.geometry?.dispose();
     for (const m of Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : []) {
@@ -178,12 +185,14 @@ export function pauseMove(m: Move, still: boolean): void {
 }
 
 /** Play the current clip so its feet keep up with the figurine at `speed` (body heights a second):
- *  at the speed its clip carries it (measured, clip-pace.ts) it plays as authored. Within PACE_RANGE:
- *  past that the legs would blur or crawl, and the feet slide instead. Measured paces are 0.4 to 2.2
- *  body heights a second, under the game's 1.6 walk and 4.0 sprint, so most clips play sped up. */
+ *  at the speed its clip carries it (measured, clip-pace.ts) it plays as authored. A clip that
+ *  could not be measured (a model without feet to find) is taken to be made for the game's own
+ *  speed for that move. Within PACE_RANGE: past that the legs would blur or crawl, and the feet
+ *  slide instead. */
 export function setMovePace(speed: number): void {
-  const pace = activeMove ? paces[activeMove] : undefined;
-  if (activeAction && pace && !heldAt.has(activeAction)) activeAction.timeScale = THREE.MathUtils.clamp(speed / pace, PACE_RANGE[0], PACE_RANGE[1]);
+  if (!activeMove || !activeAction || heldAt.has(activeAction)) return;
+  const pace = paces[activeMove] ?? (activeMove === 'sprint' ? MOVE.sprintSpeed : activeMove === 'walk' ? MOVE.walkSpeed : undefined);
+  if (pace) activeAction.timeScale = THREE.MathUtils.clamp(speed / pace, PACE_RANGE[0], PACE_RANGE[1]);
 }
 
 /** Put the figurine on the floor at the spawn point and re-frame the camera behind it. */
