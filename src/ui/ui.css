@@ -85,7 +85,7 @@ button.ww-piece[aria-expanded='true'] > .ww-face, .ww-primary > .ww-face { backg
 .ww-controls { bottom: var(--edge); display: flex; flex-direction: column; gap: 8px; }
 .ww-controls .ww-heading { margin: 0; }
 .ww-picks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
-.ww-picks button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: 0; background: none; text-align: left; }
+.ww-picks button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: 0; background: none; text-align: left; overflow-wrap: anywhere; } /* an imported scan's file name can have no spaces to break at */
 .ww-picks button:hover { background: color-mix(in srgb, var(--mark) 22%, transparent); }
 .ww-picks button::before { content: ''; flex: none; width: 9px; height: 9px; border-radius: 50%; }
 .ww-picks button[aria-current='true']::before { background: var(--mark); }
