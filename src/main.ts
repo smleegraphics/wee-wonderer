@@ -3,11 +3,10 @@
 // scan and the figurine, and runs the frame loop. The parts are in the folders beside it.
 
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { camera, DEFAULT_SCAN, FREECAM, hud, hudActions, move, renderer, scene, TEL } from './app';
 import { setupDebugMenu } from './debug-menu';
 import { camLatch, updateCamera, updateFreeCam } from './figurine/camera';
-import { CHARACTER, charLoaded, mixer, onLoaded, resetToSpawn } from './figurine/character';
+import { character, charLoaded, loadCharacter, mixer, resetToSpawn } from './figurine/character';
 import { jumpKey, updateController } from './figurine/controller';
 import { updateContactShadow } from './lighting/contact-shadow';
 import { updateScanDebug, updateScanLight } from './lighting/scan-light';
@@ -48,6 +47,7 @@ if (TEL) (window as unknown as { __step?: (keys: string[], seconds: number, jump
 // anything else is an example scan, loaded by file name.
 Object.assign(hudActions, {
   pickRoom: (id: string) => { if (!pickUpload(id)) loadScan(id); },
+  pickCharacter: (id: string) => loadCharacter(id),
   importScan: (file: File) => void importScan(file),
   reset: () => { if (charLoaded) resetToSpawn(); }, // the way out of any spot the figurine gets stuck in
 });
@@ -71,7 +71,7 @@ async function main(): Promise<void> {
   await renderer.init();
   loadScan(DEFAULT_SCAN);
   setupDebugMenu();
-  new GLTFLoader().load(`${import.meta.env.BASE_URL}${CHARACTER.model}`, onLoaded, undefined, (err) => hud.status(`${CHARACTER.model} load failed: ${String(err)}`, 'error'));
+  loadCharacter(character.id);
 
   renderer.setAnimationLoop(() => {
     const still = stepped && stepFrames === 0; // (__step: between a script's calls)

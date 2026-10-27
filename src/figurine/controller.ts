@@ -4,7 +4,7 @@
 // the climb, which starts by jumping into a wall (context/movement.md).
 
 import * as THREE from 'three';
-import { camera, CAPSULE_RADIUS, figurine, move, player, TEL, velocity, WORLD_UP } from '../app';
+import { BODY, camera, figurine, move, player, TEL, velocity, WORLD_UP } from '../app';
 import { collision, navGrid, PLATFORM_OPTS } from '../collision/room-collision';
 import type { Ability, AirMove } from './abilities';
 import { camLatch } from './camera';
@@ -188,7 +188,7 @@ function pushOutOfWalls(feetY: number, radius: number): number {
  *  the body, or sliding along what stops it), and off an edge into the air if there is
  *  somewhere below to land. Returns whether it is still on the ground. */
 function walk(dt: number): boolean {
-  const nav = navGrid!, p = player.position, radius = CAPSULE_RADIUS * charH, band = charH * PLATFORM_OPTS.stepFactor;
+  const nav = navGrid!, p = player.position, radius = BODY.radius * charH, band = charH * PLATFORM_OPTS.stepFactor;
   const dx = velocity.x * dt, dz = velocity.z * dt;
   if (dx !== 0 || dz !== 0) {
     const edge = stepTo(p.x + dx, p.z + dz, band, radius);
@@ -228,7 +228,7 @@ function stepTo(x: number, z: number, band: number, radius: number): 'moved' | '
 /** In the air: fall under gravity (harder falling, and cut short when Space is let go
  *  rising), steer a little, grab a wall jumped into, and land on the walkable cells. */
 function fall(dt: number): boolean {
-  const nav = navGrid!, p = player.position, radius = CAPSULE_RADIUS * charH;
+  const nav = navGrid!, p = player.position, radius = BODY.radius * charH;
   coyote = Math.max(0, coyote - dt);
   if (cutArmed && velocity.y > 0 && !move.jump) { velocity.y *= MOVE.jumpCut; cutArmed = false; }
   if (velocity.y <= 0) cutArmed = false;
@@ -298,5 +298,5 @@ function animate(moving: boolean): void {
   const speed = Math.hypot(velocity.x, velocity.z) / charH;
   const next = !moving && speed < SPEED_STILL ? 'idle' : speed > (MOVE.walkSpeed + MOVE.sprintSpeed) / 2 ? 'sprint' : 'walk';
   play(next);
-  setMovePace(next === 'walk' ? speed / MOVE.walkSpeed : next === 'sprint' ? speed / MOVE.sprintSpeed : 1);
+  setMovePace(speed);
 }

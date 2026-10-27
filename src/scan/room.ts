@@ -50,11 +50,10 @@ export function loadingViewOn(): boolean {
   return scanLoading || !charLoaded;
 }
 
-/** Make the loading view's dots and the figurine's paper look, once the figurine (and so its height) is known. */
+/** Make the loading view's dots, once the figurine (and so its height) is known, and the paper look of model `model`. */
 export function setUpLoadingView(model: THREE.Object3D): void {
-  loadingScene = createLoadingScene(charH, hud.token('--paper'));
-  paperFigurine = createPaperFigurine(model, renderer, hud.token('--paper'));
-  scene.add(loadingScene.object);
+  if (!loadingScene) { loadingScene = createLoadingScene(charH, hud.token('--paper')); scene.add(loadingScene.object); }
+  paperFigurine = createPaperFigurine(model, renderer, hud.token('--paper')); // again for each character chosen
 }
 
 /** Per frame: how much of the room is in place, and everything that follows from it.

@@ -91,8 +91,18 @@ try {
   await page.getByRole('button', { name: 'Credits', exact: true }).click();
   const credits = await page.evaluate(() => { const c = document.querySelector('.ww-credits'); return c && !c.hidden ? c.textContent : ''; });
   await page.keyboard.press('Escape');
-  check('the Credits card opens and credits the figurine and the scans', /PolyOne Studio/.test(credits) && /Mip-NeRF 360/.test(credits) && /Samantha Lee/.test(credits)
+  check('the Credits card opens and credits the characters, the scans and the maker', /PolyOne Studio/.test(credits) && /Quaternius/.test(credits) && /Mip-NeRF 360/.test(credits) && /Samantha Lee/.test(credits)
     && await page.evaluate(() => document.querySelector('.ww-credits').hidden));
+
+  // --- the Characters card: lists every character, switches to one, remembers it
+  const charLoaded = (id) => soon((i) => window.__charLog?.includes(i), id);
+  await page.evaluate(() => { window.__charLog = ''; const log = console.log; console.log = (...a) => { const t = a.join(' '); if (t.startsWith('character:')) window.__charLog += t; log(...a); }; });
+  await page.getByRole('button', { name: 'Characters', exact: true }).click();
+  const listed = await page.evaluate(() => [...document.querySelectorAll('.ww-characters li button')].map((b) => b.textContent));
+  await page.getByRole('button', { name: 'Robot', exact: true }).click();
+  check('the Characters card lists every character and switches to one', listed.join() === 'Chibi,Robot,Human' && await charLoaded('character: robot')
+    && await page.evaluate(() => document.querySelector('.ww-characters [aria-current="true"]')?.textContent === 'Robot' && localStorage.getItem('ww.character') === 'robot'), listed.join());
+  await page.evaluate(() => localStorage.removeItem('ww.character'));
 
   // --- the controls are folded away, in a card of their own
   const hintGone = await page.evaluate(() => !document.querySelector('.ww-hint'));

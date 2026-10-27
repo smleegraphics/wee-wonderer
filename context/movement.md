@@ -80,10 +80,34 @@ next: they would add a hook for the air's gravity.
 
 ## Characters (`characters.ts`)
 
-A character is data: its model (under `public/`), its height (the model is scaled to it,
-measured in its idle pose with skinning applied), which of its clips shows each move,
-whether it climbs, its abilities, and its `tune`. One for now, the chibi
-(`context/character-README.md`); `CHARACTER` in `character.ts` is the one in play.
+A character is data: its model (under `public/characters/`), its height (the model is
+scaled to it, measured in its idle pose with skinning applied), its collision capsule's
+width (`radius`, which `BODY.radius` takes), which of its clips shows each move, whether it
+climbs, its abilities, and its `tune`. Three, all the same height so the rooms play the
+same whichever is chosen:
+
+| Character | Licence | Notes |
+|---|---|---|
+| Chibi (default) | CC BY 4.0 (PolyOne), Mixamo animations | `context/character-README.md`; a real climb clip |
+| Robot | CC0 (Tomás Laulhé / Quaternius) | From the three.js examples; rises, falls and climbs on held frames of its Jump |
+| Human | CC0 (Quaternius) | Converted from its FBX in Blender (below); radius 0.16, as it measures slimmer |
+
+The Characters tile picks one (`loadCharacter`): the model is swapped in place, with no
+reload, and the choice is kept in `localStorage['ww.character']`. `character` in
+`character.ts` is the one in play.
+
+**Pacing is measured, not typed in** (`clip-pace.ts`): the speed at which a walk or run
+clip keeps a planted foot still, from how far the lowest bone each side travels back over
+a cycle (no bone names). The clip then plays at the figurine's speed over that, within
+`PACE_RANGE` (half to twice). Measured: robot 0.69 / 0.91, chibi 0.41 / 1.09, human 1.16 /
+2.18 body heights a second (walk / run), all under the game's 1.6 and 4.0.
+
+**Adding a character:** put its GLB in `public/characters/`, add an entry, credit it in
+`CREDITS.md` and the Credits card. An FBX with its actions as separate takes can be
+converted headless in Blender (`--factory-startup --disable-autoexec`, never a `.blend`
+someone else made: it can carry scripts): import it, put each action on its own NLA track,
+and export a GLB by tracks. Exporting by actions kept only one clip. An FBX whose colour
+texture is a separate file needs it wired to the material before export.
 
 ### The moves a character animates
 
@@ -130,9 +154,8 @@ the generated one was tied to the chibi's bones, `context/climb.md`).
 
 ## Known limitations
 
-- **Feet slide at speed.** The chibi's walk and run clips keep their feet planted at about
-  0.4 and 1.1 body heights a second (measured from the clips), against the game's 1.6 and
-  4.0; they play up to 1.3 times their authored speed.
+- **Feet slide at speed.** Every character's clips keep their feet planted under the
+  game's speeds (above); at twice their authored speed only the human's walk keeps up.
 - **`airControl` is low for a jump made from a standstill**: it drifts forward slowly.
 - **The movement model ignores walls in the way of a jump** and assumes every air jump is
   made at the top of the last, so what it says can be reached is an upper bound.

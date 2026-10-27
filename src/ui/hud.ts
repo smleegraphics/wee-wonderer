@@ -18,6 +18,9 @@ export interface HudOptions {
   /** The scan file types an import takes, as extensions ('.ply'). */
   importTypes: string[];
   onPickRoom(id: string): void;
+  /** The characters the figurine can be (characters.ts), in the order they are listed. */
+  characters: Room[];
+  onPickCharacter(id: string): void;
   onImport(file: File): void;
   onReset(): void;
 }
@@ -30,6 +33,7 @@ export interface Hud {
   /** Add a room to the list, or rename it if it is already there. */
   addRoom(room: Room): void;
   setCurrentRoom(id: string): void;
+  setCurrentCharacter(id: string): void;
   status(message: string, kind: StatusKind): void;
   /** Show or hide the loading note (the waiting scene itself is 3D: loading-scene.ts). */
   setLoading(on: boolean): void;
@@ -57,12 +61,13 @@ export function createHud(opts: HudOptions): Hud {
 
   // --- tiles ---
   const roomsTile = tile('rooms', 'Scans', 0);
+  const charactersTile = tile('characters', 'Characters', 1);
   const resetTile = tile('reset', 'Back to the start', 1);
   const debugTile = tile('debug', 'Debug', 2);
   const controlsTile = tile('controls', 'Controls', 0);
   const creditsTile = tile('credits', 'Credits', 1);
   const top = el('div', 'ww-corner ww-corner-top');
-  top.appendChild(roomsTile);
+  top.append(roomsTile, charactersTile);
   const bottom = el('div', 'ww-corner ww-corner-bottom');
   bottom.append(controlsTile, resetTile, debugTile);
   const left = el('div', 'ww-corner ww-corner-left');
@@ -76,7 +81,10 @@ export function createHud(opts: HudOptions): Hud {
   const creditsCard = createCreditsCard();
   const controlsCard = el('section', 'ww-card ww-controls');
   controlsCard.appendChild(el('h2', 'ww-heading', 'Controls'));
-  const cards = [{ tile: roomsTile, card: roomsCard }, { tile: creditsTile, card: creditsCard }, { tile: controlsTile, card: controlsCard }, { tile: debugTile, card: debug.el }];
+  const charactersCard = el('section', 'ww-card ww-characters');
+  charactersCard.appendChild(el('h2', 'ww-heading', 'Characters'));
+  const characterList = charactersCard.appendChild(el('ul'));
+  const cards = [{ tile: roomsTile, card: roomsCard }, { tile: charactersTile, card: charactersCard }, { tile: creditsTile, card: creditsCard }, { tile: controlsTile, card: controlsCard }, { tile: debugTile, card: debug.el }];
   function unfold(target: HTMLElement | null): void {
     for (const c of cards) {
       c.card.hidden = c.card !== target;
@@ -118,6 +126,18 @@ export function createHud(opts: HudOptions): Hud {
     for (const [roomId, button] of roomButtons) button.setAttribute('aria-current', String(roomId === id));
   }
   opts.rooms.forEach(addRoom);
+
+  // --- characters list: who the figurine is ---
+  const characterButtons = new Map<string, HTMLButtonElement>();
+  for (const c of opts.characters) {
+    const button = el('button', '', c.label);
+    button.onclick = () => { unfold(null); opts.onPickCharacter(c.id); };
+    characterList.appendChild(el('li')).appendChild(button);
+    characterButtons.set(c.id, button);
+  }
+  function setCurrentCharacter(id: string): void {
+    for (const [cid, button] of characterButtons) button.setAttribute('aria-current', String(cid === id));
+  }
 
   // --- the controls: keys and what they do, in the Controls card (and the first two on the title) ---
   const keysLine = (into: HTMLElement, keys: string[], does: string) => {
@@ -215,7 +235,7 @@ export function createHud(opts: HudOptions): Hud {
   }
   title.hidden = true;
 
-  root.append(top, bottom, left, roomsCard, creditsCard, controlsCard, debug.el, picker, drop, loading, title, statusEl);
+  root.append(top, bottom, left, roomsCard, charactersCard, creditsCard, controlsCard, debug.el, picker, drop, loading, title, statusEl);
   document.body.appendChild(root);
   if (!titleSeen()) showTitle();
 
@@ -228,6 +248,7 @@ export function createHud(opts: HudOptions): Hud {
     debug,
     addRoom,
     setCurrentRoom,
+    setCurrentCharacter,
     status,
     setLoading,
     loadProgress,

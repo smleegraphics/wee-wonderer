@@ -8,13 +8,14 @@ that unfold from them.
 
 ## What is on screen
 
-- **Tiles.** Scans (top-right); Controls, Back to the start and Debug (bottom-right);
+- **Tiles.** Scans and Characters (top-right); Controls, Back to the start and Debug (bottom-right);
   Credits (bottom-left). The top-left corner is left free (the scan-light debug panorama
   goes there). The Scans card lists the `listed` entries of `SCANS`
   (`src/scan/scan-list.ts`), then "Import your own scan".
   The Credits card (`src/ui/credits.ts`) names who made what, with the licences that ask
   for credit; `CREDITS.md` says the same at length, and the two are kept in step.
-- **Cards.** Scans, Controls, Credits and Debug unfold beside their tile. At most one is open;
+- **Cards.** Scans, Characters, Controls, Credits and Debug unfold beside their tile. The
+  Characters card lists `CHARACTERS` (`src/figurine/characters.ts`) and marks the one in play. At most one is open;
   `Escape` folds it. `` ` `` toggles Debug.
 - **The controls** are not on screen in play: they are in the Controls card, so the
   view is the room alone. The title screen says how to walk and jump instead

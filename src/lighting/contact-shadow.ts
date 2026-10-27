@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { GaussianSplat } from 'three/addons/objects/GaussianSplat.js';
 import { splatInternals } from '../three-internals';
 import { uniform, varying, Fn, instanceIndex, modelWorldMatrix, vec4, If, viewportUV, cameraProjectionMatrixInverse, cameraWorldMatrix, cameraPosition, smoothstep } from 'three/tsl';
-import { CAPSULE_RADIUS, figurine, player, WORLD_UP } from '../app';
+import { BODY, figurine, player, WORLD_UP } from '../app';
 import { navGrid } from '../collision/room-collision';
 import { charH } from '../figurine/character';
 import { CLIMB, climbDir } from '../figurine/climb';
@@ -79,7 +79,7 @@ export function installContactShadow(splat: GaussianSplat): void {
 /** Per frame: where the shadow falls, and how strong it is. */
 const shadowAt = new THREE.Vector3(), shadowFacing = new THREE.Vector3();
 export function updateContactShadow(dt: number): void {
-  const p = player.position, radius = CAPSULE_RADIUS * charH;
+  const p = player.position, radius = BODY.radius * charH;
   let height = 0; // how far the figurine is off the surface it would shadow
   if (figurine.state === 'climb') {
     // on a wall: the shadow is on the face it's hanging from, behind its body

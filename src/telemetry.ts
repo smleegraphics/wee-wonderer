@@ -2,7 +2,7 @@
 // numbers for scripts/collisioncheck.mjs, the matte view for scripts/holes.mjs).
 
 import * as THREE from 'three';
-import { camera, CAPSULE_RADIUS, figurine, FREECAM_OPTS, GRAIN, orbit, player, surround, TARGET_RADIUS, TEL, velocity, WORLD_DOWN, WORLD_UP } from './app';
+import { BODY, camera, figurine, FREECAM_OPTS, GRAIN, orbit, player, surround, TARGET_RADIUS, TEL, velocity, WORLD_DOWN, WORLD_UP } from './app';
 import { cellsPerGrain, collision, collisionDebug, lastVoxelSize, navField, platformDebug } from './collision/room-collision';
 import { camSwinging, camWant } from './figurine/camera';
 import { activeMove, charH } from './figurine/character';
@@ -28,7 +28,7 @@ export function publishDebugState(): void {
     dbgAt.set(P.x, P.y + charH * CLIMB.chest, P.z);
     const see = (dir: THREE.Vector3, max: number) => { const w = c.wallAhead(dbgAt, dir, max); return w ? `${w.distance.toFixed(2)}${w.front ? 'F' : 'B'}` : '-'; };
     probe = { ahead: see(climbDir, charH * 2), behind: see(dbgDir.copy(climbDir).negate(), charH * 2), above: see(WORLD_UP, charH * 20), below: see(WORLD_DOWN, charH * 20) };
-    sunk = +(bodyOverlap(P.x, P.y, P.z, CAPSULE_RADIUS * charH) / (CAPSULE_RADIUS * charH)).toFixed(2);
+    sunk = +(bodyOverlap(P.x, P.y, P.z, BODY.radius * charH) / (BODY.radius * charH)).toFixed(2);
   }
   (window as unknown as { __dbg?: unknown }).__dbg = {
     state: figurine.state, cling: climbCling, probe, sunk, tilt: +climbTiltShown().toFixed(1),
@@ -72,7 +72,7 @@ if (TEL) (window as unknown as { __collisionHealth?: () => Promise<unknown> })._
     spawn: [player.position.x, player.position.y, player.position.z],
     unit: GRAIN,
     realCells: Math.round(WALK_FILL.patch * cellsPerGrain() ** 2), // the same line the gap fill draws between ground and a scrap
-    move: { jumpVel: launchSpeed(MOVE.jumpHeight) * charH, gravity: MOVE.gravity * charH, runSpeed: MOVE.sprintSpeed * charH, climbOver: CAPSULE_RADIUS * charH * CLIMB.mantleOver, fallGravity: MOVE.fallGravity, airJumpVels: airJumpHeights().map((h) => launchSpeed(h) * charH) },
+    move: { jumpVel: launchSpeed(MOVE.jumpHeight) * charH, gravity: MOVE.gravity * charH, runSpeed: MOVE.sprintSpeed * charH, climbOver: BODY.radius * charH * CLIMB.mantleOver, fallGravity: MOVE.fallGravity, airJumpVels: airJumpHeights().map((h) => launchSpeed(h) * charH) },
     climbable: climbableFace,
     blocked: (ox, oy, oz, dx, dy, dz) => !!collision && collision.wallAhead(faceFrom.set(ox, oy, oz), faceDir.set(dx, dy, dz), TARGET_RADIUS * 4) !== null, // (further than any scan reaches)
     eyeHeight: charH * 0.5,

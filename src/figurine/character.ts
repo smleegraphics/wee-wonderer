@@ -1,34 +1,64 @@
 // The figurine: its model and how it shows each move, where it starts, and the keys.
 
 import * as THREE from 'three';
-import type { GLTF } from 'three/addons/loaders/GLTFLoader.js';
-import { camera, CAPSULE_RADIUS, figurine, hud, move, orbit, player, q } from '../app';
+import { type GLTF, GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { BODY, camera, figurine, hud, move, orbit, player, q } from '../app';
 import { collision, groundY, navGrid, PLATFORM_OPTS, rebuildPlatformOverlay, setPlatformOverlay, setVoxelOverlay, showPlatforms, showVoxels } from '../collision/room-collision';
 import { loadout } from './abilities';
 import { camLatch, frameOpeningShot } from './camera';
-import { CHARACTERS, type Move, MOVE_FALLBACK, MOVE_PLAYS } from './characters';
+import { type CharacterEntry, CHARACTERS, type ClipUse, type Move, MOVE_FALLBACK, MOVE_PLAYS } from './characters';
+import { clipPace, findFeet } from './clip-pace';
 import { jumpKey, jumpRelease, lastGood, resetMotion, setLoadout } from './controller';
 import { useMoveSettings } from './movement';
 import { requestScanLight } from '../lighting/scan-light';
 import { loadingViewOn, setUpLoadingView, updateLoading } from '../scan/room';
 
-/** The character in play. One for now; choosing one is a later piece of work. */
-export const CHARACTER = CHARACTERS[0];
 const MOVE_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD']);
 const FADE = 0.18; // seconds: how long one move's clip blends into the next, unless asked otherwise
+const PACE_RANGE = [0.5, 2]; // the slowest and fastest a walking clip plays, times its authored speed
+const CHARACTER_KEY = 'ww.character'; // localStorage: the character last chosen on this device
+/** The character in play (characters.ts). Changed by useCharacter. */
+export let character: CharacterEntry = savedCharacter();
 export let charH = 1;
-export let charModel: THREE.Object3D | null = null;
+export let charModel: THREE.Object3D | null = null; // holds the model, lifted so its feet are at the player's origin
+let model: THREE.Object3D | null = null;
 export let mixer: THREE.AnimationMixer | null = null;
-const actions: Partial<Record<Move, THREE.AnimationAction>> = {}; // one per move the character shows (its own clip, or a held frame)
+let actions: Partial<Record<Move, THREE.AnimationAction>> = {}; // one per move the character shows (its own clip, or a held frame)
 export let activeMove: Move | null = null;  // the move whose action is playing
 let activeAction: THREE.AnimationAction | null = null;
-const heldAt = new Map<THREE.AnimationAction, number>(); // the actions that hold one frame, and its time
+let heldAt = new Map<THREE.AnimationAction, number>(); // the actions that hold one frame, and its time
+let paces: Partial<Record<Move, number>> = {}; // the speed each walk/run clip reads right at, body heights a second (clip-pace.ts)
 export let charLoaded = false;
+let wanted = character.id; // the character last asked for: a slower load of an earlier one is dropped
 
-export function onLoaded(gltf: GLTF): void {
-  useMoveSettings(CHARACTER.tune);
-  setLoadout(loadout(CHARACTER.abilities));
-  const model = gltf.scene;
+function savedCharacter(): CharacterEntry {
+  let id: string | null = null;
+  try { id = localStorage.getItem(CHARACTER_KEY); } catch { /* no storage: the default */ }
+  return CHARACTERS.find((c) => c.id === id) ?? CHARACTERS[0];
+}
+
+/** Load character `id` (characters.ts) and put it in play where the figurine is. */
+export function loadCharacter(id: string): void {
+  const entry = CHARACTERS.find((c) => c.id === id);
+  if (!entry) return;
+  wanted = id;
+  new GLTFLoader().load(`${import.meta.env.BASE_URL}${entry.model}`, (gltf) => { if (wanted === id) useCharacter(entry, gltf); }, undefined,
+    (err) => hud.status(`${entry.label}: ${entry.model} did not load (${String(err)})`, 'error'));
+}
+
+/** Put a loaded character in play: its model in place of the last one's, its moves, its size and
+ *  width, how it moves and what it can do. The first one also starts the figurine off. */
+function useCharacter(entry: CharacterEntry, gltf: GLTF): void {
+  const first = !charLoaded;
+  if (charModel) { player.remove(charModel); disposeModel(charModel); }
+  if (mixer && model) { mixer.stopAllAction(); mixer.uncacheRoot(model); }
+  character = entry;
+  try { localStorage.setItem(CHARACTER_KEY, entry.id); } catch { /* no storage: chosen for this visit only */ }
+  useMoveSettings(entry.tune);
+  setLoadout(loadout(entry.abilities));
+  BODY.radius = entry.radius;
+
+  model = gltf.scene;
   setupMixer(gltf, model);
   play('idle', 0);
   mixer!.update(0);
@@ -36,16 +66,17 @@ export function onLoaded(gltf: GLTF): void {
   // applied (a skinned mesh's own bounds are its bind pose: context/technical-notes.md).
   model.updateMatrixWorld(true);
   const bounds = new THREE.Box3().setFromObject(model, true);
-  model.scale.setScalar(CHARACTER.height / Math.max(bounds.max.y - bounds.min.y, 1e-6));
+  model.scale.setScalar(entry.height / Math.max(bounds.max.y - bounds.min.y, 1e-6));
   model.updateMatrixWorld(true);
   bounds.setFromObject(model, true);
+  const was = charH;
   charH = Math.max(bounds.max.y - bounds.min.y, 1e-4);
-  const feet = -bounds.min.y; // lift so its feet are at the player's origin
-  const holder = new THREE.Group(); // carries that lift: the controller moves `charModel` for its smoothing alone
-  model.position.y = feet;
-  holder.add(model);
-  player.add(holder);
-  charModel = holder;
+  model.position.y = -bounds.min.y; // feet at the player's origin
+  charModel = new THREE.Group(); // carries that lift: the controller moves `charModel` for its smoothing alone
+  charModel.add(model);
+  player.add(charModel);
+  measurePaces(gltf, model);
+  mixer!.update(0); // (measuring moved its bones)
 
   camera.near = charH * 0.02;
   camera.far = charH * 400;
@@ -55,21 +86,49 @@ export function onLoaded(gltf: GLTF): void {
 
   charLoaded = true;
   setUpLoadingView(model);
-  if (collision) rebuildPlatformOverlay(); // rebuild the NavGrid now charH (headroom/step) is real
-  resetToSpawn();
-  updateLoading(); // after the figurine is in its place: if the room was only waiting for it, this starts the room arriving around it
+  if (collision && (first || charH !== was)) rebuildPlatformOverlay(); // the NavGrid's headroom and steps are in body heights
+  if (first) {
+    resetToSpawn();
+    updateLoading(); // after the figurine is in its place: if the room was only waiting for it, this starts the room arriving around it
+  }
   requestScanLight();
-  console.log(`character: ${CHARACTER.id}, ${charH.toFixed(3)} tall, can ${[CHARACTER.climbs ? 'climb' : '', ...CHARACTER.abilities].filter(Boolean).join(', ') || 'nothing extra'}`);
+  hud.setCurrentCharacter(entry.id);
+  console.log(`character: ${entry.id}, ${charH.toFixed(3)} tall, can ${[entry.climbs ? 'climb' : '', ...entry.abilities].filter(Boolean).join(', ') || 'nothing extra'}; ` +
+    `walk reads right at ${paces.walk?.toFixed(2) ?? '?'}, sprint at ${paces.sprint?.toFixed(2) ?? '?'} body heights a second`);
+}
+
+/** Every geometry, material and texture under `root`, freed. */
+function disposeModel(root: THREE.Object3D): void {
+  root.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    mesh.geometry?.dispose();
+    for (const m of Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : []) {
+      for (const v of Object.values(m)) if ((v as THREE.Texture)?.isTexture) (v as THREE.Texture).dispose();
+      m.dispose();
+    }
+  });
+}
+
+/** The speed each of the character's walking clips reads right at (clip-pace.ts). */
+function measurePaces(gltf: GLTF, root: THREE.Object3D): void {
+  paces = {};
+  const feet = findFeet(root);
+  if (!feet) return;
+  for (const m of ['walk', 'sprint'] as const) {
+    const use = character.clips[m], clip = typeof use === 'string' ? gltf.animations.find((c) => c.name === use) : undefined;
+    if (clip) paces[m] = clipPace(root, clip, feet, charH);
+  }
 }
 
 /** An action for each move the character's entry gives a clip for: the clip played (looping or
  *  once, MOVE_PLAYS), or one frame of it held still. */
 function setupMixer(gltf: GLTF, model: THREE.Object3D): void {
   mixer = new THREE.AnimationMixer(model);
+  actions = {}; heldAt = new Map(); activeAction = null; activeMove = null;
   const clipByName = new Map(gltf.animations.map((c) => [c.name, c]));
-  for (const [m, use] of Object.entries(CHARACTER.clips) as [Move, NonNullable<typeof CHARACTER.clips[Move]>][]) {
+  for (const [m, use] of Object.entries(character.clips) as [Move, ClipUse][]) {
     const name = typeof use === 'string' ? use : use.clip, clip = clipByName.get(name);
-    if (!clip) { console.warn(`character ${CHARACTER.id}: no clip "${name}" for ${m}`); continue; }
+    if (!clip) { console.warn(`character ${character.id}: no clip "${name}" for ${m}`); continue; }
     // a held frame is its own action (the clip played from that frame, paused), so it can blend like any other
     const a = mixer.clipAction(typeof use === 'string' ? clip : clip.clone(), model);
     if (typeof use !== 'string') { a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; a.time = use.hold; a.paused = true; }
@@ -118,10 +177,13 @@ export function pauseMove(m: Move, still: boolean): void {
   if (a && !heldAt.has(a)) a.paused = still;
 }
 
-/** Play the current clip at `pace` times its authored speed, so the feet keep up with the
- *  figurine while it speeds up and slows down (within reason: a crawl is not a slow-motion walk). */
-export function setMovePace(pace: number): void {
-  if (activeAction && !heldAt.has(activeAction)) activeAction.timeScale = Math.min(1.3, Math.max(0.6, pace));
+/** Play the current clip so its feet keep up with the figurine at `speed` (body heights a second):
+ *  at the speed its clip carries it (measured, clip-pace.ts) it plays as authored. Within PACE_RANGE:
+ *  past that the legs would blur or crawl, and the feet slide instead. Measured paces are 0.4 to 2.2
+ *  body heights a second, under the game's 1.6 walk and 4.0 sprint, so most clips play sped up. */
+export function setMovePace(speed: number): void {
+  const pace = activeMove ? paces[activeMove] : undefined;
+  if (activeAction && pace && !heldAt.has(activeAction)) activeAction.timeScale = THREE.MathUtils.clamp(speed / pace, PACE_RANGE[0], PACE_RANGE[1]);
 }
 
 /** Put the figurine on the floor at the spawn point and re-frame the camera behind it. */
@@ -137,7 +199,7 @@ export function resetToSpawn(): void {
   if (q.has('fx') || q.has('fz')) {
     player.position.set(Number(q.get('fx') ?? 0), 0, Number(q.get('fz') ?? 0));
   } else if (collision && charH > 0) {
-    const radius = CAPSULE_RADIUS * charH, segLen = Math.max(0.02, charH - 2 * radius);
+    const radius = BODY.radius * charH, segLen = Math.max(0.02, charH - 2 * radius);
     if (groundY === null || !collision.findSpawn(radius, segLen, player.position, groundY, charH * PLATFORM_OPTS.stepFactor))
       collision.findSpawn(radius, segLen, player.position);
   } else {
