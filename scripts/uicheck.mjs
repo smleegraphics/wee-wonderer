@@ -8,8 +8,9 @@
 // and uneven, and a fixed sleep fails at random.
 
 import { chromium } from 'playwright';
+import { APP_URL } from './app-url.mjs';
 
-const base = process.argv[2] ?? 'http://localhost:5173/';
+const base = process.argv[2] ?? `${APP_URL}/`;
 const FIRST = { file: 'kitchen-clean.spz', label: 'Kitchen' }, SECOND = { file: 'counter-clean.spz', label: 'Counter' };
 const LOAD_MS = 90000, SOON_MS = 5000;
 
@@ -91,16 +92,17 @@ try {
   await page.getByRole('button', { name: 'Credits', exact: true }).click();
   const credits = await page.evaluate(() => { const c = document.querySelector('.ww-credits'); return c && !c.hidden ? c.textContent : ''; });
   await page.keyboard.press('Escape');
-  check('the Credits card opens and credits the characters, the scans and the maker', /PolyOne Studio/.test(credits) && /Quaternius/.test(credits) && /Mip-NeRF 360/.test(credits) && /Samantha Lee/.test(credits)
+  check('the Credits card opens and credits the characters, the scans and the maker', /PolyOne Studio/.test(credits) && /Kay Lousberg/.test(credits) && /Kenney/.test(credits) && /Mip-NeRF 360/.test(credits) && /Samantha Lee/.test(credits)
     && await page.evaluate(() => document.querySelector('.ww-credits').hidden));
 
   // --- the Characters card: lists every character, switches to one, remembers it
   await page.getByRole('button', { name: 'Characters', exact: true }).click();
-  const listed = await page.evaluate(() => [...document.querySelectorAll('.ww-characters li button')].map((b) => b.textContent));
-  await page.getByRole('button', { name: 'Robot', exact: true }).click();
+  const listed = await page.evaluate(() => [...document.querySelectorAll('.ww-characters li button')].map((b) => b.getAttribute('aria-label')));
+  await page.getByRole('button', { name: 'Skeleton', exact: true }).click();
   // marked current, and remembered, once it is in play (both are set when the load is done)
-  check('the Characters card lists every character and switches to one', listed.join() === 'Chibi,Robot,Human'
-    && await soon(() => document.querySelector('.ww-characters [aria-current="true"]')?.textContent === 'Robot' && localStorage.getItem('ww.character') === 'robot'), listed.join());
+  check('the Characters card shows every character, by picture, and switches to one', listed.join() === 'Chibi,Skeleton,Poppy'
+    && await soon(() => document.querySelector('.ww-characters [aria-current="true"]')?.getAttribute('aria-label') === 'Skeleton' && localStorage.getItem('ww.character') === 'skeleton'), listed.join());
+  check('every character picture loads', await page.evaluate(() => [...document.querySelectorAll('.ww-characters li img')].every((i) => i.complete && i.naturalWidth > 0)));
   await page.evaluate(() => localStorage.removeItem('ww.character'));
 
   // --- the controls are folded away, in a card of their own

@@ -89,6 +89,12 @@ button.ww-piece[aria-expanded='true'] > .ww-face, .ww-primary > .ww-face { backg
 .ww-picks button:hover { background: color-mix(in srgb, var(--mark) 22%, transparent); }
 .ww-picks button::before { content: ''; flex: none; width: 9px; height: 9px; border-radius: 50%; }
 .ww-picks button[aria-current='true']::before { background: var(--mark); }
+/* a list of pictures (the characters): three to a row, the current one ringed in the mark colour instead of dotted */
+.ww-thumbs { display: grid; grid-template-columns: repeat(3, 1fr); gap: calc(var(--gap) / 2); }
+.ww-thumbs button { justify-content: center; padding: calc(var(--gap) / 3); }
+.ww-thumbs button::before { content: none; }
+.ww-thumbs button[aria-current='true'] { box-shadow: inset 0 0 0 3px var(--mark); }
+.ww-thumbs img { display: block; width: 100%; aspect-ratio: 1; }
 .ww-rooms .ww-import { margin-top: 6px; padding-top: 10px; border-top: 2px dashed var(--ink-soft); color: var(--ink-soft); }
 
 /* ---- debug card: heading and help stay put, only the sections scroll -------- */

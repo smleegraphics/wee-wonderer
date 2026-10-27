@@ -17,8 +17,8 @@ const CREDITS: Credit[] = [
     who: [{ text: 'Free Pack – Chibi Base Mesh (Rigged)', href: 'https://sketchfab.com/3d-models/free-pack-chibi-base-mesh-rigged-fed4fb329f224f1594f631eae8d2626b' }, ' by PolyOne Studio, ', CC_BY, ', adapted'],
     note: ['Animations from ', { text: 'Mixamo', href: 'https://www.mixamo.com' }],
   },
-  { what: 'Robot', who: [{ text: 'RobotExpressive', href: 'https://github.com/mrdoob/three.js/tree/dev/examples/models/gltf/RobotExpressive' }, ' by Tomás Laulhé (Quaternius), ', CC0] },
-  { what: 'Human', who: [{ text: 'Animated Human', href: 'https://opengameart.org/content/animated-human-low-poly' }, ' by Quaternius, ', CC0] },
+  { what: 'Skeleton', who: [{ text: 'KayKit Skeletons', href: 'https://github.com/KayKit-Game-Assets/KayKit-Character-Pack-Skeletons-1.0' }, ' by Kay Lousberg, ', CC0] },
+  { what: 'Mini', who: [{ text: 'Mini Characters', href: 'https://kenney.nl/assets/mini-characters' }, ' by Kenney, ', CC0] },
   {
     what: 'Kitchen, Living Room and Counter',
     who: ['From the ', { text: 'Mip-NeRF 360', href: 'https://jonbarron.info/mipnerf360/' }, ' dataset by Barron, Mildenhall, Verbin, Srinivasan and Hedman (Google), ', CC_BY],

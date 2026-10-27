@@ -45,7 +45,7 @@ export const hud = createHud({
   rooms: LISTED_SCANS.map((s) => ({ id: s.file, label: s.label })),
   importTypes: SCAN_FILE_TYPES,
   onPickRoom: (id) => hudActions.pickRoom(id),
-  characters: CHARACTERS.map((c) => ({ id: c.id, label: c.label })),
+  characters: CHARACTERS.map((c) => ({ id: c.id, label: c.label, image: `${import.meta.env.BASE_URL}${c.thumb}` })),
   onPickCharacter: (id) => hudActions.pickCharacter(id),
   onImport: (file) => hudActions.importScan(file),
   onReset: () => hudActions.reset(),

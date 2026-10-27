@@ -98,9 +98,17 @@ same whichever is chosen:
 
 | Character | Licence | Notes |
 |---|---|---|
-| Chibi (default) | CC BY 4.0 (PolyOne), Mixamo animations | `context/character-README.md`; a real climb clip |
-| Robot | CC0 (Tomás Laulhé / Quaternius) | From the three.js examples; rises, falls and climbs on held frames of its Jump |
-| Human | CC0 (Quaternius) | Converted from its FBX in Blender (below); radius 0.16, as it measures slimmer |
+| Chibi (default) | CC BY 4.0 (PolyOne), Mixamo animations | `context/character-README.md`; a real climb clip; Mixamo bone names |
+| Skeleton | CC0 (Kay Lousberg, KayKit Skeletons 1.0) | KayKit's rig, shared by every KayKit character; in-place take-off, in-air and landing clips; climbs on a held frame of its Cheer; radius 0.14 |
+| Mini | CC0 (Kenney, Mini Characters 1.0, `character-female-f`) | A rig of rigid parts (7 bones); climbs on a held frame of `holding-both`; radius 0.25 |
+
+The Robot (RobotExpressive) and Human (Quaternius) they replaced rose, fell and climbed on held
+frames of one Jump clip that lifts its own hips, which drew the body 0.3 and 0.5 body heights
+above where it collides. A held frame must come from a clip that stays in place.
+
+A radius is the chibi's 0.22 scaled by the body's width at mid height (the skinned vertices
+between 40% and 70% of the height, 5th to 95th percentile across): chibi 0.58, skeleton 0.36,
+mini 0.65 of the height.
 
 The Characters tile picks one (`loadCharacter`): the model is swapped in place, with no
 reload, and the choice is kept in `localStorage['ww.character']`. `character` in
@@ -116,15 +124,26 @@ clip keeps a planted foot still, from how far the lowest bone each side travels 
 a cycle, relative to the skeleton's root bone, so root motion does not count (no bone
 names). The clip then plays at the figurine's speed over that, within `PACE_RANGE` (half to
 twice); a clip that cannot be measured (no feet found) is taken to be made for the game's
-walk or sprint speed. Measured: robot 0.69 / 0.91, chibi 0.41 / 1.09, human 1.18 / 2.17
-body heights a second (walk / run), all under the game's 1.6 and 4.0.
+walk or sprint speed. Measured: chibi 0.41 / 1.09, skeleton 0.45 / 1.07 body heights a second
+(walk / run), all under the game's 1.6 and 4.0. The mini measures 0 (limitations).
 
-**Adding a character:** put its GLB in `public/characters/`, add an entry, credit it in
-`CREDITS.md` and the Credits card. An FBX with its actions as separate takes can be
+**Adding a character:** put its GLB in `public/characters/`, add an entry, make its picture for
+the Characters card (`node scripts/character-thumbs.mjs`, which writes the entry's `thumb`), and
+credit it in `CREDITS.md` and the Credits card. An FBX with its actions as separate takes can be
 converted headless in Blender (`--factory-startup --disable-autoexec`, never a `.blend`
 someone else made: it can carry scripts): import it, put each action on its own NLA track,
 and export a GLB by tracks. Exporting by actions kept only one clip. An FBX whose colour
 texture is a separate file needs it wired to the material before export.
+
+**Cutting a GLB down to the clips it uses** (the skeleton's came with 95, 4.7 MB; 542 KB with
+7): do it with gltf-transform's library (`@gltf-transform/core` and `functions`), which edits
+the file in place, not a Blender import and export, which rewrites all of it. Dispose each
+dropped clip's channels and samplers as well as the clip: they outlive it otherwise, and
+`prune` keeps their keys (the first cut left 10,013 unused accessors and 3.3 MB). Then
+`resample` and `prune`, and clear each texture's URI so a texture kept beside the file (the
+Kenney packs') is embedded in the GLB, which is the one file the game loads. Compare bone
+positions over each clip with the original afterwards (both cuts: within 0.0002 body heights).
+Props held in a hand (KayKit's hand-slot meshes) are separate meshes to remove.
 
 ### The moves a character animates
 
@@ -172,13 +191,19 @@ the generated one was tied to the chibi's bones, `context/climb.md`).
 ## Known limitations
 
 - **Feet slide at speed.** Every character's clips keep their feet planted under the
-  game's speeds (above); at twice their authored speed only the human's walk keeps up.
+  game's speeds (above), and none keeps up at twice its authored speed. The root cause is leg
+  length: speeds are in body heights, and the hips stand at 0.15 (chibi), 0.17 (skeleton) and
+  0.26 (mini) body heights.
+- **The mini's pace measures 0, so her walk and run always play at twice their speed.** Her
+  legs are rigid parts that pivot at the hip, so the lowest bones' origins (`findFeet`) never
+  travel; and a pace of 0 is taken as measured, not as "cannot be measured". The foot needs
+  finding from where the leg reaches, not where its bone starts.
 - **`airControl` is low for a jump made from a standstill**: it drifts forward slowly.
 - **The movement model ignores walls in the way of a jump** and assumes every air jump is
   made at the top of the last, so what it says can be reached is an upper bound.
 - **No ceiling collision in the air** (`context/climb.md`).
-- **A switch into a corner can leave up to 0.27 radii of overlap** (Counter, Human to Chibi
-  pressed into objects): `refitBody` pushes out once, and nothing pushes again until the
+- **A switch into a corner can leave up to 0.27 radii of overlap** (measured on Counter, from
+  the old Human to the Chibi, pressed into objects): `refitBody` pushes out once, and nothing pushes again until the
   figure moves.
 - **A short body treats ground bumps as walls.** The body test skips the bottom `WALL_LIFT`
   (a quarter of the height) so lumps in the floor do not push; the mesh's lumps are about a
