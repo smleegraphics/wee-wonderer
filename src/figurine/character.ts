@@ -7,7 +7,7 @@ import { collision, groundY, navGrid, PLATFORM_OPTS, rebuildPlatformOverlay, set
 import { loadout } from './abilities';
 import { camLatch, frameOpeningShot } from './camera';
 import { type CharacterEntry, CHARACTERS, type ClipUse, type Move, MOVE_FALLBACK, MOVE_PLAYS } from './characters';
-import { clipPace, findFeet } from './clip-pace';
+import { clipPace } from './clip-pace';
 import { jumpKey, jumpRelease, lastGood, refitBody, resetMotion, setLoadout } from './controller';
 import { MOVE, useMoveSettings } from './movement';
 import { requestScanLight } from '../lighting/scan-light';
@@ -119,11 +119,10 @@ function disposeModel(root: THREE.Object3D): void {
 /** The speed each of the character's walking clips reads right at (clip-pace.ts). */
 function measurePaces(gltf: GLTF, root: THREE.Object3D): void {
   paces = {};
-  const feet = findFeet(root);
-  if (!feet) return;
   for (const m of ['walk', 'sprint'] as const) {
     const use = character.clips[m], clip = typeof use === 'string' ? gltf.animations.find((c) => c.name === use) : undefined;
-    if (clip) paces[m] = clipPace(root, clip, feet, charH);
+    const pace = clip ? clipPace(root, clip, charH) : null;
+    if (pace !== null) paces[m] = pace;
   }
 }
 
@@ -186,7 +185,7 @@ export function pauseMove(m: Move, still: boolean): void {
 
 /** Play the current clip so its feet keep up with the figurine at `speed` (body heights a second):
  *  at the speed its clip carries it (measured, clip-pace.ts) it plays as authored. A clip that
- *  could not be measured (a model without feet to find) is taken to be made for the game's own
+ *  could not be measured (no skin, or no foot that moves) is taken to be made for the game's own
  *  speed for that move. Within PACE_RANGE: past that the legs would blur or crawl, and the feet
  *  slide instead. */
 export function setMovePace(speed: number): void {

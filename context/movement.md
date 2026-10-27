@@ -120,12 +120,39 @@ the old body) and pushed clear of walls at its width; where that leaves the cell
 from there if there is ground below, or goes to the nearest cell it fits (rule 7). The NavGrid is rebuilt only for a character of another height.
 
 **Pacing is measured, not typed in** (`clip-pace.ts`): the speed at which a walk or run
-clip keeps a planted foot still, from how far the lowest bone each side travels back over
-a cycle, relative to the skeleton's root bone, so root motion does not count (no bone
-names). The clip then plays at the figurine's speed over that, within `PACE_RANGE` (half to
-twice); a clip that cannot be measured (no feet found) is taken to be made for the game's
-walk or sprint speed. Measured: chibi 0.41 / 1.09, skeleton 0.45 / 1.07 body heights a second
-(walk / run), all under the game's 1.6 and 4.0. The mini measures 0 (limitations).
+clip keeps a planted foot still. The foot on the ground is the skin's lowest point (no bone
+names, no left and right), measured from the skeleton's root bone so root motion does not
+count; the pace is the median speed it moves back while it stays the same point. A leg that
+never plants (a rigid block swinging like a pendulum: the mini's) is paced at a stride a step
+instead; which kind a clip is, is told from the clip: a planted foot's travel is 0.74 to 1
+backward, a pendulum's 0.5. The clip then plays at the figurine's speed over that, within
+`PACE_RANGE` (half to twice); a clip that cannot be measured (no skin, or no foot that moves)
+is taken to be made for the game's walk or sprint speed. Measured: chibi 0.36 / 1.57,
+skeleton 0.35 / 1.76, mini 0.88 / 1.49 body heights a second (walk / run), all under the
+game's 1.6 and 4.0. A stride is the contact point's spread between its 5th and 95th
+percentiles, not its full spread: in the mini's run a hand is lowest for a few frames, swung
+far forward, which took her pace to 2.22 (feet are lowest 7% of a clip or more each, heels
+included). It costs 10 to 35 ms a clip, once, as a character loads (most of it the
+first pass over every vertex, skinned on the CPU, to find the few that can touch the ground).
+
+Tried and replaced: the lowest *bone* each side, and a pace of twice its travel per cycle. Bone
+origins picked the wrong things (the robot's root bone, the human's toe-tip marker, the mini's
+hips, about which her rigid legs swing, so 0), and "twice the travel" assumes each foot is down
+for half the cycle: true of neither a walk (longer, so it read 11 to 29% fast) nor a run (shorter:
+26 to 40% slow). Checked against the least-slide pace (a body moved forward at a trial pace,
+the slide of its contact point summed), the new measure is within 0 to 5% on every planted clip.
+
+**The mini's hop.** Kenney's walk and run raise the whole body while the rigid legs are spread,
+so it hopped: in the run her feet left the ground by 0.37 body heights and the body bobbed 0.34
+(the chibi's and skeleton's: 0.02 to 0.07). Two things lift her: the clip's own rise of the top
+joint, and the spread legs themselves (a pair of compasses opening lifts both feet). Taking the
+top joint's rise out alone left her floating 0.11 when her legs spread; holding her lowest point
+on the ground every frame (the top joint lowered by its height, at 60 samples a second) left
+quick dips, 18 a second in the run. What she has is two thirds of that grounding, picked by eye
+in Blender among none, a third, two thirds and all: run bob 0.049 with the feet up to 0.044,
+walk 0.063 and 0.018. Only the top joint's height changed: nothing moves across, and her pace is
+the same. Done with gltf-transform (only those keys rewritten), the heights worked out in a
+page that poses her with the game's three.js.
 
 **Adding a character:** put its GLB in `public/characters/`, add an entry, make its picture for
 the Characters card (`node scripts/character-thumbs.mjs`, which writes the entry's `thumb`), and
@@ -190,14 +217,16 @@ the generated one was tied to the chibi's bones, `context/climb.md`).
 
 ## Known limitations
 
-- **Feet slide at speed.** Every character's clips keep their feet planted under the
-  game's speeds (above), and none keeps up at twice its authored speed. The root cause is leg
-  length: speeds are in body heights, and the hips stand at 0.15 (chibi), 0.17 (skeleton) and
-  0.26 (mini) body heights.
-- **The mini's pace measures 0, so her walk and run always play at twice their speed.** Her
-  legs are rigid parts that pivot at the hip, so the lowest bones' origins (`findFeet`) never
-  travel; and a pace of 0 is taken as measured, not as "cannot be measured". The foot needs
-  finding from where the leg reaches, not where its bone starts.
+- **Feet slide at speed.** The chibi's and skeleton's walks would need about 4.4 times their
+  authored speed to keep up with the game's walk, so at the 2x cap their feet cover about 45% of
+  the ground; the mini's walk keeps up (1.8x) and her run covers 75%. The root cause is leg length: speeds are in body
+  heights, and the hips stand at 0.15 (chibi), 0.17 (skeleton) and 0.26 (mini) body heights.
+- **Walking is uneven from frame to frame.** In a straight walk `__dbg.speed` holds 1.6, but the
+  position advances 0.66 to 1.67 body heights a second frame to frame (Playroom: 4 to 19 of 44
+  frames short, every character). It reads as speeding up and slowing down. Not yet
+  investigated; the clips are not the cause (the mini's walk moves her head 0.001 of her height
+  forward and back). Her run's torso pitches about 30° a step; scaling it to a quarter made no
+  visible difference, so it was left.
 - **`airControl` is low for a jump made from a standstill**: it drifts forward slowly.
 - **The movement model ignores walls in the way of a jump** and assumes every air jump is
   made at the top of the last, so what it says can be reached is an upper bound.
