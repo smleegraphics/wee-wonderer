@@ -66,9 +66,11 @@ button.ww-piece[aria-expanded='true'] > .ww-face, .ww-primary > .ww-face { backg
 .ww-corner-bottom { bottom: var(--edge); }
 .ww-corner-left { left: var(--edge); right: auto; bottom: var(--edge); }
 /* cards unfold beside the tile column */
-.ww-rooms, .ww-controls, .ww-debug { position: absolute; right: calc(var(--edge) + var(--tile) + var(--gap)); }
+.ww-rooms, .ww-characters, .ww-controls, .ww-debug { position: absolute; right: calc(var(--edge) + var(--tile) + var(--gap)); }
 
 .ww-rooms { top: var(--edge); width: 230px; }
+/* beside its tile, the second in the top corner */
+.ww-characters { top: calc(var(--edge) + var(--tile) + var(--gap)); width: 230px; }
 /* Beside its tile in the bottom-left corner, and never taller or wider than the window: it scrolls instead. */
 .ww-credits { position: absolute; left: calc(var(--edge) + var(--tile) + var(--gap)); bottom: var(--edge); width: min(320px, calc(100vw - 2 * var(--edge) - var(--tile) - var(--gap))); max-height: calc(100vh - 2 * var(--edge)); overflow-y: auto; }
 .ww-credits dl { margin: 0; }
@@ -82,11 +84,11 @@ button.ww-piece[aria-expanded='true'] > .ww-face, .ww-primary > .ww-face { backg
 .ww-keys { display: inline-flex; align-items: center; gap: 5px; }
 .ww-controls { bottom: var(--edge); display: flex; flex-direction: column; gap: 8px; }
 .ww-controls .ww-heading { margin: 0; }
-.ww-rooms ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
-.ww-rooms button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: 0; background: none; text-align: left; }
-.ww-rooms button:hover { background: color-mix(in srgb, var(--mark) 22%, transparent); }
-.ww-rooms button::before { content: ''; flex: none; width: 9px; height: 9px; border-radius: 50%; }
-.ww-rooms button[aria-current='true']::before { background: var(--mark); }
+.ww-picks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.ww-picks button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: 0; background: none; text-align: left; }
+.ww-picks button:hover { background: color-mix(in srgb, var(--mark) 22%, transparent); }
+.ww-picks button::before { content: ''; flex: none; width: 9px; height: 9px; border-radius: 50%; }
+.ww-picks button[aria-current='true']::before { background: var(--mark); }
 .ww-rooms .ww-import { margin-top: 6px; padding-top: 10px; border-top: 2px dashed var(--ink-soft); color: var(--ink-soft); }
 
 /* ---- debug card: heading and help stay put, only the sections scroll -------- */

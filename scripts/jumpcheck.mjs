@@ -40,7 +40,7 @@ const setup = await page.evaluate(async () => {
   for (let k = 0; k < 32; k++) {
     const a = (k / 32) * Math.PI * 2, d = p.clone().set(Math.cos(a), 0, Math.sin(a)), o = p.clone();
     let clear = Infinity;
-    const r = app.CAPSULE_RADIUS; // (the body's width, in body heights: rays along both its sides as well as its middle)
+    const r = app.BODY.radius; // (the body's width, in body heights: rays along both its sides as well as its middle)
     for (const side of [-1, 0, 1])
       for (let up = 0.3; up <= highest + 1e-6; up += 0.35) {
         o.set(p.x - d.z * side * r * h, p.y + up * h, p.z + d.x * side * r * h);

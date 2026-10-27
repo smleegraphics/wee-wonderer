@@ -4,7 +4,7 @@
 // the climb, which starts by jumping into a wall (context/movement.md).
 
 import * as THREE from 'three';
-import { camera, CAPSULE_RADIUS, figurine, move, player, TEL, velocity, WORLD_UP } from '../app';
+import { BODY, camera, figurine, move, player, TEL, velocity, WORLD_UP } from '../app';
 import { collision, navGrid, PLATFORM_OPTS } from '../collision/room-collision';
 import type { Ability, AirMove } from './abilities';
 import { camLatch } from './camera';
@@ -184,12 +184,32 @@ function pushOutOfWalls(feetY: number, radius: number): number {
   return Math.hypot(wallCorr.x, wallCorr.z);
 }
 
+/** Does the body, at its width now, stand at (x, y, z) touching no wall? The walkable cells
+ *  know headroom, not width, so this is what says a cell will do for this body. */
+const bodyFits = (x: number, y: number, z: number): boolean => bodyOverlap(x, y, z, BODY.radius * charH) === 0;
+
+/** After the body changes size or width where it is (another character, or anything else that
+ *  resizes it): stand it on the ground (back where it last stood, if it was in the air or on a
+ *  wall, whose fit was for the old body) and push it clear of the walls at its new width. If
+ *  that takes it off the cells, it does not fit there: it falls from where the push left it,
+ *  if there is ground below, or goes to the nearest place on the cells it fits. */
+export function refitBody(): void {
+  if (figurine.state !== 'ground') placeFigurine(lastGood, false);
+  else resetMotion();
+  const nav = navGrid, p = player.position;
+  if (!nav || pushOutOfWalls(figurine.supportY, BODY.radius * charH) === 0) return;
+  const s = nav.surfaceNear(p.x, p.z, figurine.supportY, charH * PLATFORM_OPTS.stepFactor);
+  if (s !== null) { p.y = figurine.supportY = s; lastGood.copy(p); return; }
+  if (nav.surfaceBelow(p.x, p.z, p.y) !== null) { figurine.state = 'air'; return; }
+  if (nav.nearest(lastGood.x, lastGood.z, figurine.supportY, navRecover, bodyFits)) placeFigurine(navRecover, false);
+}
+
 /** On the ground: move on the walkable cells (continuing, stepping, over a gap narrower than
  *  the body, or sliding along what stops it), and off an edge into the air if there is
  *  somewhere below to land. Returns whether it is still on the ground. */
 function walk(dt: number): boolean {
-  const nav = navGrid!, p = player.position, radius = CAPSULE_RADIUS * charH, band = charH * PLATFORM_OPTS.stepFactor;
-  const dx = velocity.x * dt, dz = velocity.z * dt;
+  const nav = navGrid!, p = player.position, radius = BODY.radius * charH, band = charH * PLATFORM_OPTS.stepFactor;
+  const dx = velocity.x * dt, dz = velocity.z * dt, fromX = p.x, fromZ = p.z;
   if (dx !== 0 || dz !== 0) {
     const edge = stepTo(p.x + dx, p.z + dz, band, radius);
     if (edge === 'blocked') {
@@ -199,11 +219,20 @@ function walk(dt: number): boolean {
       if (dz !== 0 && figurine.state === 'ground' && stepTo(p.x, p.z + dz, band, radius) === 'blocked') velocity.z = 0; // (not once the first walked off an edge)
     }
     if (figurine.state === 'air') return false; // walked off an edge
-    pushOutOfWalls(figurine.supportY, radius);
+    // Walls are pushed out of, but not off the cells: there the body does not fit beside the wall
+    // (a top narrower than it is wide), so the step is refused like any other blocked one, losing
+    // the speed into the wall. Let through, it left no ground underfoot, and the recovery below
+    // put it on the nearest cell: back in the wall.
+    const push = pushOutOfWalls(figurine.supportY, radius);
+    if (push > 0 && nav.surfaceNear(p.x, p.z, figurine.supportY, band) === null) {
+      p.x = fromX; p.z = fromZ;
+      const nx = wallCorr.x / push, nz = wallCorr.z / push, into = velocity.x * nx + velocity.z * nz;
+      if (into < 0) { velocity.x -= into * nx; velocity.z -= into * nz; }
+    }
   }
   const here = nav.surfaceNear(p.x, p.z, figurine.supportY, band);
   if (here !== null) { p.y = here; figurine.supportY = here; lastGood.copy(p); return true; }
-  if (nav.nearest(lastGood.x, lastGood.z, figurine.supportY, navRecover)) { p.copy(navRecover); figurine.supportY = navRecover.y; lastGood.copy(p); velocity.x = velocity.z = 0; } // recovered: and stopped, or its momentum drives it back off the cells every frame
+  if (nav.nearest(lastGood.x, lastGood.z, figurine.supportY, navRecover, bodyFits)) { p.copy(navRecover); figurine.supportY = navRecover.y; lastGood.copy(p); velocity.x = velocity.z = 0; } // recovered: and stopped, or its momentum drives it back off the cells every frame
   return true;
 }
 
@@ -228,7 +257,7 @@ function stepTo(x: number, z: number, band: number, radius: number): 'moved' | '
 /** In the air: fall under gravity (harder falling, and cut short when Space is let go
  *  rising), steer a little, grab a wall jumped into, and land on the walkable cells. */
 function fall(dt: number): boolean {
-  const nav = navGrid!, p = player.position, radius = CAPSULE_RADIUS * charH;
+  const nav = navGrid!, p = player.position, radius = BODY.radius * charH;
   coyote = Math.max(0, coyote - dt);
   if (cutArmed && velocity.y > 0 && !move.jump) { velocity.y *= MOVE.jumpCut; cutArmed = false; }
   if (velocity.y <= 0) cutArmed = false;
@@ -298,5 +327,5 @@ function animate(moving: boolean): void {
   const speed = Math.hypot(velocity.x, velocity.z) / charH;
   const next = !moving && speed < SPEED_STILL ? 'idle' : speed > (MOVE.walkSpeed + MOVE.sprintSpeed) / 2 ? 'sprint' : 'walk';
   play(next);
-  setMovePace(next === 'walk' ? speed / MOVE.walkSpeed : next === 'sprint' ? speed / MOVE.sprintSpeed : 1);
+  setMovePace(speed);
 }

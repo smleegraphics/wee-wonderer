@@ -11,13 +11,17 @@ import { el, piece, tile } from './paper';
 import { createDebugPanel, type DebugPanel } from './debug-panel';
 import { createCreditsCard } from './credits';
 
-export interface Room { id: string; label: string }
+/** One thing in a list to pick from: a room, a character. */
+export interface Choice { id: string; label: string }
 
 export interface HudOptions {
-  rooms: Room[];
+  rooms: Choice[];
   /** The scan file types an import takes, as extensions ('.ply'). */
   importTypes: string[];
   onPickRoom(id: string): void;
+  /** The characters the figurine can be (characters.ts), in the order they are listed. */
+  characters: Choice[];
+  onPickCharacter(id: string): void;
   onImport(file: File): void;
   onReset(): void;
 }
@@ -28,8 +32,9 @@ export type StatusKind = 'busy' | 'done' | 'error';
 export interface Hud {
   debug: DebugPanel;
   /** Add a room to the list, or rename it if it is already there. */
-  addRoom(room: Room): void;
+  addRoom(room: Choice): void;
   setCurrentRoom(id: string): void;
+  setCurrentCharacter(id: string): void;
   status(message: string, kind: StatusKind): void;
   /** Show or hide the loading note (the waiting scene itself is 3D: loading-scene.ts). */
   setLoading(on: boolean): void;
@@ -48,6 +53,30 @@ const TITLE = ['Wee', 'Wonderer'];
 const TITLE_SEEN_KEY = 'ww.titleSeen'; // localStorage: set once the player has pressed Begin on this device
 const DONE_STATUS_MS = 2400;           // long enough to read one line, short enough not to sit over the view
 
+/** A list to pick one thing from (the rooms, the characters): a button for each, in `list` (ahead
+ *  of `before`, if given), the current one marked with aria-current. `add` of an id already listed renames it. */
+function pickList(list: HTMLElement, onPick: (id: string) => void, before: HTMLElement | null = null) {
+  const buttons = new Map<string, HTMLButtonElement>();
+  let current = '';
+  return {
+    add(choice: Choice): void {
+      let button = buttons.get(choice.id);
+      if (!button) {
+        button = el('button');
+        button.onclick = () => onPick(choice.id);
+        list.insertBefore(el('li'), before).appendChild(button);
+        buttons.set(choice.id, button);
+      }
+      button.textContent = choice.label;
+      button.setAttribute('aria-current', String(choice.id === current));
+    },
+    setCurrent(id: string): void {
+      current = id;
+      for (const [bid, button] of buttons) button.setAttribute('aria-current', String(bid === id));
+    },
+  };
+}
+
 function titleSeen(): boolean {
   try { return localStorage.getItem(TITLE_SEEN_KEY) === '1'; } catch { return false; } // no storage: show it every time
 }
@@ -57,12 +86,13 @@ export function createHud(opts: HudOptions): Hud {
 
   // --- tiles ---
   const roomsTile = tile('rooms', 'Scans', 0);
+  const charactersTile = tile('characters', 'Characters', 1);
   const resetTile = tile('reset', 'Back to the start', 1);
   const debugTile = tile('debug', 'Debug', 2);
   const controlsTile = tile('controls', 'Controls', 0);
   const creditsTile = tile('credits', 'Credits', 1);
   const top = el('div', 'ww-corner ww-corner-top');
-  top.appendChild(roomsTile);
+  top.append(roomsTile, charactersTile);
   const bottom = el('div', 'ww-corner ww-corner-bottom');
   bottom.append(controlsTile, resetTile, debugTile);
   const left = el('div', 'ww-corner ww-corner-left');
@@ -71,12 +101,15 @@ export function createHud(opts: HudOptions): Hud {
   // --- cards: at most one is unfolded at a time ---
   const roomsCard = el('section', 'ww-card ww-rooms');
   roomsCard.appendChild(el('h2', 'ww-heading', 'Scans'));
-  const roomList = roomsCard.appendChild(el('ul'));
+  const roomList = roomsCard.appendChild(el('ul', 'ww-picks'));
   const debug = createDebugPanel();
   const creditsCard = createCreditsCard();
   const controlsCard = el('section', 'ww-card ww-controls');
   controlsCard.appendChild(el('h2', 'ww-heading', 'Controls'));
-  const cards = [{ tile: roomsTile, card: roomsCard }, { tile: creditsTile, card: creditsCard }, { tile: controlsTile, card: controlsCard }, { tile: debugTile, card: debug.el }];
+  const charactersCard = el('section', 'ww-card ww-characters');
+  charactersCard.appendChild(el('h2', 'ww-heading', 'Characters'));
+  const characterList = charactersCard.appendChild(el('ul', 'ww-picks'));
+  const cards = [{ tile: roomsTile, card: roomsCard }, { tile: charactersTile, card: charactersCard }, { tile: creditsTile, card: creditsCard }, { tile: controlsTile, card: controlsCard }, { tile: debugTile, card: debug.el }];
   function unfold(target: HTMLElement | null): void {
     for (const c of cards) {
       c.card.hidden = c.card !== target;
@@ -98,26 +131,12 @@ export function createHud(opts: HudOptions): Hud {
   importButton.title = `A Gaussian-splat scan (${opts.importTypes.join(' or ')}). You can also drop the file on the window.`;
   importButton.onclick = () => picker.click();
   roomList.appendChild(importItem);
-  const roomButtons = new Map<string, HTMLButtonElement>();
-  let currentRoom = '';
-  function addRoom(room: Room): void {
-    let button = roomButtons.get(room.id);
-    if (!button) {
-      button = el('button');
-      button.onclick = () => { unfold(null); opts.onPickRoom(room.id); };
-      const item = el('li');
-      item.appendChild(button);
-      roomList.insertBefore(item, importItem);
-      roomButtons.set(room.id, button);
-    }
-    button.textContent = room.label;
-    button.setAttribute('aria-current', String(room.id === currentRoom));
-  }
-  function setCurrentRoom(id: string): void {
-    currentRoom = id;
-    for (const [roomId, button] of roomButtons) button.setAttribute('aria-current', String(roomId === id));
-  }
-  opts.rooms.forEach(addRoom);
+  const rooms = pickList(roomList, (id) => { unfold(null); opts.onPickRoom(id); }, importItem);
+  opts.rooms.forEach(rooms.add);
+
+  // --- characters list: who the figurine is ---
+  const characters = pickList(characterList, (id) => { unfold(null); opts.onPickCharacter(id); });
+  opts.characters.forEach(characters.add);
 
   // --- the controls: keys and what they do, in the Controls card (and the first two on the title) ---
   const keysLine = (into: HTMLElement, keys: string[], does: string) => {
@@ -215,7 +234,7 @@ export function createHud(opts: HudOptions): Hud {
   }
   title.hidden = true;
 
-  root.append(top, bottom, left, roomsCard, creditsCard, controlsCard, debug.el, picker, drop, loading, title, statusEl);
+  root.append(top, bottom, left, roomsCard, charactersCard, creditsCard, controlsCard, debug.el, picker, drop, loading, title, statusEl);
   document.body.appendChild(root);
   if (!titleSeen()) showTitle();
 
@@ -226,8 +245,9 @@ export function createHud(opts: HudOptions): Hud {
 
   return {
     debug,
-    addRoom,
-    setCurrentRoom,
+    addRoom: rooms.add,
+    setCurrentRoom: rooms.setCurrent,
+    setCurrentCharacter: characters.setCurrent,
     status,
     setLoading,
     loadProgress,

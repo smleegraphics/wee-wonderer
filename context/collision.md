@@ -136,6 +136,9 @@ Not measured:
   face between two surfaces does it show, in reach.
 - **Whether the mesh is right where it is**, only how far it is from splats.
 - **Headroom and narrow passages**, beyond what the NavGrid already requires to stand.
+  Its cells know headroom, not the body's width (`context/movement.md`, rule 7), so "reach"
+  counts cells a wide character cannot stand clear on. Per room, that is fine while the
+  characters are close in size; for very different ones, measure per character.
 
 ## Sizes are in grains, not voxels
 

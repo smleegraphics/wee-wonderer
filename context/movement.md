@@ -49,6 +49,16 @@ the movement settings, an ability, or how a character is animated. Climbing has 
 5. **Everything is in body heights** (speeds a second, heights, accelerations), so a
    character of another size moves the same relative to itself.
 6. **No allocations per frame** in `updateController` and what it calls.
+7. **The walkable cells know headroom, not width; the body's width is checked where it
+   stands.** A step is taken onto any walkable cell and the body pushed clear of walls, but a
+   push that leaves no cell underfoot refuses the step (the body does not fit there beside
+   the wall); recovery onto the cells (`NavGrid.nearest` with `bodyFits`) takes the nearest
+   cell of the same platform where the body fits. Before, the push left the cells and the
+   recovery put a wide body straight back into the wall. Checking width live, not storing it
+   per cell, means any width works with no rebuild (a pass over every cell costs 50 to 180
+   ms headless, per width). Measured on Counter's tops at widths 0.1 to 0.35 and heights 0.3
+   to 0.6: no standing sample over half a radius deep but the short body's (limitations),
+   against 4.3% at width 0.35 and 7.2% at height 0.6 before.
 
 ## Settings: `MOVE` (`movement.ts`)
 
@@ -80,10 +90,41 @@ next: they would add a hook for the air's gravity.
 
 ## Characters (`characters.ts`)
 
-A character is data: its model (under `public/`), its height (the model is scaled to it,
-measured in its idle pose with skinning applied), which of its clips shows each move,
-whether it climbs, its abilities, and its `tune`. One for now, the chibi
-(`context/character-README.md`); `CHARACTER` in `character.ts` is the one in play.
+A character is data: its model (under `public/characters/`), its height (the model is
+scaled to it, measured in its idle pose with skinning applied), its collision capsule's
+width (`radius`, which `BODY.radius` takes), which of its clips shows each move, whether it
+climbs, its abilities, and its `tune`. Three, all the same height so the rooms play the
+same whichever is chosen:
+
+| Character | Licence | Notes |
+|---|---|---|
+| Chibi (default) | CC BY 4.0 (PolyOne), Mixamo animations | `context/character-README.md`; a real climb clip |
+| Robot | CC0 (Tomás Laulhé / Quaternius) | From the three.js examples; rises, falls and climbs on held frames of its Jump |
+| Human | CC0 (Quaternius) | Converted from its FBX in Blender (below); radius 0.16, as it measures slimmer |
+
+The Characters tile picks one (`loadCharacter`): the model is swapped in place, with no
+reload, and the choice is kept in `localStorage['ww.character']`. `character` in
+`character.ts` is the one in play. Of loads asked for in a row only the last is put in play
+(a slower earlier one, or its failure, is dropped), and picking the one in play does nothing.
+The new body takes the old one's place with `refitBody` (for any change of the body's size):
+on the ground (back where it last stood, if it was in the air or on a wall, whose fit was for
+the old body) and pushed clear of walls at its width; where that leaves the cells it falls
+from there if there is ground below, or goes to the nearest cell it fits (rule 7). The NavGrid is rebuilt only for a character of another height.
+
+**Pacing is measured, not typed in** (`clip-pace.ts`): the speed at which a walk or run
+clip keeps a planted foot still, from how far the lowest bone each side travels back over
+a cycle, relative to the skeleton's root bone, so root motion does not count (no bone
+names). The clip then plays at the figurine's speed over that, within `PACE_RANGE` (half to
+twice); a clip that cannot be measured (no feet found) is taken to be made for the game's
+walk or sprint speed. Measured: robot 0.69 / 0.91, chibi 0.41 / 1.09, human 1.18 / 2.17
+body heights a second (walk / run), all under the game's 1.6 and 4.0.
+
+**Adding a character:** put its GLB in `public/characters/`, add an entry, credit it in
+`CREDITS.md` and the Credits card. An FBX with its actions as separate takes can be
+converted headless in Blender (`--factory-startup --disable-autoexec`, never a `.blend`
+someone else made: it can carry scripts): import it, put each action on its own NLA track,
+and export a GLB by tracks. Exporting by actions kept only one clip. An FBX whose colour
+texture is a separate file needs it wired to the material before export.
 
 ### The moves a character animates
 
@@ -130,10 +171,18 @@ the generated one was tied to the chibi's bones, `context/climb.md`).
 
 ## Known limitations
 
-- **Feet slide at speed.** The chibi's walk and run clips keep their feet planted at about
-  0.4 and 1.1 body heights a second (measured from the clips), against the game's 1.6 and
-  4.0; they play up to 1.3 times their authored speed.
+- **Feet slide at speed.** Every character's clips keep their feet planted under the
+  game's speeds (above); at twice their authored speed only the human's walk keeps up.
 - **`airControl` is low for a jump made from a standstill**: it drifts forward slowly.
 - **The movement model ignores walls in the way of a jump** and assumes every air jump is
   made at the top of the last, so what it says can be reached is an upper bound.
 - **No ceiling collision in the air** (`context/climb.md`).
+- **A switch into a corner can leave up to 0.27 radii of overlap** (Counter, Human to Chibi
+  pressed into objects): `refitBody` pushes out once, and nothing pushes again until the
+  figure moves.
+- **A short body treats ground bumps as walls.** The body test skips the bottom `WALL_LIFT`
+  (a quarter of the height) so lumps in the floor do not push; the mesh's lumps are about a
+  voxel whatever the character's size, so on a body 0.3 tall they reach past that and it can
+  stick against them (0.6% of standing samples over half a radius deep, Counter's tops; the
+  same before and after the width fix). Not fixed: the skip would need to follow the mesh's
+  roughness, not only the body.

@@ -3,10 +3,10 @@
 
 import * as THREE from 'three';
 import type { WallHit } from '../collision/collision';
-import { CAPSULE_RADIUS, figurine, move, player, TEL, TUNE, velocity, WORLD_DOWN } from '../app';
+import { BODY, figurine, move, player, TEL, TUNE, velocity, WORLD_DOWN } from '../app';
 import { collision, grabSlopeMax, lastVoxelSize, navGrid } from '../collision/room-collision';
 import { camLatch } from './camera';
-import { CHARACTER, charH, pauseMove, play } from './character';
+import { character, charH, pauseMove, play } from './character';
 import { bodyOverlap, lastGood, lerpAngle, WALL_LIFT, wallFeet } from './controller';
 import { launchSpeed, MOVE } from './movement';
 
@@ -84,7 +84,7 @@ export function climbGround(y: number, dx: number, dz: number, reach = navGrid?.
  *  counts the places it passes. Leaves the nearer hit's distance and slope in climbStart. */
 const climbStart = { dist: 0, up: 0, why: '', ledge: false }; // why: what was missing when the test failed (for the CLIMB-NO log); ledge: a face at chest height that ends below the head
 export function climbStartsHere(x: number, feetY: number, z: number, dir: THREE.Vector3): boolean {
-  const reach = (CAPSULE_RADIUS + CLIMB.startReach) * charH;
+  const reach = (BODY.radius + CLIMB.startReach) * charH;
   // Require a wall at chest AND head — proves it's tall enough to scale (not a low
   // bump), and that the climb won't top out the instant it starts.
   climbStart.dist = Infinity;
@@ -101,7 +101,7 @@ export function climbStartsHere(x: number, feetY: number, z: number, dir: THREE.
 /** True if a wall is right in front (in the `dx,dz` direction); if so, enter the climb
  *  with the feet at `feetY`, where a jump has carried them into the wall. */
 export function tryStartClimb(dx: number, dz: number, feetY: number): boolean {
-  if (!collision || !CHARACTER.climbs) return false;
+  if (!collision || !character.climbs) return false;
   climbTry.set(dx, 0, dz);
   if (climbTry.lengthSq() < 1e-9) return false;
   climbTry.normalize();
@@ -165,7 +165,7 @@ function climbStandAt(x: number, y: number, z: number): void {
  *  little further back: Counter's at 2.3 and 2.5.) */
 function tryMantle(reachUp = CLIMB.mantleUp): boolean {
   if (!navGrid) return false;
-  const p = player.position, radius = CAPSULE_RADIUS * charH;
+  const p = player.position, radius = BODY.radius * charH;
   for (let over = radius; over <= radius * CLIMB.mantleOver + 1e-6; over += navGrid.step / 2) {
     const overX = p.x + climbDir.x * over, overZ = p.z + climbDir.z * over;
     const g = navGrid.surfaceNear(overX, overZ, p.y + charH * (reachUp - CLIMB.mantleNear) / 2, charH * (reachUp + CLIMB.mantleNear) / 2); // a surface from mantleNear below the feet to reachUp above them
@@ -194,7 +194,7 @@ function overTheTop(reachUp: number): 'stood' | 'moved' | null {
  *  on): step over to it and climb on. Probed from the grip to the head, out to setBack radii;
  *  only where there is a ledge to step over. */
 function stepToSetBack(): boolean {
-  const p = player.position, radius = CAPSULE_RADIUS * charH, gap = radius * CLIMB.gap, near = radius + charH * CLIMB.followReach;
+  const p = player.position, radius = BODY.radius * charH, gap = radius * CLIMB.gap, near = radius + charH * CLIMB.followReach;
   for (let up = CLIMB.grip * charH; up <= CLIMB.head * charH + 1e-6; up += lastVoxelSize) {
     const w = climbWall(climbProbe.set(p.x, p.y + up, p.z), climbDir, near + radius * CLIMB.setBack);
     if (!w || !isWall(w) || w.distance <= near) continue;
@@ -217,7 +217,7 @@ function stepToSetBack(): boolean {
  *  was a surface to stand on. Out to dropOver radii. */
 function dropOverTheTop(): boolean {
   if (!navGrid) return false;
-  const p = player.position, radius = CAPSULE_RADIUS * charH;
+  const p = player.position, radius = BODY.radius * charH;
   for (let over = radius * (CLIMB.gap + 0.5); over <= radius * CLIMB.dropOver + 1e-6; over += navGrid.step / 2) {
     const x = p.x + climbDir.x * over, z = p.z + climbDir.z * over, g = navGrid.surfaceBelow(x, z, p.y);
     if (g === null || g > p.y - charH * CLIMB.mantleNear) continue;
@@ -253,7 +253,7 @@ function wallAbove(y: number, reach: number): boolean {
 export function climbUpdate(dt: number): boolean {
   if (!collision) return false;
   climbFrame.copy(player.position); // where this frame started, should none of its move fit
-  const p = player.position, radius = CAPSULE_RADIUS * charH, gap = radius * CLIMB.gap;
+  const p = player.position, radius = BODY.radius * charH, gap = radius * CLIMB.gap;
   const followReach = radius + charH * CLIMB.followReach;
   // keep facing the wall (eased, so following a curve / turning a corner isn't a snap)
   player.rotation.y = lerpAngle(player.rotation.y, Math.atan2(climbDir.x, climbDir.z), TUNE.turnLerp * dt);

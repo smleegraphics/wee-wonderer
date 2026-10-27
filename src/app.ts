@@ -10,6 +10,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { createHud } from './ui/hud';
 import { HANDOVER } from './loading/room-reveal';
 import { LISTED_SCANS, SCAN_FILE_TYPES } from './scan/scans';
+import { CHARACTERS } from './figurine/characters';
 
 export const q = new URLSearchParams(location.search);
 export const TEL = q.get('tel') === '1'; // debug telemetry: CLIMB-* console events + window.__dbg
@@ -34,15 +35,18 @@ export const num = (key: string, def: number) => (q.has(key) ? Number(q.get(key)
 export const MESHONLY = q.get('meshonly') === '1';
 export const FREECAM = ['az', 'el', 'dist', 'cx', 'cy', 'cz'].some((k) => q.has(k));
 export const FREECAM_OPTS = { az: num('az', 0.9), el: num('el', 0.5), dist: num('dist', 2.2), cx: num('cx', 0), cy: num('cy', 1), cz: num('cz', 0) };
-export const CAPSULE_RADIUS = 0.22; // capsule hemisphere radius, in char-heights
+/** The collision capsule: its radius in body heights, the character's own (characters.ts), set when one is chosen. */
+export const BODY = { radius: 0.22 };
 const app = document.getElementById('app')!;
 // The on-screen UI (context/ui.md). What its controls do is filled in where the app is
 // put together (hudActions), since the code that does it is built on this.
-export const hudActions = { pickRoom: (_id: string): void => {}, importScan: (_file: File): void => {}, reset: (): void => {} };
+export const hudActions = { pickRoom: (_id: string): void => {}, pickCharacter: (_id: string): void => {}, importScan: (_file: File): void => {}, reset: (): void => {} };
 export const hud = createHud({
   rooms: LISTED_SCANS.map((s) => ({ id: s.file, label: s.label })),
   importTypes: SCAN_FILE_TYPES,
   onPickRoom: (id) => hudActions.pickRoom(id),
+  characters: CHARACTERS.map((c) => ({ id: c.id, label: c.label })),
+  onPickCharacter: (id) => hudActions.pickCharacter(id),
   onImport: (file) => hudActions.importScan(file),
   onReset: () => hudActions.reset(),
 });

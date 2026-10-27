@@ -76,7 +76,8 @@ enough to find one.
 | **`src/loading/`** | **While a room loads and arrives:** `room-reveal.ts` (the scan's points start as a sheet of paper dots and rise to their places, in the scan's shader), `loading-scene.ts` (the stand-in dots before it has loaded), `paper-bits.ts` (the formulas both share), `paper-figurine.ts` (the figurine's paper look meanwhile) |
 | **`src/figurine/`** | **The figurine:** |
 | `character.ts` | The character's model and its moves (`play`), spawn (`resetToSpawn`, `placeFigurine`), keys |
-| `characters.ts` | The characters as data: model, height, which clip shows each move, abilities, settings (context/movement.md) |
+| `characters.ts` | The characters as data: model, height, capsule width, which clip shows each move, abilities, settings (context/movement.md); `character.ts`'s `loadCharacter` swaps one in |
+| `clip-pace.ts` | The speed a walk or run clip carries a character at, measured from the clip |
 | `controller.ts` | Per-frame movement (`updateController`): momentum, the jump and its grace, walking off edges, the fall, wall push-out (`bodyOverlap`) |
 | `movement.ts`, `abilities.ts` | The movement settings (`MOVE`, the Movement section of the Debug card) and the abilities a loadout is made of (the double jump) |
 | `climb.ts` | The climb state machine (`climbUpdate`, `climbWall`, `fitClimbBody`), context/climb.md |
@@ -158,8 +159,8 @@ Visual and behavioural checks run headless in real Chrome through Playwright.
   `app.ts`); DOM and styles live in `src/ui/`, and every colour, font and size is a
   token in `ui.css`.
 - **`app.ts` imports nothing that imports it back.** It holds what every part shares, so
-  it must load first: of the app's own files it imports only `ui/hud`, `scan/scans` and
-  `loading/room-reveal`, and what the HUD's controls do is filled in by `main.ts`
+  it must load first: of the app's own files it imports only `ui/hud`, `scan/scans`,
+  `figurine/characters` (plain data, for the Characters card) and `loading/room-reveal`, and what the HUD's controls do is filled in by `main.ts`
   (`hudActions`). A value another file reassigns lives in a shared object (`figurine`,
   `camLatch`, `MOVE`) or behind a function, since an import cannot be assigned to.
 - **The controller talks to collision only through the `Collision` interface**, so
