@@ -6,7 +6,7 @@ import { camera, CAPSULE_RADIUS, figurine, FREECAM_OPTS, GRAIN, orbit, player, s
 import { cellsPerGrain, collision, collisionDebug, lastVoxelSize, navField, platformDebug } from './collision/room-collision';
 import { camSwinging, camWant } from './figurine/camera';
 import { activeMove, charH } from './figurine/character';
-import { CLIMB, climbCling, climbDir, climbStartsHere, climbWall, isWall } from './figurine/climb';
+import { CLIMB, climbCling, climbDir, climbStartsHere, climbTiltShown, climbWall, isWall } from './figurine/climb';
 import { airJumpHeights, bodyOverlap } from './figurine/controller';
 import { launchSpeed, MOVE } from './figurine/movement';
 import { scanDebugThumb, scanDebugThumbRect } from './lighting/scan-light';
@@ -31,7 +31,7 @@ export function publishDebugState(): void {
     sunk = +(bodyOverlap(P.x, P.y, P.z, CAPSULE_RADIUS * charH) / (CAPSULE_RADIUS * charH)).toFixed(2);
   }
   (window as unknown as { __dbg?: unknown }).__dbg = {
-    state: figurine.state, cling: climbCling, probe, sunk,
+    state: figurine.state, cling: climbCling, probe, sunk, tilt: +climbTiltShown().toFixed(1),
     px: +P.x.toFixed(3), py: +P.y.toFixed(3), pz: +P.z.toFixed(3),
     speed: +(Math.hypot(velocity.x, velocity.z) / charH).toFixed(2), vy: +(velocity.y / charH).toFixed(2), // body heights a second: across, and up
     climbYaw: +THREE.MathUtils.radToDeg(Math.atan2(climbDir.x, climbDir.z)).toFixed(1),

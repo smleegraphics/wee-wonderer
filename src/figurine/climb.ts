@@ -121,6 +121,25 @@ export function tryStartClimb(dx: number, dz: number, feetY: number): boolean {
   return true;
 }
 
+/** How the figure leans with the wall while climbing (figure only: the body that collides
+ *  stays upright). `on`, and the most it leans, in degrees either way. */
+export const CLIMB_TILT = { on: true, max: 40 };
+const TILT_RATE = 8; // per second, eased: a lumpy scan's facing changes from frame to frame
+let tiltWanted = 0;  // radians: the lean the wall's facing asks for (forward positive)
+let tiltShown = 0;   // radians: the lean shown, eased toward that (or upright, off the wall)
+
+/** The figure's lean this frame, radians forward, eased toward the wall's facing while climbing
+ *  and back to upright otherwise. */
+/** The lean shown, in degrees (telemetry). */
+export const climbTiltShown = () => THREE.MathUtils.radToDeg(tiltShown);
+
+export function climbTilt(dt: number): number {
+  const max = THREE.MathUtils.degToRad(CLIMB_TILT.max);
+  const want = figurine.state === 'climb' && CLIMB_TILT.on ? THREE.MathUtils.clamp(tiltWanted, -max, max) : 0;
+  tiltShown += (want - tiltShown) * Math.min(1, TILT_RATE * dt);
+  return tiltShown;
+}
+
 /** Jump off the wall: launch up and away from the face, as a jump from the ground rises. */
 export function climbJumpOff(): void {
   const away = MOVE.walkSpeed * charH;
@@ -253,6 +272,8 @@ export function climbUpdate(dt: number): boolean {
     // into it, and the push out of it cancelled every step up. Where the body is nearest the
     // wall is where the gap is kept, so it leans out over a bulge and in under a recess.
     const nearest = collision.nearestAhead(axisFrom.set(p.x, p.y + probeUp, p.z), axisTo.set(p.x, p.y + charH * CLIMB.head, p.z), climbDir, followReach, axisAt);
+    const grip = wall.distance; // (read now: the next probe reuses `wall`)
+    const gripY = p.y + probeUp;
     climbFrom.copy(p);
     p.addScaledVector(climbDir, Math.min(wall.distance, nearest) - gap);
     // steer into the face along its normal, so a curved / angled wall is followed
@@ -264,6 +285,12 @@ export function climbUpdate(dt: number): boolean {
       climbDir.z += (-wall.nz / hn - climbDir.z) * t;
       climbDir.normalize();
     }
+    // The figure leans with the face it climbs: how far the face moves away (or toward it) from
+    // the grip up to the chest, measured from where the grip was. Not from the nearest point of
+    // the wall: that was whatever was nearest the body (a leaf hanging over a plant's pot), and
+    // never a face leaning away, whose nearest point is below the body.
+    const chest = climbWall(climbProbe.set(climbFrom.x, climbFrom.y + charH * CLIMB.chest, climbFrom.z), climbDir, followReach * 2);
+    if (chest) tiltWanted = Math.atan2(chest.distance - grip, climbFrom.y + charH * CLIMB.chest - gripY);
   } else if (v > 0) {
     // no wall at this height. Going up → the top: mantle onto a surface; else, if the face
     // picks up again just above, a gap in it (carry on up); else cling.

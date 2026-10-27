@@ -2,6 +2,7 @@
 
 import { hud } from './app';
 import { overlayBoxes, PLATFORM_OPTS, rebuildCollision, rebuildPlatformOverlay, setPlatformOverlay, setVoxelOverlay, showPlatforms, showVoxels, VOXEL_OPTS, voxelSet, type VoxelSettings, voxelSliders } from './collision/room-collision';
+import { CLIMB_TILT } from './figurine/climb';
 import { MOVE, moveSet, type MoveSettings, moveSliders } from './figurine/movement';
 import { CONTACT_SHADOW } from './lighting/contact-shadow';
 import { applyScanLight, requestScanLight, SCAN_LIGHT } from './lighting/scan-light';
@@ -37,6 +38,12 @@ export function setupDebugMenu(): void {
   moveSlider('coyoteTime', 'Late jump grace (s)', 0, 0.3, 0.01, 'Seconds after walking off an edge that Space still jumps as if from the ground.');
   moveSlider('jumpBuffer', 'Early jump grace (s)', 0, 0.3, 0.01, 'Seconds before landing that a press of Space is remembered and jumps on touching down.');
   moveSlider('turnRate', 'Turning', 2, 30, 1, 'How quickly the figurine turns to face where it is going.');
+
+  const climbing = hud.debug.section('Climbing');
+  climbing.addToggle('Tilt with the wall', CLIMB_TILT.on, (on) => { CLIMB_TILT.on = on; },
+    'While climbing, lean the figure with the wall: into a face that leans away, back under one that leans over it. The figure only: the body that collides stays upright.');
+  climbing.addSlider('Most tilt (deg)', CLIMB_TILT.max, 0, 90, 1, (v) => { CLIMB_TILT.max = v; },
+    'The furthest the figure leans either way while climbing.');
 
   const light = hud.debug.section('Lighting and shadow');
   light.addToggle('Contact shadow', CONTACT_SHADOW.on, (on) => { CONTACT_SHADOW.on = on; },

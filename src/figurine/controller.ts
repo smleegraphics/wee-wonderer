@@ -9,7 +9,7 @@ import { collision, navGrid, PLATFORM_OPTS } from '../collision/room-collision';
 import type { Ability, AirMove } from './abilities';
 import { camLatch } from './camera';
 import { charH, charModel, moveIsPlaying, placeFigurine, play, setMovePace } from './character';
-import { climbGround, climbJumpOff, climbUpdate, tryStartClimb } from './climb';
+import { CLIMB, climbGround, climbJumpOff, climbTilt, climbUpdate, tryStartClimb } from './climb';
 import { launchSpeed, MOVE } from './movement';
 
 export const STEP_DOWN_MAX = 0.6; // body heights: walking off a drop up to this steps down it; a deeper one is fallen off
@@ -107,7 +107,12 @@ export function updateController(dt: number): void {
   // grounded, damp the bump bob; otherwise (airborne / climbing) track physics exactly.
   if (grounded && !wasClimbing) figurine.smoothFeetY += (player.position.y - figurine.smoothFeetY) * Math.min(1, 10 * dt);
   else figurine.smoothFeetY = player.position.y;
-  if (charModel) charModel.position.y = figurine.smoothFeetY - player.position.y;
+  if (charModel) {
+    // lean with the wall while climbing (climbTilt), about the chest, where the hands meet it
+    const tilt = climbTilt(dt), chest = charH * CLIMB.chest;
+    charModel.rotation.x = tilt;
+    charModel.position.set(0, figurine.smoothFeetY - player.position.y + chest * (1 - Math.cos(tilt)), -chest * Math.sin(tilt));
+  }
 
   animate(moving);
 }

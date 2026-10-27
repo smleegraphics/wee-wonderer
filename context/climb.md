@@ -152,6 +152,19 @@ A spring arm from the figurine to the camera (`updateCamera`).
 - The camera does not translate with the figurine; it re-aims and is leashed by
   OrbitControls' min and max distance.
 
+## Leaning with the wall
+
+While climbing, the figure (not the body that collides, which stays upright) leans with the
+face: forward into one that leans away, back under one that leans over it. The lean is how far
+the face moves away or toward the climber between the grip ray and one at chest height, eased
+(`TILT_RATE`) and capped (`CLIMB_TILT.max`, 40°, a Debug slider with an on/off), about the
+chest, where the hands meet the wall. Off the wall it eases back upright. On Counter's objects
+it ranges from 22° back to 39° forward.
+
+The nearest point of the wall to the body (rule 13) was tried as the source and dropped: it
+answers "what is nearest the body", which under a plant's leaves was a leaf overhead (a full
+lean back), and for a face leaning away is a point below the body, so it never leaned forward.
+
 ## Sideways animation
 
 None of its own: a character's `climb` move plays while moving along a face as well as up
