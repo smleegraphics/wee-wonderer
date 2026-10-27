@@ -12,7 +12,8 @@
 // A run repeats exactly: the same scan, seed and code take the same path and report the
 // same. It starts once the room has arrived, and drives the figurine through
 // window.__step (?tel=1), which moves it only for the time asked for, in fixed frames,
-// whatever the frame rate. `seconds` is that game time, not the time the run takes.
+// whatever the frame rate. `seconds` is that game time, not the time the run takes. The
+// frames are not drawn (__step's `draw` false): the same run, about 11 times faster.
 import { chromium } from 'playwright';
 
 const scan = process.argv[2] ?? 'counter-clean.spz';
@@ -61,7 +62,7 @@ while (played < seconds) {
   const hops = 2 + Math.floor(rnd() * 6);
   for (let i = 0; i < hops; i++) {
     const jump = rnd() < 0.7, wait = 0.2 + rnd() * 0.3;
-    await page.evaluate(([k, s, j]) => window.__step(k, s, j), [held, wait, jump]);
+    await page.evaluate(([k, s, j]) => window.__step(k, s, j, false), [held, wait, jump]);
     played += wait;
     await check();
   }

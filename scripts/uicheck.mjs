@@ -91,7 +91,7 @@ try {
   await page.getByRole('button', { name: 'Credits', exact: true }).click();
   const credits = await page.evaluate(() => { const c = document.querySelector('.ww-credits'); return c && !c.hidden ? c.textContent : ''; });
   await page.keyboard.press('Escape');
-  check('the Credits card opens and credits the scans and the maker', /Mip-NeRF 360/.test(credits) && /Samantha Lee/.test(credits) && !/PolyOne/.test(credits)
+  check('the Credits card opens and credits the figurine and the scans', /PolyOne Studio/.test(credits) && /Mip-NeRF 360/.test(credits) && /Samantha Lee/.test(credits)
     && await page.evaluate(() => document.querySelector('.ww-credits').hidden));
 
   // --- the controls are folded away, in a card of their own

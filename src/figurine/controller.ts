@@ -39,6 +39,8 @@ let cutArmed = false; // rising from a jump whose height letting go of Space can
 
 /** The abilities in play. */
 export function setLoadout(next: Ability[]): void { abilities = next; }
+/** The heights (body heights) of the jumps the loadout can make in the air, in order. */
+export const airJumpHeights = () => abilities.flatMap((a) => a.airJumps?.() ?? []);
 
 /** Space pressed: a jump off the wall, or one waiting to be made (from the ground, or in the air by an ability). */
 export function jumpKey(): void {
@@ -211,9 +213,14 @@ function fall(dt: number): boolean {
   coyote = Math.max(0, coyote - dt);
   if (cutArmed && velocity.y > 0 && !move.jump) { velocity.y *= MOVE.jumpCut; cutArmed = false; }
   if (velocity.y <= 0) cutArmed = false;
-  velocity.y -= MOVE.gravity * (velocity.y < 0 ? MOVE.fallGravity : 1) * charH * dt;
+  // Gravity is the same all through a frame, so the frame's move is exact (a half step of its
+  // pull on top of the speed it started with): a jump rises and carries the same at any frame
+  // rate, and as far as the movement model says. Adding the pull to the speed first lost half
+  // a frame's rise each jump (0.05 body heights at 30 a second).
+  const pull = MOVE.gravity * (velocity.y < 0 ? MOVE.fallGravity : 1) * charH;
   const prevY = p.y;
-  p.x += velocity.x * dt; p.z += velocity.z * dt; p.y += velocity.y * dt;
+  p.x += velocity.x * dt; p.z += velocity.z * dt; p.y += velocity.y * dt - 0.5 * pull * dt * dt;
+  velocity.y -= pull * dt;
   // Walls are solid in the air too. Touching one we're travelling INTO is how a jump
   // grabs it — if it's climbable we start climbing right there, otherwise it simply
   // stops us and we slide along it.

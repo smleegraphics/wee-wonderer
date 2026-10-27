@@ -16,6 +16,8 @@ export interface Ability {
   airJump?(move: AirMove): boolean;
   /** Touched down: anything spent in the air is back. */
   landed?(): void;
+  /** The heights (body heights) of the jumps it makes in the air, for the movement model (collision-health.ts). */
+  airJumps?(): number[];
 }
 
 /** The air jump: `count` more jumps in the air before landing again. */
@@ -29,6 +31,7 @@ class AirJump implements Ability {
     return true;
   }
   landed(): void { this.left = this.count; }
+  airJumps(): number[] { return Array(this.count).fill(this.height()); }
 }
 
 /** Every ability, by the id a character or accessory lists it under. */

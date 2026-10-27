@@ -7,7 +7,7 @@ import { cellsPerGrain, collision, collisionDebug, lastVoxelSize, navField, plat
 import { camSwinging, camWant } from './figurine/camera';
 import { activeMove, charH } from './figurine/character';
 import { CLIMB, climbCling, climbDir, climbStartsHere, climbWall, isWall } from './figurine/climb';
-import { bodyOverlap } from './figurine/controller';
+import { airJumpHeights, bodyOverlap } from './figurine/controller';
 import { launchSpeed, MOVE } from './figurine/movement';
 import { scanDebugThumb, scanDebugThumbRect } from './lighting/scan-light';
 import { currentSplat, lastCenters, lastMatrix, lastOpacity, revealProgress } from './scan/room';
@@ -71,7 +71,7 @@ if (TEL) (window as unknown as { __collisionHealth?: () => Promise<unknown> })._
     spawn: [player.position.x, player.position.y, player.position.z],
     unit: GRAIN,
     realCells: Math.round(WALK_FILL.patch * cellsPerGrain() ** 2), // the same line the gap fill draws between ground and a scrap
-    move: { jumpVel: launchSpeed(MOVE.jumpHeight) * charH, gravity: MOVE.gravity * charH, runSpeed: MOVE.sprintSpeed * charH, climbOver: CAPSULE_RADIUS * charH * CLIMB.mantleOver }, // (the jump from the ground only: the air jump is not modelled yet)
+    move: { jumpVel: launchSpeed(MOVE.jumpHeight) * charH, gravity: MOVE.gravity * charH, runSpeed: MOVE.sprintSpeed * charH, climbOver: CAPSULE_RADIUS * charH * CLIMB.mantleOver, fallGravity: MOVE.fallGravity, airJumpVels: airJumpHeights().map((h) => launchSpeed(h) * charH) },
     climbable: climbableFace,
     blocked: (ox, oy, oz, dx, dy, dz) => !!collision && collision.wallAhead(faceFrom.set(ox, oy, oz), faceDir.set(dx, dy, dz), TARGET_RADIUS * 4) !== null, // (further than any scan reaches)
     eyeHeight: charH * 0.5,

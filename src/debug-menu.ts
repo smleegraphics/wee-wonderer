@@ -84,6 +84,10 @@ export function setupDebugMenu(): void {
   ground.addSlider('Climb threshold (deg)', PLATFORM_OPTS.climbDeg, 30, 89, 1, (v) => { PLATFORM_OPTS.climbDeg = v; rebuildPlatformOverlay(); },
     'Surfaces steeper than this angle (from the ground) are walls you CLIMB; gentler ones are ' +
     'ground you walk on. Lower = more things count as walls; higher = only near-vertical faces.');
+  ground.addSlider('Grab below threshold (deg)', PLATFORM_OPTS.grabBelow, 0, 30, 1, (v) => { PLATFORM_OPTS.grabBelow = v; },
+    'A jump grabs surfaces this many degrees gentler than the Climb threshold, so a slope between the two is both: ' +
+    'ground you walk up, and a face you can jump at. 0 = one cutoff for both. Small scanned objects come out with sloped ' +
+    'sides in the collision mesh (Kitchen\'s bulldozer: 62° to 68°).');
 
   const surface = hud.debug.section('Collision surface');
   /** A slider for one collision setting. Moving it sets that for the session (voxelSet) and rebuilds. */

@@ -4,9 +4,9 @@
 import * as THREE from 'three';
 import type { WallHit } from '../collision/collision';
 import { CAPSULE_RADIUS, figurine, move, player, TEL, TUNE, velocity, WORLD_DOWN } from '../app';
-import { collision, navGrid, wallSlopeMax } from '../collision/room-collision';
+import { collision, grabSlopeMax, navGrid } from '../collision/room-collision';
 import { camLatch } from './camera';
-import { CHARACTER, charH, play } from './character';
+import { CHARACTER, charH, pauseMove, play } from './character';
 import { bodyOverlap, lastGood, lerpAngle, WALL_LIFT, wallFeet } from './controller';
 import { launchSpeed, MOVE } from './movement';
 
@@ -18,7 +18,6 @@ const climbTry = new THREE.Vector3();   // scratch: a candidate direction, until
 const climbProbe = new THREE.Vector3(); // scratch for the forward wall raycast
 const climbSide = new THREE.Vector3();  // scratch: sideways direction along the wall
 const climbFrom = new THREE.Vector3();  // scratch: where the body was before a move that might not fit
-let climbAwaitRelease = false;          // grabbed a lip mid-walk: the still-held walk keys mean "keep going down" until let go
 let climbAtEdge = false;                // sideways shuffle is stopped at the wall's edge (telemetry de-dupe)
 export let climbCling = false;                 // topped out with nowhere to stand → hanging
 let climbBlocked = false;               // the body is being pushed out of something (telemetry de-dupe)
@@ -43,8 +42,9 @@ export const CLIMB = {
   skin: 0.05,       // radii: the body resting this far into a surface is touching it, not inside it
 };
 
+/** Is this a face to climb? Steeper than the grab cutoff (grabSlopeMax): the one test of it. */
 export function isWall(w: WallHit): boolean {
-  return Math.abs(w.up) <= wallSlopeMax();
+  return Math.abs(w.up) <= grabSlopeMax();
 }
 
 /** A surface the climber can be on: the nearest one along `dir`, seen from its OUTER
@@ -79,29 +79,15 @@ export function climbGround(y: number, dx: number, dz: number, reach = navGrid?.
 const climbStart = { dist: 0, up: 0, why: '' }; // why: what was missing when the test failed (for the CLIMB-NO log)
 export function climbStartsHere(x: number, feetY: number, z: number, dir: THREE.Vector3): boolean {
   const reach = (CAPSULE_RADIUS + CLIMB.startReach) * charH;
-  // Require a face at chest AND head — proves it's tall enough to scale (not a low bump),
-  // and that the climb won't top out the instant it starts — and steep between the two.
-  // Steep is judged over that height (how far the face leans back from chest to head), not
-  // by the triangle each ray happens to hit: on a small object the collision mesh's sides
-  // are rounded and lumpy, and single triangles read 55° to 70° on Kitchen's bulldozer,
-  // whose sides stand upright (context/climb.md).
+  // Require a wall at chest AND head — proves it's tall enough to scale (not a low
+  // bump), and that the climb won't top out the instant it starts.
   climbStart.dist = Infinity;
-  let chest = 0;
   for (let i = 0; i < 2; i++) {
     const w = climbWall(climbProbe.set(x, feetY + charH * (i ? CLIMB.head : CLIMB.chest), z), dir, reach);
-    if (!w) { climbStart.why = `${i ? 'head' : 'chest'}: nothing within reach`; return false; }
-    if (i === 0) chest = w.distance;
-    else if (!steepOver(charH * (CLIMB.head - CLIMB.chest), w.distance - chest)) { climbStart.why = `leans back ${(w.distance - chest).toFixed(3)} over the body (up=${w.up.toFixed(2)})`; return false; }
+    if (!w || !isWall(w)) { climbStart.why = `${i ? 'head' : 'chest'}: ${w ? `too shallow (up=${w.up.toFixed(2)})` : 'nothing within reach'}`; return false; }
     if (w.distance < climbStart.dist) { climbStart.dist = w.distance; climbStart.up = w.up; }
   }
   return true;
-}
-
-/** Is a face that moves `across` (toward or away, in its own distance) over a rise of `up` a
- *  wall? The same cutoff as isWall (the "Climb threshold"), measured over a stretch of the face. */
-function steepOver(up: number, across: number): boolean {
-  const c = wallSlopeMax(); // the cosine of the cutoff from level
-  return Math.abs(across) * Math.sqrt(1 - c * c) <= up * c;
 }
 
 /** True if a wall is right in front (in the `dx,dz` direction); if so, enter the climb
@@ -118,7 +104,6 @@ export function tryStartClimb(dx: number, dz: number, feetY = figurine.supportY)
   const midAir = figurine.state === 'air';
   climbDir.copy(climbTry);
   climbCling = false;
-  climbAwaitRelease = false;
   figurine.state = 'climb';
   velocity.set(0, 0, 0);
   player.rotation.y = Math.atan2(climbDir.x, climbDir.z); // face the wall
@@ -170,15 +155,11 @@ export function climbUpdate(dt: number): boolean {
 
   let v = move.f - move.b;                     // W = up, S = down
   let h = move.r - move.l;                     // D = figurine's right, A = its left
-  if (climbAwaitRelease) {
-    // still holding the keys that walked us over the edge → keep going that way: down
-    if (move.f || move.b || move.l || move.r) { v = -1; h = 0; }
-    else climbAwaitRelease = false;
-  }
   if (climbCling && v > 0) {                   // topped out: can't go higher, but W takes any ledge that's there
     if (tryMantle()) return true;
     v = 0;
   }
+  pauseMove('climb', v === 0 && h === 0);       // the clip plays only while moving on the wall
   if (v === 0 && h === 0) return false;        // resting / clinging — Space jumps off
   if (v !== 0 && h !== 0) { v *= Math.SQRT1_2; h *= Math.SQRT1_2; } // diagonals aren't faster
   if (v < 0) climbCling = false;               // heading down releases a topped-out cling

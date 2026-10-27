@@ -34,18 +34,14 @@ export interface CharacterEntry {
 
 export const CHARACTERS: CharacterEntry[] = [
   {
-    // A stand-in until the game's own character is made: RobotExpressive by Tomás Laulhé
-    // (Quaternius), CC0 1.0, from the three.js examples (CREDITS.md). Its height is the old
-    // figurine's, so the rooms and every setting in body heights are as they were. It has no
-    // clips for rising, falling or climbing: those hold frames of its Jump.
-    id: 'stand-in',
-    label: 'Stand-in robot',
-    model: 'figurine.glb',
+    // The figurine: "Free Pack – Chibi Base Mesh (Rigged)" by PolyOne Studio, CC BY 4.0, with
+    // Mixamo animations retargeted onto it (context/character-README.md). It has no clip for
+    // rising (its one-frame jump_loop shows rising and falling) or for landing.
+    id: 'chibi',
+    label: 'Chibi',
+    model: 'characters/chibi.glb',
     height: 0.45,
-    clips: {
-      idle: 'Idle', walk: 'Walking', sprint: 'Running', jumpStart: 'Jump',
-      rise: { clip: 'Jump', hold: 0.3 }, fall: { clip: 'Jump', hold: 0.45 }, climb: { clip: 'Jump', hold: 0.3 },
-    },
+    clips: { idle: 'idle', walk: 'walk', sprint: 'run', jumpStart: 'jump_start', fall: 'jump_loop', climb: 'climb' },
     climbs: true,
     abilities: ['doubleJump'],
     tune: {},

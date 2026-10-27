@@ -112,6 +112,12 @@ function restart(a: THREE.AnimationAction): void {
   if (hold !== undefined) { a.time = hold; a.paused = true; }
 }
 
+/** Hold move `m`'s clip still (`still`), or let it play: the climb pauses while the climber rests. */
+export function pauseMove(m: Move, still: boolean): void {
+  const shown = shownBy(m), a = shown && actions[shown];
+  if (a && !heldAt.has(a)) a.paused = still;
+}
+
 /** Play the current clip at `pace` times its authored speed, so the feet keep up with the
  *  figurine while it speeds up and slows down (within reason: a crawl is not a slow-motion walk). */
 export function setMovePace(pace: number): void {

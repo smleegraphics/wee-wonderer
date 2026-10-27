@@ -21,10 +21,13 @@ import { applyMatteView, publishDebugState } from './telemetry';
 // figurine a different distance every time. Once a script has called __step, time stops
 // coming from the clock: the figurine, its animation and the camera move only for the
 // `seconds` a call asks for, in frames STEP_DT long, with the keys it names held (and a
-// jump pressed at the first, Space then held through the call; 'Space' among the keys holds it on). Between calls nothing moves, however long the script takes.
+// jump pressed at the first, Space then held through the call; 'Space' among the keys holds it on).
+// Between calls nothing moves, however long the script takes. With `draw` false the frames are
+// worked out at once and not drawn: the same run, several times faster, for a check that reads
+// only where things are (the scan's splats, drawn on the CPU headless, are most of a frame).
 const STEP_DT = 1 / 30; // seconds: within the 0.05 a real frame is clamped to
 let stepped = false, stepFrames = 0, stepDone: (() => void) | null = null;
-if (TEL) (window as unknown as { __step?: (keys: string[], seconds: number, jump?: boolean) => Promise<void> }).__step = (keys, seconds, jump = false) =>
+if (TEL) (window as unknown as { __step?: (keys: string[], seconds: number, jump?: boolean, draw?: boolean) => Promise<void> }).__step = (keys, seconds, jump = false, draw = true) =>
   new Promise<void>((done) => {
     stepped = true;
     for (const [code, k] of [['KeyW', 'f'], ['KeyS', 'b'], ['KeyA', 'l'], ['KeyD', 'r']] as const) {
@@ -35,7 +38,9 @@ if (TEL) (window as unknown as { __step?: (keys: string[], seconds: number, jump
     move.run = keys.includes('ShiftLeft');
     move.jump = jump || keys.includes('Space'); // Space held: a jump rises to its full height while it is, and is cut short once it is not (MOVE.jumpCut)
     if (jump) jumpKey();
-    stepFrames = Math.max(1, Math.round(seconds / STEP_DT));
+    const frames = Math.max(1, Math.round(seconds / STEP_DT));
+    if (!draw) { for (let i = 0; i < frames; i++) simulate(STEP_DT); done(); return; }
+    stepFrames = frames;
     stepDone = done;
   });
 
@@ -50,6 +55,18 @@ Object.assign(hudActions, {
 const clock = new THREE.Clock();
 let frames = 0;
 
+/** Everything a frame does but draw: the figurine, the camera, the lights, the room arriving.
+ *  A dt of 0 holds everything still (a __step script between calls). */
+function simulate(dt: number): void {
+  const waiting = loadingViewOn();
+  if (charLoaded && dt > 0) { if (!waiting) updateController(dt); if (FREECAM) updateFreeCam(); else updateCamera(dt); }
+  mixer?.update(dt);
+  if (charLoaded) { updateContactShadow(dt); updateScanLight(dt); updateScanDebug(); }
+  updateArrival(dt);
+  if (TEL) publishDebugState();
+  if (TEL) applyMatteView();
+}
+
 async function main(): Promise<void> {
   await renderer.init();
   loadScan(DEFAULT_SCAN);
@@ -58,14 +75,7 @@ async function main(): Promise<void> {
 
   renderer.setAnimationLoop(() => {
     const still = stepped && stepFrames === 0; // (__step: between a script's calls)
-    const dt = stepped ? (still ? 0 : STEP_DT) : Math.min(clock.getDelta(), 0.05);
-    const waiting = loadingViewOn();
-    if (charLoaded && !still) { if (!waiting) updateController(dt); if (FREECAM) updateFreeCam(); else updateCamera(dt); }
-    mixer?.update(dt);
-    if (charLoaded) { updateContactShadow(dt); updateScanLight(dt); updateScanDebug(); }
-    updateArrival(dt);
-    if (TEL) publishDebugState();
-    if (TEL) applyMatteView();
+    simulate(stepped ? (still ? 0 : STEP_DT) : Math.min(clock.getDelta(), 0.05));
     if (stepFrames > 0 && --stepFrames === 0) { stepDone?.(); stepDone = null; }
     void renderer.renderAsync(scene, camera).then(() => {
       if (charLoaded && ++frames === 3) (window as unknown as { __wwReady?: boolean }).__wwReady = true;

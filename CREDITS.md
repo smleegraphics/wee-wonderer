@@ -4,6 +4,16 @@ Wee Wonderer is made by [Samantha Lee](https://samanthamlee.com). It is built on
 below. The in-app Credits card (`src/ui/credits.ts`) says the same more briefly; keep
 the two in step.
 
+## The figurine
+
+[Free Pack – Chibi Base Mesh (Rigged)](https://sketchfab.com/3d-models/free-pack-chibi-base-mesh-rigged-fed4fb329f224f1594f631eae8d2626b)
+by PolyOne Studio, on Sketchfab, licensed
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Adapted for this project:
+its bones renamed to Mixamo's names and Mixamo animations retargeted onto it
+(`context/character-README.md`).
+
+Animations from [Mixamo](https://www.mixamo.com) (Adobe).
+
 ## The example scans
 
 **Kitchen, Living Room and Counter** are the `kitchen`, `room` and `counter` scenes of the
