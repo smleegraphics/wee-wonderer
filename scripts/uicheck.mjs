@@ -84,14 +84,14 @@ try {
   await page.getByRole('button', { name: 'Back to the start' }).click();
   check('Back to the start returns to the spawn point', await soon((p) => [window.__dbg.px, window.__dbg.py, window.__dbg.pz].join(',') === p, spawn), await pos());
   await page.keyboard.press('Space');
-  check('Space jumps after clicking a tile', await soon(() => window.__dbg.state === 'jump_start' || window.__dbg.state === 'air'), `state=${(await dbg()).state}`);
+  check('Space jumps after clicking a tile', await soon(() => window.__dbg.state === 'air'), `state=${(await dbg()).state}`);
   await soon(() => window.__dbg.state === 'ground');
 
   // --- the Credits card: opens from its tile, credits what needs crediting, folds on Escape
   await page.getByRole('button', { name: 'Credits', exact: true }).click();
   const credits = await page.evaluate(() => { const c = document.querySelector('.ww-credits'); return c && !c.hidden ? c.textContent : ''; });
   await page.keyboard.press('Escape');
-  check('the Credits card opens and credits the figurine and the scans', /PolyOne Studio/.test(credits) && /Mip-NeRF 360/.test(credits) && /Samantha Lee/.test(credits)
+  check('the Credits card opens and credits the scans and the maker', /Mip-NeRF 360/.test(credits) && /Samantha Lee/.test(credits) && !/PolyOne/.test(credits)
     && await page.evaluate(() => document.querySelector('.ww-credits').hidden));
 
   // --- the controls are folded away, in a card of their own

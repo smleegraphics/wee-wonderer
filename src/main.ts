@@ -7,8 +7,8 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { camera, DEFAULT_SCAN, FREECAM, hud, hudActions, move, renderer, scene, TEL } from './app';
 import { setupDebugMenu } from './debug-menu';
 import { camLatch, updateCamera, updateFreeCam } from './figurine/camera';
-import { charLoaded, jumpKey, mixer, onLoaded, resetToSpawn } from './figurine/character';
-import { updateController } from './figurine/controller';
+import { CHARACTER, charLoaded, mixer, onLoaded, resetToSpawn } from './figurine/character';
+import { jumpKey, updateController } from './figurine/controller';
 import { updateContactShadow } from './lighting/contact-shadow';
 import { updateScanDebug, updateScanLight } from './lighting/scan-light';
 import { importScan, pickUpload } from './scan/import';
@@ -21,7 +21,7 @@ import { applyMatteView, publishDebugState } from './telemetry';
 // figurine a different distance every time. Once a script has called __step, time stops
 // coming from the clock: the figurine, its animation and the camera move only for the
 // `seconds` a call asks for, in frames STEP_DT long, with the keys it names held (and a
-// jump at the first). Between calls nothing moves, however long the script takes.
+// jump pressed at the first, Space then held through the call; 'Space' among the keys holds it on). Between calls nothing moves, however long the script takes.
 const STEP_DT = 1 / 30; // seconds: within the 0.05 a real frame is clamped to
 let stepped = false, stepFrames = 0, stepDone: (() => void) | null = null;
 if (TEL) (window as unknown as { __step?: (keys: string[], seconds: number, jump?: boolean) => Promise<void> }).__step = (keys, seconds, jump = false) =>
@@ -33,6 +33,7 @@ if (TEL) (window as unknown as { __step?: (keys: string[], seconds: number, jump
       move[k] = down;
     }
     move.run = keys.includes('ShiftLeft');
+    move.jump = jump || keys.includes('Space'); // Space held: a jump rises to its full height while it is, and is cut short once it is not (MOVE.jumpCut)
     if (jump) jumpKey();
     stepFrames = Math.max(1, Math.round(seconds / STEP_DT));
     stepDone = done;
@@ -53,7 +54,7 @@ async function main(): Promise<void> {
   await renderer.init();
   loadScan(DEFAULT_SCAN);
   setupDebugMenu();
-  new GLTFLoader().load(`${import.meta.env.BASE_URL}character.glb`, onLoaded, undefined, (err) => hud.status(`character.glb load failed: ${String(err)}`, 'error'));
+  new GLTFLoader().load(`${import.meta.env.BASE_URL}${CHARACTER.model}`, onLoaded, undefined, (err) => hud.status(`${CHARACTER.model} load failed: ${String(err)}`, 'error'));
 
   renderer.setAnimationLoop(() => {
     const still = stepped && stepFrames === 0; // (__step: between a script's calls)

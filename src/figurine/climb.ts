@@ -6,8 +6,9 @@ import type { WallHit } from '../collision/collision';
 import { CAPSULE_RADIUS, figurine, move, player, TEL, TUNE, velocity, WORLD_DOWN } from '../app';
 import { collision, navGrid, wallSlopeMax } from '../collision/room-collision';
 import { camLatch } from './camera';
-import { actions, charH, play } from './character';
-import { bodyOverlap, lastGood, lerpAngle, STEP_DOWN_MAX, WALL_LIFT, wallFeet } from './controller';
+import { CHARACTER, charH, play } from './character';
+import { bodyOverlap, lastGood, lerpAngle, WALL_LIFT, wallFeet } from './controller';
+import { launchSpeed, MOVE } from './movement';
 
 // Automatic: walking into a wall enters climb. The figurine ascends the face,
 // following it up; when the wall ends it tops out — onto a surface if there's one
@@ -18,10 +19,6 @@ const climbProbe = new THREE.Vector3(); // scratch for the forward wall raycast
 const climbSide = new THREE.Vector3();  // scratch: sideways direction along the wall
 const climbFrom = new THREE.Vector3();  // scratch: where the body was before a move that might not fit
 let climbAwaitRelease = false;          // grabbed a lip mid-walk: the still-held walk keys mean "keep going down" until let go
-let climbV = 0, climbH = 0;             // this frame's climb input after latches: up/down, right/left
-/** Every frame starts with no climb input: climbUpdate sets it, and the animation blend reads it in every state. */
-export function resetClimbInput(): void { climbV = climbH = 0; }
-let climbSideMix = 0;                   // animation blend: -1 = shimmy left, 0 = up/down climb, +1 = shimmy right
 let climbAtEdge = false;                // sideways shuffle is stopped at the wall's edge (telemetry de-dupe)
 export let climbCling = false;                 // topped out with nowhere to stand → hanging
 let climbBlocked = false;               // the body is being pushed out of something (telemetry de-dupe)
@@ -62,14 +59,14 @@ export function climbWall(origin: THREE.Vector3, dir: THREE.Vector3, max: number
 
 /** The walkable ground a climber on a wall in direction (dx,dz), feet at `y`, would
  *  come down onto: under it, or — since the cell hard against a wall's foot often
- *  isn't walkable — a step back from the wall. null = the wall hangs over nothing we
- *  can stand on. */
+ *  isn't walkable — back from the wall, up to `reach` (one cell by default: a climber on
+ *  the face is over its foot). null = the wall hangs over nothing we can stand on. */
 const climbGroundAt = new THREE.Vector3();
-export function climbGround(y: number, dx: number, dz: number): THREE.Vector3 | null {
+export function climbGround(y: number, dx: number, dz: number, reach = navGrid?.step ?? 0): THREE.Vector3 | null {
   if (!navGrid) return null;
-  const p = player.position;
-  for (let i = 0; i < 2; i++) {
-    const back = i * navGrid.step, x = p.x - dx * back, z = p.z - dz * back;
+  const p = player.position, step = navGrid.step / 2;
+  for (let back = 0; back <= reach + 1e-6; back += step) {
+    const x = p.x - dx * back, z = p.z - dz * back;
     const g = navGrid.surfaceBelow(x, z, y);
     if (g !== null) return climbGroundAt.set(x, g, z);
   }
@@ -79,30 +76,44 @@ export function climbGround(y: number, dx: number, dz: number): THREE.Vector3 | 
 /** Is there a wall to start climbing, standing at (x, feetY, z) and facing `dir` (unit,
  *  level)? The one test of that: tryStartClimb acts on it, and the collision health check
  *  counts the places it passes. Leaves the nearer hit's distance and slope in climbStart. */
-const climbStart = { dist: 0, up: 0 };
+const climbStart = { dist: 0, up: 0, why: '' }; // why: what was missing when the test failed (for the CLIMB-NO log)
 export function climbStartsHere(x: number, feetY: number, z: number, dir: THREE.Vector3): boolean {
   const reach = (CAPSULE_RADIUS + CLIMB.startReach) * charH;
-  // Require a wall at chest AND head — proves it's tall enough to scale (not a low
-  // bump), and that the climb won't top out the instant it starts.
+  // Require a face at chest AND head — proves it's tall enough to scale (not a low bump),
+  // and that the climb won't top out the instant it starts — and steep between the two.
+  // Steep is judged over that height (how far the face leans back from chest to head), not
+  // by the triangle each ray happens to hit: on a small object the collision mesh's sides
+  // are rounded and lumpy, and single triangles read 55° to 70° on Kitchen's bulldozer,
+  // whose sides stand upright (context/climb.md).
   climbStart.dist = Infinity;
+  let chest = 0;
   for (let i = 0; i < 2; i++) {
     const w = climbWall(climbProbe.set(x, feetY + charH * (i ? CLIMB.head : CLIMB.chest), z), dir, reach);
-    if (!w || !isWall(w)) return false;
+    if (!w) { climbStart.why = `${i ? 'head' : 'chest'}: nothing within reach`; return false; }
+    if (i === 0) chest = w.distance;
+    else if (!steepOver(charH * (CLIMB.head - CLIMB.chest), w.distance - chest)) { climbStart.why = `leans back ${(w.distance - chest).toFixed(3)} over the body (up=${w.up.toFixed(2)})`; return false; }
     if (w.distance < climbStart.dist) { climbStart.dist = w.distance; climbStart.up = w.up; }
   }
   return true;
+}
+
+/** Is a face that moves `across` (toward or away, in its own distance) over a rise of `up` a
+ *  wall? The same cutoff as isWall (the "Climb threshold"), measured over a stretch of the face. */
+function steepOver(up: number, across: number): boolean {
+  const c = wallSlopeMax(); // the cosine of the cutoff from level
+  return Math.abs(across) * Math.sqrt(1 - c * c) <= up * c;
 }
 
 /** True if a wall is right in front (in the `dx,dz` direction); if so, enter the climb
  *  at `feetY` — the ground we're standing on, or wherever the feet are when a jump
  *  carries us into the wall. */
 export function tryStartClimb(dx: number, dz: number, feetY = figurine.supportY): boolean {
-  if (!collision || !actions['climb']) return false;
+  if (!collision || !CHARACTER.climbs) return false;
   climbTry.set(dx, 0, dz);
   if (climbTry.lengthSq() < 1e-9) return false;
   climbTry.normalize();
   const p = player.position;
-  if (!climbStartsHere(p.x, feetY, p.z, climbTry)) return false;
+  if (!climbStartsHere(p.x, feetY, p.z, climbTry)) { if (TEL) console.log(`CLIMB-NO (mid-air) y=${feetY.toFixed(2)} ${climbStart.why}`); return false; }
   const { dist, up } = climbStart;
   const midAir = figurine.state === 'air';
   climbDir.copy(climbTry);
@@ -111,68 +122,18 @@ export function tryStartClimb(dx: number, dz: number, feetY = figurine.supportY)
   figurine.state = 'climb';
   velocity.set(0, 0, 0);
   player.rotation.y = Math.atan2(climbDir.x, climbDir.z); // face the wall
-  play('climb', TUNE.fade);
+  play('climb', 0.1);
   camLatch.handsOff = true;
   if (TEL) console.log(`CLIMB-START${midAir ? ' (mid-air)' : ''} y=${p.y.toFixed(2)} dist=${dist.toFixed(2)} up=${up.toFixed(2)}`);
   return true;
 }
 
-/** True if we're walking off a ledge whose face is a wall; if so, grab the lip and
- *  enter the climb (hanging just below it) so you can descend the face. */
-export function tryStartClimbDown(dx: number, dz: number): boolean {
-  if (!collision || !navGrid || !actions['climb']) return false;
-  climbTry.set(dx, 0, dz);
-  if (climbTry.lengthSq() < 1e-9) return false;
-  climbTry.normalize();
-  const p = player.position, gap = CAPSULE_RADIUS * charH * CLIMB.gap;
-  const tx = p.x + climbTry.x * navGrid.step, tz = p.z + climbTry.z * navGrid.step;
-  // must be a real edge: nothing walkable to continue onto at this level...
-  if (navGrid.surfaceNear(tx, tz, figurine.supportY, charH * STEP_DOWN_MAX) !== null) return false;
-  // ...with a meaningful drop below...
-  const lipY = figurine.supportY - charH * CLIMB.lipProbe;
-  const below = navGrid.surfaceBelow(tx, tz, lipY);
-  if (below === null || figurine.supportY - below < charH * STEP_DOWN_MAX) return false;
-  // ...and a wall descending from the lip. Find it the way we'll hang on it: looking
-  // back at the ledge from out past the edge, just below the lip. (Probing outward from
-  // under our own feet starts inside the ledge and says nothing about which way the
-  // face points.)
-  const reach = (CAPSULE_RADIUS + CLIMB.lipReach) * charH;
-  climbProbe.set(p.x + climbTry.x * reach, lipY, p.z + climbTry.z * reach);
-  climbSide.copy(climbTry).negate();
-  const w = climbWall(climbProbe, climbSide, reach);
-  if (!w || !isWall(w)) return false;
-  const hn = Math.hypot(w.nx, w.nz);
-  if (hn < 1e-6) return false;
-  // grip the lip: hang off the face, feet just below the lip, FACING the face — we
-  // walked off forwards, so that's a turn-around to face back the way we came.
-  const fx = climbProbe.x + climbSide.x * w.distance, fz = climbProbe.z + climbSide.z * w.distance; // point on the face
-  const ox = w.nx / hn, oz = w.nz / hn;       // the face's outward direction
-  // The face was found below the lip, but the body reaches above it: where the face
-  // is set back under the lip, the body would hang inside the lip. Push it clear; too
-  // deep for that, and there is no hanging here.
-  climbFrom.copy(p);
-  p.set(fx + ox * gap, figurine.supportY - charH * CLIMB.hang, fz + oz * gap);
-  if (!fitClimbBody(CAPSULE_RADIUS * charH)) { p.copy(climbFrom); return false; }
-  if (TEL) console.log(`CLIMBDOWN-START y=${p.y.toFixed(2)} below=${below.toFixed(2)} face=${w.distance.toFixed(2)}`);
-  climbDir.set(-ox, 0, -oz);                  // into the wall
-  climbCling = false;
-  // The keys held right now mean "walk off this ledge", not climb input: once we've
-  // turned to face the wall, the same forward key would mean UP and haul us straight
-  // back over the lip. Until they're released they keep meaning what they meant —
-  // carry on over the edge, i.e. down the face; after that W/S/A/D steer the climb.
-  climbAwaitRelease = true;
-  figurine.state = 'climb';
-  velocity.set(0, 0, 0);
-  play('climb', TUNE.fade);
-  camLatch.handsOff = true;
-  return true;
-}
-
-/** Jump off the wall: launch up and away from the face. */
+/** Jump off the wall: launch up and away from the face, as a jump from the ground rises. */
 export function climbJumpOff(): void {
-  velocity.set(-climbDir.x * TUNE.walkSpeed * charH, TUNE.jumpVel * charH, -climbDir.z * TUNE.walkSpeed * charH);
+  const away = MOVE.walkSpeed * charH;
+  velocity.set(-climbDir.x * away, launchSpeed(MOVE.jumpHeight) * charH, -climbDir.z * away);
   figurine.state = 'air'; climbCling = false;
-  play(actions['jump_loop'] ? 'jump_loop' : 'idle', 0.08);
+  play('rise', 0.08);
 }
 
 /** Leave the climb standing at (x,y,z) on walkable ground. */
@@ -194,21 +155,6 @@ function tryMantle(): boolean {
   return true;
 }
 
-/** Blend the climb animation by direction of travel on the wall: the authored up/down
- *  cycle, the generated sideways shimmy (left or right), or a mix on diagonals. Runs
- *  every frame so the shimmy also eases out when the climb ends. */
-export function updateClimbBlend(dt: number): void {
-  const c = actions['climb'], r = actions['climb_side_r'], l = actions['climb_side_l'];
-  if (!c || !r || !l) return;
-  const on = figurine.state === 'climb', moving = on && (climbV !== 0 || climbH !== 0);
-  // resting on the wall holds whatever blend the last move left (the pose just freezes)
-  const target = !on ? 0 : moving ? climbH / (Math.abs(climbV) + Math.abs(climbH)) : climbSideMix;
-  climbSideMix += (target - climbSideMix) * Math.min(1, TUNE.climbBlend * dt);
-  r.weight = Math.max(0, climbSideMix);
-  l.weight = Math.max(0, -climbSideMix);
-  c.weight = on ? 1 - Math.abs(climbSideMix) : 1;
-  r.paused = l.paused = !moving;
-}
 
 /** Free movement on the wall: W/S = up/down, A/D = the figurine's own left/right along
  *  the face (wall-relative, not camera-relative), diagonals combine. The figurine turns
@@ -233,8 +179,6 @@ export function climbUpdate(dt: number): boolean {
     if (tryMantle()) return true;
     v = 0;
   }
-  climbV = v; climbH = h;                      // for the animation blend
-  if (actions['climb']) actions['climb'].paused = v === 0 && h === 0; // anim only while moving on the wall
   if (v === 0 && h === 0) return false;        // resting / clinging — Space jumps off
   if (v !== 0 && h !== 0) { v *= Math.SQRT1_2; h *= Math.SQRT1_2; } // diagonals aren't faster
   if (v < 0) climbCling = false;               // heading down releases a topped-out cling

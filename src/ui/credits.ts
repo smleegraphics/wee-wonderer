@@ -1,5 +1,5 @@
 // The Credits card: who made what the visitor is looking at, with the licences that ask
-// for credit (CC BY 4.0: the figurine and the Mip-NeRF 360 scenes). CREDITS.md at the
+// for credit (CC BY 4.0: the Mip-NeRF 360 scenes). CREDITS.md at the
 // repository's root says the same at more length; keep the two in step.
 
 import { el } from './paper';
@@ -11,11 +11,6 @@ const CC_BY = { text: 'CC BY 4.0', href: 'https://creativecommons.org/licenses/b
 
 const CREDITS: Credit[] = [
   { what: 'Made by', who: [{ text: 'Samantha Lee', href: 'https://samanthamlee.com' }] },
-  {
-    what: 'The figurine',
-    who: [{ text: 'Free Pack – Chibi Base Mesh (Rigged)', href: 'https://sketchfab.com/3d-models/free-pack-chibi-base-mesh-rigged-fed4fb329f224f1594f631eae8d2626b' }, ' by PolyOne Studio, ', CC_BY, ', adapted'],
-    note: ['Animations from ', { text: 'Mixamo', href: 'https://www.mixamo.com' }],
-  },
   {
     what: 'Kitchen, Living Room and Counter',
     who: ['From the ', { text: 'Mip-NeRF 360', href: 'https://jonbarron.info/mipnerf360/' }, ' dataset by Barron, Mildenhall, Verbin, Srinivasan and Hedman (Google), ', CC_BY],

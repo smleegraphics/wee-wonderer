@@ -1,45 +1,51 @@
-// The figurine: its model and animations, where it starts, and the keys.
+// The figurine: its model and how it shows each move, where it starts, and the keys.
 
 import * as THREE from 'three';
 import type { GLTF } from 'three/addons/loaders/GLTFLoader.js';
-import { buildClimbSideClip } from './climb-side-anim';
-import { camera, CAPSULE_RADIUS, figurine, hud, move, orbit, player, q, TUNE, velocity } from '../app';
+import { camera, CAPSULE_RADIUS, figurine, hud, move, orbit, player, q } from '../app';
 import { collision, groundY, navGrid, PLATFORM_OPTS, rebuildPlatformOverlay, setPlatformOverlay, setVoxelOverlay, showPlatforms, showVoxels } from '../collision/room-collision';
+import { loadout } from './abilities';
 import { camLatch, frameOpeningShot } from './camera';
-import { climbJumpOff } from './climb';
-import { lastGood } from './controller';
+import { CHARACTERS, type Move, MOVE_FALLBACK, MOVE_PLAYS } from './characters';
+import { jumpKey, jumpRelease, lastGood, resetMotion, setLoadout } from './controller';
+import { useMoveSettings } from './movement';
 import { requestScanLight } from '../lighting/scan-light';
 import { loadingViewOn, setUpLoadingView, updateLoading } from '../scan/room';
 
-const CONTRACT = [
-  { name: 'idle', loop: true },
-  { name: 'walk', loop: true },
-  { name: 'run', loop: true },
-  { name: 'climb', loop: true },
-  { name: 'jump_start', loop: false },
-  { name: 'jump_loop', loop: false, hold: true },
-  { name: 'jump_land', loop: false },
-] as const;
+/** The character in play. One for now; choosing one is a later piece of work. */
+export const CHARACTER = CHARACTERS[0];
 const MOVE_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD']);
+const FADE = 0.18; // seconds: how long one move's clip blends into the next, unless asked otherwise
 export let charH = 1;
 export let charModel: THREE.Object3D | null = null;
-export let charFeetOffset = 0;   // model's local y so its feet sit at the player origin
 export let mixer: THREE.AnimationMixer | null = null;
-export const actions: Record<string, THREE.AnimationAction> = {};
-export let activeAction: THREE.AnimationAction | null = null;
+const actions: Partial<Record<Move, THREE.AnimationAction>> = {}; // one per move the character shows (its own clip, or a held frame)
+export let activeMove: Move | null = null;  // the move whose action is playing
+let activeAction: THREE.AnimationAction | null = null;
+const heldAt = new Map<THREE.AnimationAction, number>(); // the actions that hold one frame, and its time
 export let charLoaded = false;
 
 export function onLoaded(gltf: GLTF): void {
+  useMoveSettings(CHARACTER.tune);
+  setLoadout(loadout(CHARACTER.abilities));
   const model = gltf.scene;
-  player.add(model);
   setupMixer(gltf, model);
-  if (actions['idle']) { play('idle', 0); mixer!.update(0); }
+  play('idle', 0);
+  mixer!.update(0);
+  // Scaled to the character's height, measured standing in its idle pose with skinning
+  // applied (a skinned mesh's own bounds are its bind pose: context/technical-notes.md).
   model.updateMatrixWorld(true);
-  const bb = measureSkinnedBounds(model);
-  charH = Math.max(bb.max.y - bb.min.y, 1e-4);
-  model.position.y = -bb.min.y; // feet at the player origin
-  charModel = model;
-  charFeetOffset = -bb.min.y;
+  const bounds = new THREE.Box3().setFromObject(model, true);
+  model.scale.setScalar(CHARACTER.height / Math.max(bounds.max.y - bounds.min.y, 1e-6));
+  model.updateMatrixWorld(true);
+  bounds.setFromObject(model, true);
+  charH = Math.max(bounds.max.y - bounds.min.y, 1e-4);
+  const feet = -bounds.min.y; // lift so its feet are at the player's origin
+  const holder = new THREE.Group(); // carries that lift: the controller moves `charModel` for its smoothing alone
+  model.position.y = feet;
+  holder.add(model);
+  player.add(holder);
+  charModel = holder;
 
   camera.near = charH * 0.02;
   camera.far = charH * 400;
@@ -47,14 +53,69 @@ export function onLoaded(gltf: GLTF): void {
   orbit.minDistance = charH * 2.5;
   orbit.maxDistance = charH * 14;
 
-  play('idle', 0);
   charLoaded = true;
   setUpLoadingView(model);
   if (collision) rebuildPlatformOverlay(); // rebuild the NavGrid now charH (headroom/step) is real
   resetToSpawn();
   updateLoading(); // after the figurine is in its place: if the room was only waiting for it, this starts the room arriving around it
   requestScanLight();
-  console.log(`character: ${charH.toFixed(3)} tall, ${gltf.animations.length} clips`);
+  console.log(`character: ${CHARACTER.id}, ${charH.toFixed(3)} tall, can ${[CHARACTER.climbs ? 'climb' : '', ...CHARACTER.abilities].filter(Boolean).join(', ') || 'nothing extra'}`);
+}
+
+/** An action for each move the character's entry gives a clip for: the clip played (looping or
+ *  once, MOVE_PLAYS), or one frame of it held still. */
+function setupMixer(gltf: GLTF, model: THREE.Object3D): void {
+  mixer = new THREE.AnimationMixer(model);
+  const clipByName = new Map(gltf.animations.map((c) => [c.name, c]));
+  for (const [m, use] of Object.entries(CHARACTER.clips) as [Move, NonNullable<typeof CHARACTER.clips[Move]>][]) {
+    const name = typeof use === 'string' ? use : use.clip, clip = clipByName.get(name);
+    if (!clip) { console.warn(`character ${CHARACTER.id}: no clip "${name}" for ${m}`); continue; }
+    // a held frame is its own action (the clip played from that frame, paused), so it can blend like any other
+    const a = mixer.clipAction(typeof use === 'string' ? clip : clip.clone(), model);
+    if (typeof use !== 'string') { a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; a.time = use.hold; a.paused = true; }
+    else if (MOVE_PLAYS[m] === 'loop') a.setLoop(THREE.LoopRepeat, Infinity);
+    else { a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; }
+    if (typeof use !== 'string') heldAt.set(a, use.hold);
+    actions[m] = a;
+  }
+}
+
+/** The move whose action shows `m`: `m` itself, or the first down its fallback chain the character has. */
+function shownBy(m: Move): Move | null {
+  for (let at: Move | undefined = m; at; at = MOVE_FALLBACK[at]) if (actions[at]) return at;
+  return null;
+}
+
+/** Is `m` (or what shows it) a one-off clip still playing out? A loop or a held frame never is, so
+ *  nothing waits on one (a landing shown by the idle loop must not hold the figurine still). */
+export function moveIsPlaying(m: Move): boolean {
+  const a = activeAction;
+  return !!a && shownBy(m) === activeMove && a.loop === THREE.LoopOnce && !heldAt.has(a) && a.isRunning();
+}
+
+/** Play move `m`, blending over `fade` seconds. Playing what already plays does nothing, unless
+ *  `again`: then it starts over (the air jump pushing off on the take-off's clip). */
+export function play(m: Move, fade = FADE, again = false): void {
+  const shown = shownBy(m);
+  if (!shown) return;
+  const next = actions[shown]!;
+  if (next === activeAction) { if (again) restart(next); return; }
+  restart(next);
+  if (activeAction) activeAction.crossFadeTo(next, fade, false);
+  activeAction = next; activeMove = shown;
+}
+
+function restart(a: THREE.AnimationAction): void {
+  a.reset().play();
+  a.timeScale = 1;
+  const hold = heldAt.get(a);
+  if (hold !== undefined) { a.time = hold; a.paused = true; }
+}
+
+/** Play the current clip at `pace` times its authored speed, so the feet keep up with the
+ *  figurine while it speeds up and slows down (within reason: a crawl is not a slow-motion walk). */
+export function setMovePace(pace: number): void {
+  if (activeAction && !heldAt.has(activeAction)) activeAction.timeScale = Math.min(1.3, Math.max(0.6, pace));
 }
 
 /** Put the figurine on the floor at the spawn point and re-frame the camera behind it. */
@@ -76,71 +137,26 @@ export function resetToSpawn(): void {
   } else {
     player.position.set(0, 0, 0);
   }
-  // align the spawn with the NavGrid so the reliability layer picks it up cleanly
+  placeFigurine(player.position, true);
+}
+
+/** Stand the figurine at `at`, still, on the walkable surface there. `opening` frames the
+ *  room's opening shot behind it (a start); without it the follow camera just catches up
+ *  (put back somewhere after losing the ground). */
+export function placeFigurine(at: THREE.Vector3, opening: boolean): void {
+  player.position.copy(at);
+  // align with the NavGrid so the reliability layer picks it up cleanly
   const s = navGrid?.surfaceNear(player.position.x, player.position.z, player.position.y, charH) ?? null;
   if (s !== null) player.position.y = s;
   player.rotation.set(0, 0, 0);
-  velocity.set(0, 0, 0);
+  resetMotion();
   figurine.wasGrounded = false;
-  figurine.supportY = player.position.y;         // stand on the spawn surface
+  figurine.supportY = player.position.y;         // stand on the surface there
   lastGood.copy(player.position);
   figurine.smoothFeetY = player.position.y;
-  if (charModel) charModel.position.y = charFeetOffset;
+  if (charModel) charModel.position.y = 0;
   figurine.state = 'ground';
-  frameOpeningShot();
-}
-
-function setupMixer(gltf: GLTF, model: THREE.Object3D): void {
-  mixer = new THREE.AnimationMixer(model);
-  const clipByName: Record<string, THREE.AnimationClip> = {};
-  gltf.animations.forEach((c) => (clipByName[c.name] = c));
-  for (const spec of CONTRACT) {
-    const clip = clipByName[spec.name];
-    if (!clip) continue;
-    const a = mixer.clipAction(clip);
-    if (spec.loop) a.setLoop(THREE.LoopRepeat, Infinity);
-    else { a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; }
-    actions[spec.name] = a;
-  }
-  // Sideways climbing has no authored clip — derive a shimmy each way from `climb`.
-  // They run permanently at zero weight; updateClimbBlend mixes them in on the wall.
-  if (clipByName['climb']) {
-    for (const [name, dir] of [['climb_side_r', 1], ['climb_side_l', -1]] as const) {
-      const clip = buildClimbSideClip(clipByName['climb'], model, dir, name);
-      if (!clip) continue;
-      const a = mixer.clipAction(clip);
-      a.setLoop(THREE.LoopRepeat, Infinity);
-      a.weight = 0; a.paused = true;
-      a.play();
-      actions[name] = a;
-    }
-  }
-  mixer.addEventListener('finished', onActionFinished);
-}
-
-function measureSkinnedBounds(model: THREE.Object3D): THREE.Box3 {
-  const bounds = new THREE.Box3();
-  const v = new THREE.Vector3();
-  let bones = 0;
-  model.traverse((o) => { if ((o as THREE.Bone).isBone) { o.getWorldPosition(v); bounds.expandByPoint(v); bones++; } });
-  if (!bones) bounds.setFromObject(model);
-  return bounds;
-}
-
-export function play(name: string, fade = TUNE.fade): void {
-  const next = actions[name];
-  if (!next || next === activeAction) return;
-  next.reset().play();
-  const spec = CONTRACT.find((s) => s.name === name);
-  if (spec && !spec.loop) { next.setLoop(THREE.LoopOnce, 1); next.clampWhenFinished = true; }
-  if (activeAction) activeAction.crossFadeTo(next, fade, false);
-  activeAction = next;
-}
-
-function onActionFinished(e: { action: THREE.AnimationAction }): void {
-  const name = e.action.getClip().name;
-  if (name === 'jump_start') { velocity.y = TUNE.jumpVel * charH; figurine.state = 'air'; play('jump_loop', 0.08); }
-  else if (name === 'jump_land') { figurine.state = 'ground'; play('idle', 0.25); }
+  if (opening) frameOpeningShot();
 }
 
 function keyEvent(e: KeyboardEvent, v: 0 | 1): void {
@@ -159,20 +175,13 @@ function keyEvent(e: KeyboardEvent, v: 0 | 1): void {
     case 'KeyS': move.b = v; break;
     case 'KeyA': move.l = v; break;
     case 'KeyD': move.r = v; break;
-    case 'ShiftLeft': case 'ShiftRight': move.run = !!v; break;
-    case 'Space': if (v) jumpKey(); e.preventDefault(); break;
+    case 'ShiftLeft': case 'ShiftRight': move.run = !!v; break; // held: sprint (built up over MOVE.sprintRamp)
+    case 'Space':
+      e.preventDefault();
+      if (v && !e.repeat) jumpKey();
+      else if (!v) jumpRelease();
+      break;
   }
 }
 addEventListener('keydown', (e) => keyEvent(e, 1));
 addEventListener('keyup', (e) => keyEvent(e, 0));
-
-/** The jump key: a jump from the ground, or off the wall when climbing. */
-export function jumpKey(): void {
-  if (figurine.state === 'ground') startJump();
-  else if (figurine.state === 'climb') climbJumpOff();
-}
-
-function startJump(): void {
-  if (actions['jump_start']) { figurine.state = 'jump_start'; play('jump_start', 0.06); }
-  else { velocity.y = TUNE.jumpVel * charH; figurine.state = 'air'; play(actions['jump_loop'] ? 'jump_loop' : 'idle', 0.08); }
-}
