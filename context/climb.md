@@ -13,10 +13,15 @@ of it is in `src/figurine/` (`climb.ts`, `controller.ts`, `camera.ts`) unless no
   left and right, never camera-relative. Diagonals combine at the same speed.
 - Going up through a dent or gap in an uneven face: carry on, if the face picks up again
   within `CLIMB.gapAbove` (0.8 body heights) above the grip.
-- At the top: mantle onto the nearest walkable surface over the lip (looked for out to
-  `mantleOver` radii). Otherwise hang from the lip (the `ledgeHang` move): W pulls up onto a
-  surface up to `pullUp` (a body height) above the feet, A/D go along the lip, S climbs back
-  down, Space jumps off.
+- At the top, over it whichever way there is (`overTheTop`), in this order: mantle onto the
+  nearest walkable surface over the lip (out to `mantleOver` radii); step over a ledge too
+  narrow to stand on to a face going on up behind it, and climb that (`setBack` radii; only
+  where there is something solid to step over); climb over a thin top and drop onto ground on
+  the far side (`dropOver` radii). Otherwise hang from the lip (the `ledgeHang` move, upright):
+  W tries the same again, pulling up onto a surface up to `pullUp` (a body height) above the
+  feet; A/D go along the lip, S climbs back down, Space jumps off. Every one of 36 hangs
+  measured at the tops of objects had ground on the far side; hangs in the object test fell
+  from 36 to 10 (Counter 9 -> 4, Living Room 26 -> 6, Kitchen 1 -> 0).
 - Jump at a ledge (a face at chest height that ends below the head): grab it. Holding W tops
   out over it at once; with nothing to stand on it hangs.
 - Walk off a ledge: fall (the lip grab is gone; jump back at the face to climb it).
@@ -157,16 +162,23 @@ A spring arm from the figurine to the camera (`updateCamera`).
 
 ## Leaning with the wall
 
-While climbing, the figure (not the body that collides, which stays upright) leans with the
-face: forward into one that leans away, back under one that leans over it. The lean is how far
-the face moves away or toward the climber between the grip ray and one at chest height, eased
-(`TILT_RATE`) and capped (`CLIMB_TILT.max`, 40°, a Debug slider with an on/off), about the
-chest, where the hands meet the wall. Off the wall it eases back upright. On Counter's objects
-it ranges from 22° back to 39° forward.
+While climbing, the figure (not the body that collides, which stays upright) lies parallel to
+the wall it touches: its up is the world's up made perpendicular to the way the touching faces
+face, averaged by their area. The touching faces are those within `TILT_TOUCH` (half a radius)
+past the climbing gap, found by the same pass as rule 13 (`Collision.nearestAhead`'s `facing`),
+counting only faces steep enough to climb (`grabSlopeMax`): the tops of things, large and
+turned to the sky, tipped every climb in Kitchen 30° to 39° forward. It is capped
+(`CLIMB_TILT.max`, 15°) and eased slowly (`TILT_RATE`, 4 a second), about the chest; upright
+while hanging at a top and off the wall. A Debug switch and slider (Climbing).
 
-The nearest point of the wall to the body (rule 13) was tried as the source and dropped: it
-answers "what is nearest the body", which under a plant's leaves was a leaf overhead (a full
-lean back), and for a face leaning away is a point below the body, so it never leaned forward.
+Tried and dropped, in order: the way from the nearest wall point to the body (it saw a leaf
+over a plant's pot, never a face leaning away); the wall's distance at the grip against the
+chest (a chest ray past the top or through a gap read another surface, and threw the figure
+40° forward over the top of Kitchen's bulldozer; limited to the same face, it still wobbled
+on lumpy faces 0.35 body heights apart). With touched faces the lean has no bias on Living
+Room's furniture (medians -10° to +10°) but still leans forward on Kitchen's small, smoothed
+objects, whose touching faces are their rounded edges; and within one object it swings, which
+the 15° cap and slow easing keep small.
 
 ## Sideways animation
 
@@ -215,6 +227,8 @@ character only.
   12), but nothing steers the body around an object beside the wall: it stops instead.
 - **A crevice between two objects can still hold a climber** that falls into it and re-grabs
   (2 of 112 in the object test): no pushes or undone frames, no headway. Not investigated.
+  Climbing over a thin top and dropping lands in such places more often: with W still held
+  the falling climber grabs the far wall (3 of 5 stuck climbs in Living Room's object test).
 - **A gap the probe cannot see past still reads as the top.** `wallAbove` looks within the
   following reach; where the face resumes further back than that, or more than `gapAbove`
   higher, the climber hangs. Measured with the cling detector (a scratch script: hold W on

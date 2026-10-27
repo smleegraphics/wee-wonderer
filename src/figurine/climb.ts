@@ -19,7 +19,7 @@ const climbProbe = new THREE.Vector3(); // scratch for the forward wall raycast
 const climbSide = new THREE.Vector3();  // scratch: sideways direction along the wall
 const climbFrom = new THREE.Vector3();  // scratch: where the body was before the snap to the face, which might not fit
 const climbFrame = new THREE.Vector3(); // scratch: where the body was at the start of the frame
-const axisFrom = new THREE.Vector3(), axisTo = new THREE.Vector3(), axisAt = new THREE.Vector3(); // scratch: the body's axis, and its nearest point of the wall
+const axisFrom = new THREE.Vector3(), axisTo = new THREE.Vector3(), axisAt = new THREE.Vector3(), axisFacing = new THREE.Vector3(); // scratch: the body's axis, its nearest point of the wall, and how the wall it touches faces
 let climbAtEdge = false;                // sideways shuffle is stopped at the wall's edge (telemetry de-dupe)
 export let climbCling = false;                 // topped out with nowhere to stand → hanging
 let climbUnfit = false;                 // this frame's move was undone (telemetry de-dupe)
@@ -40,6 +40,8 @@ export const CLIMB = {
   mantleNear: 0.4,  // ...onto a surface within this of the feet...
   mantleUp: 0.3,    // ...and no more than this above them
   pullUp: 1,        // hanging at a top, W pulls up onto a surface this far above the feet (a hand's reach; Living Room has one at 0.79)
+  setBack: 4,       // at a top, a face going on up this many radii further back (past a narrow ledge) is stepped over to and climbed
+  dropOver: 5,      // at a top, ground this many radii over the lip (the far side of a thin top) is climbed over and dropped onto
   gapAbove: 0.8,    // going up with no wall at the grip, a face picking up again within this above it is a gap in the wall, not its top (measured gaps: 0.2 to 0.7)
   landTol: 0.1,     // descending: step off once the feet are this close to the ground
   skin: 0.05,       // radii: the body resting this far into a surface is touching it, not inside it
@@ -123,8 +125,9 @@ export function tryStartClimb(dx: number, dz: number, feetY: number): boolean {
 
 /** How the figure leans with the wall while climbing (figure only: the body that collides
  *  stays upright). `on`, and the most it leans, in degrees either way. */
-export const CLIMB_TILT = { on: true, max: 40 };
-const TILT_RATE = 8; // per second, eased: a lumpy scan's facing changes from frame to frame
+export const CLIMB_TILT = { on: true, max: 15 };
+const TILT_RATE = 4; // per second, eased: a lumpy scan's facing changes from frame to frame (at 8 it wobbled)
+const TILT_TOUCH = 0.5; // capsule radii past the climbing gap: the surfaces this near the body are the ones it touches, which it lies along
 let tiltWanted = 0;  // radians: the lean the wall's facing asks for (forward positive)
 let tiltShown = 0;   // radians: the lean shown, eased toward that (or upright, off the wall)
 
@@ -135,7 +138,7 @@ export const climbTiltShown = () => THREE.MathUtils.radToDeg(tiltShown);
 
 export function climbTilt(dt: number): number {
   const max = THREE.MathUtils.degToRad(CLIMB_TILT.max);
-  const want = figurine.state === 'climb' && CLIMB_TILT.on ? THREE.MathUtils.clamp(tiltWanted, -max, max) : 0;
+  const want = figurine.state === 'climb' && !climbCling && CLIMB_TILT.on ? THREE.MathUtils.clamp(tiltWanted, -max, max) : 0; // (hanging at a top: upright)
   tiltShown += (want - tiltShown) * Math.min(1, TILT_RATE * dt);
   return tiltShown;
 }
@@ -173,6 +176,63 @@ function tryMantle(reachUp = CLIMB.mantleUp): boolean {
   return false;
 }
 
+/** At the top of a climb: over it, whichever way there is, in this order. A surface to stand
+ *  on within `reachUp` (tryMantle: 'stood'); a face going on up further back, past a ledge too
+ *  narrow to stand on, stepped over to and climbed ('moved'); ground on the far side of a thin
+ *  top, climbed over and dropped onto ('moved', falling). Else null: the climber clings there.
+ *  Every one of 36 clings at the tops of Counter's, Kitchen's and Living Room's objects had
+ *  ground on the far side; the side of Kitchen's bulldozer has its cab set back behind the track. */
+function overTheTop(reachUp: number): 'stood' | 'moved' | null {
+  if (tryMantle(reachUp)) return 'stood';
+  if (stepToSetBack()) return 'moved';
+  if (dropOverTheTop()) return 'moved';
+  return null;
+}
+
+/** A face going on up further back than the climb follows (past a ledge too narrow to stand
+ *  on): step over to it and climb on. Probed from the grip to the head, out to setBack radii;
+ *  only where there is a ledge to step over. */
+function stepToSetBack(): boolean {
+  const p = player.position, radius = CAPSULE_RADIUS * charH, gap = radius * CLIMB.gap, near = radius + charH * CLIMB.followReach;
+  for (let up = CLIMB.grip * charH; up <= CLIMB.head * charH + 1e-6; up += lastVoxelSize) {
+    const w = climbWall(climbProbe.set(p.x, p.y + up, p.z), climbDir, near + radius * CLIMB.setBack);
+    if (!w || !isWall(w) || w.distance <= near) continue;
+    // only over a ledge: something solid just under the feet halfway across. Without it a step
+    // crossed open air to whatever stood behind (6.7 radii, in Living Room, then stuck there)
+    const mid = (w.distance - gap) / 2;
+    if (!climbWall(climbProbe.set(p.x + climbDir.x * mid, p.y + charH * CLIMB.grip, p.z + climbDir.z * mid), WORLD_DOWN, charH * (CLIMB.grip + CLIMB.mantleNear))) return false;
+    climbFrom.copy(p);
+    p.addScaledVector(climbDir, w.distance - gap);
+    if (!fitClimbBody(radius)) { p.copy(climbFrom); return false; }
+    climbCling = false;
+    if (TEL) console.log(`CLIMB-SETBACK y=${p.y.toFixed(2)} by=${((w.distance - gap) / radius).toFixed(1)}r`);
+    return true;
+  }
+  return false;
+}
+
+/** Ground on the far side of a thin top (the inside of a bowl, behind a couch back): climb over,
+ *  just clear of the lip, and drop onto it. Only lower than a mantle reaches: anything nearer
+ *  was a surface to stand on. Out to dropOver radii. */
+function dropOverTheTop(): boolean {
+  if (!navGrid) return false;
+  const p = player.position, radius = CAPSULE_RADIUS * charH;
+  for (let over = radius * (CLIMB.gap + 0.5); over <= radius * CLIMB.dropOver + 1e-6; over += navGrid.step / 2) {
+    const x = p.x + climbDir.x * over, z = p.z + climbDir.z * over, g = navGrid.surfaceBelow(x, z, p.y);
+    if (g === null || g > p.y - charH * CLIMB.mantleNear) continue;
+    climbFrom.copy(p);
+    p.x = x; p.z = z;
+    if (!fitClimbBody(radius)) { p.copy(climbFrom); continue; }
+    climbCling = false;
+    figurine.state = 'air';
+    velocity.set(0, 0, 0);
+    play('fall', 0.15);
+    if (TEL) console.log(`CLIMB-OVER y=${p.y.toFixed(2)} over=${(over / radius).toFixed(1)}r down=${((p.y - g) / charH).toFixed(2)}h`);
+    return true;
+  }
+  return false;
+}
+
 /** Does the face pick up again within gapAbove over a height `y` (a dent or gap in an uneven
  *  wall, so the climb is not at its top)? Probed a voxel at a time, as climbableFace probes. */
 function wallAbove(y: number, reach: number): boolean {
@@ -199,8 +259,10 @@ export function climbUpdate(dt: number): boolean {
 
   let v = move.f - move.b;                     // W = up, S = down
   let h = move.r - move.l;                     // D = figurine's right, A = its left
-  if (climbCling && v > 0) {                   // hanging at a top: can't go higher, but W pulls up onto a surface within reach
-    if (tryMantle(CLIMB.pullUp)) return true;
+  if (climbCling && v > 0) {                   // hanging at a top: W goes over it if there is any way over (overTheTop)
+    const over = overTheTop(CLIMB.pullUp);
+    if (over === 'stood') return true;
+    if (over === 'moved') return false;
     v = 0;
   }
   play(climbCling ? 'ledgeHang' : 'climb', 0.15);
@@ -271,9 +333,13 @@ export function climbUpdate(dt: number): boolean {
     // face that bulges out higher up (the side of Counter's bowl) pressed the chest and head
     // into it, and the push out of it cancelled every step up. Where the body is nearest the
     // wall is where the gap is kept, so it leans out over a bulge and in under a recess.
-    const nearest = collision.nearestAhead(axisFrom.set(p.x, p.y + probeUp, p.z), axisTo.set(p.x, p.y + charH * CLIMB.head, p.z), climbDir, followReach, axisAt);
-    const grip = wall.distance; // (read now: the next probe reuses `wall`)
-    const gripY = p.y + probeUp;
+    const nearest = collision.nearestAhead(axisFrom.set(p.x, p.y + probeUp, p.z), axisTo.set(p.x, p.y + charH * CLIMB.head, p.z), climbDir, followReach, axisAt, gap + radius * TILT_TOUCH, grabSlopeMax(), axisFacing);
+    // The figure lies parallel to the wall it touches: its up is the world's up made
+    // perpendicular to the way the touching faces face, averaged by area. A face turned to the
+    // sky (leaning away) tips it forward, one turned to the ground (over it) tips it back. Only
+    // faces steep enough to climb count (isWall's cutoff): the top of what it climbs, large and
+    // turned to the sky, tipped it 30° to 39° forward on every object in Kitchen.
+    tiltWanted = axisFacing.lengthSq() > 0 ? Math.asin(THREE.MathUtils.clamp(axisFacing.y, -1, 1)) : 0; // (touching nothing: upright, never the last lean held)
     climbFrom.copy(p);
     p.addScaledVector(climbDir, Math.min(wall.distance, nearest) - gap);
     // steer into the face along its normal, so a curved / angled wall is followed
@@ -285,24 +351,20 @@ export function climbUpdate(dt: number): boolean {
       climbDir.z += (-wall.nz / hn - climbDir.z) * t;
       climbDir.normalize();
     }
-    // The figure leans with the face it climbs: how far the face moves away (or toward it) from
-    // the grip up to the chest, measured from where the grip was. Only the same face counts (as
-    // a sideways step, rule 6: within a radius of the grip's); past the top, through a gap, or at
-    // a step back in the shape there is none, and the figure stands upright. Holding the last lean
-    // there, or reading what was behind the step, threw it 40° forward over the top of Kitchen's
-    // bulldozer. Not from the nearest point of the wall either: that was whatever was nearest the
-    // body (a leaf over a plant's pot), and never a face leaning away, whose nearest point is below.
-    const chest = climbWall(climbProbe.set(climbFrom.x, climbFrom.y + charH * CLIMB.chest, climbFrom.z), climbDir, followReach * 2);
-    tiltWanted = chest && Math.abs(chest.distance - grip) <= radius ? Math.atan2(chest.distance - grip, climbFrom.y + charH * CLIMB.chest - gripY) : 0;
   } else if (v > 0) {
-    // no wall at this height. Going up → the top: mantle onto a surface; else, if the face
-    // picks up again just above, a gap in it (carry on up); else cling.
-    if (tryMantle()) return true;
-    if (!wallAbove(p.y + charH * CLIMB.grip, followReach)) {
-      climbCling = true; // nothing up there → cling at the top
+    // no wall at this height. Going up: a gap in the face if it picks up again just above
+    // (carry on up); else the top, and over it if there is a way (overTheTop); else cling.
+    if (wallAbove(p.y + charH * CLIMB.grip, followReach)) {
+      if (TEL && !climbInGap) console.log(`CLIMB-GAP y=${p.y.toFixed(2)}`);
+      climbInGap = true;
+    } else {
+      climbInGap = false;
+      const over = overTheTop(CLIMB.mantleUp);
+      if (over === 'stood') return true;
+      if (over === 'moved') return false;
+      climbCling = true; // no way over → cling at the top
       if (TEL) console.log(`CLIMB-CLING y=${p.y.toFixed(2)}`);
-    } else if (TEL && !climbInGap) console.log(`CLIMB-GAP y=${p.y.toFixed(2)}`);
-    climbInGap = !climbCling;
+    }
   }
 
   // --- the whole body has to fit, not just the grip ---

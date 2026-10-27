@@ -128,8 +128,10 @@ export interface Collision {
   wallAhead(origin: THREE.Vector3, dir: THREE.Vector3, max: number): WallHit | null;
   /** How near the segment `a`–`b` (a body's axis, `a` its foot) comes to a surface in front of
    *  it: one facing it, within 60° of the level direction `dir`, no lower than `a`, no further than `max`. The distance,
-   *  or `max` if there is none. The nearest point is left in `out`. */
-  nearestAhead(a: THREE.Vector3, b: THREE.Vector3, dir: THREE.Vector3, max: number, out: THREE.Vector3): number;
+   *  or `max` if there is none. The nearest point is left in `out`; and in `facing`, the way the
+   *  surfaces within `touch` of the axis face, averaged by their area, counting only those no
+   *  more upright-facing than `steep` (|normal.y| at most: walls, not the tops of things); zero if none. */
+  nearestAhead(a: THREE.Vector3, b: THREE.Vector3, dir: THREE.Vector3, max: number, out: THREE.Vector3, touch: number, steep: number, facing: THREE.Vector3): number;
   /** Distance to the first surface along `dir` (unit) from `origin`, else `max`.
    *  Used to keep the follow-camera from clipping through walls. */
   rayDistance(origin: THREE.Vector3, dir: THREE.Vector3, max: number): number;
@@ -170,14 +172,19 @@ export class MeshCollision implements Collision {
   private aheadAxis = new THREE.Vector3();
   private aheadNormal = new THREE.Vector3();
   private aheadTo = new THREE.Vector3();
+  private aheadTouch = 0;
+  private aheadSteep = 1;
+  private aheadFacing = new THREE.Vector3(); // the touching surfaces' normals, each times its area
   private readonly aheadCbs = {
     intersectsBounds: (b: THREE.Box3) => b.intersectsBox(this.capsBox),
     intersectsTriangle: (tri: ExtendedTriangle) => {
       const dist = tri.closestPointToSegment(this.seg, this.triPoint, this.aheadAxis);
-      if (dist >= this.aheadBest || this.triPoint.y < this.seg.start.y) return; // (below the axis's foot: not counted)
+      if ((dist >= this.aheadBest && dist > this.aheadTouch) || this.triPoint.y < this.seg.start.y) return; // (below the axis's foot: not counted)
       const to = this.aheadTo.subVectors(this.triPoint, this.aheadAxis);           // from the axis to the surface
       if (to.dot(this.aheadDir) < 0.5 * dist) return;                             // not in front: further than 60° off `dir` (the floor below, a wall beside)
       if (tri.getNormal(this.aheadNormal).dot(to) > 0) return;                     // seen from behind: the far side of something
+      if (dist <= this.aheadTouch && Math.abs(this.aheadNormal.y) <= this.aheadSteep) this.aheadFacing.addScaledVector(this.aheadNormal, tri.getArea());
+      if (dist >= this.aheadBest) return;
       this.aheadBest = dist;
       this.aheadPoint.copy(this.triPoint);
     },
@@ -210,16 +217,19 @@ export class MeshCollision implements Collision {
     this.bvh = new MeshBVH(geometry, { indirect: true });
   }
 
-  nearestAhead(a: THREE.Vector3, b: THREE.Vector3, dir: THREE.Vector3, max: number, out: THREE.Vector3): number {
+  nearestAhead(a: THREE.Vector3, b: THREE.Vector3, dir: THREE.Vector3, max: number, out: THREE.Vector3, touch: number, steep: number, facing: THREE.Vector3): number {
     this.seg.start.copy(a); this.seg.end.copy(b);
     // around the axis by `max`, but not below its foot: only surfaces level with the axis or
     // above it count (below is the feet, which a caller covers otherwise), and the floor under
     // the body was most of the triangles tested (0.38 ms a call on Counter, 0.18 without it)
     this.capsBox.makeEmpty().expandByPoint(a).expandByPoint(b).expandByScalar(max);
     this.capsBox.min.y = Math.min(a.y, b.y);
-    this.aheadDir.copy(dir); this.aheadBest = max;
+    this.aheadDir.copy(dir); this.aheadBest = max; this.aheadTouch = Math.min(touch, max); this.aheadSteep = steep;
+    this.aheadFacing.set(0, 0, 0);
     this.bvh.shapecast(this.aheadCbs);
     out.copy(this.aheadPoint);
+    facing.copy(this.aheadFacing);
+    if (facing.lengthSq() > 1e-20) facing.normalize();
     return this.aheadBest;
   }
 
