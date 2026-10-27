@@ -101,12 +101,15 @@ These were each found by a bug. Breaking one brings the bug back.
       pushed clear as it is made, or refused if it is too deep.
     - A move that still does not fit once the snap is undone is not made at all: the
       frame goes back to where it started (`climbFrame`). And `fitClimbBody` also refuses a
-      chest inside something solid (`chestInside`: the first surface a ray meets ahead,
-      behind or above is seen from behind), which the overlap test cannot see: a body
-      wholly inside crosses no surface and reads 0. Living Room, climbfuzz seed 2: a
-      sideways step at a wall's edge went into a thin solid beside it, the snap was undone
-      and the step stood. Both are needed (without `chestInside` the violation comes back);
-      the same check on starting a climb made no difference and was left out.
+      chest inside something solid (`chestInside`), which the overlap test cannot see: a
+      body wholly inside crosses no surface and reads 0.
+    - **Inside is most of six rays meeting a surface from behind**, not one. The first
+      version (and the climb fuzz) used one ray ahead, behind or up, and a scan's mesh has
+      holes: a ray through a hole in the wall ahead meets the inside of the object's far side
+      from behind. Living Room's fuzz seed 2 "violation" was that (only the ray ahead saw a
+      back face), and the climb, made to refuse it, stuck at the foot of objects there (10
+      stuck climbs in the object test, 1 with six rays). With six rays the fuzz flags none of
+      what the one-ray rule did in 12 runs, and the climb fuzz uses the same function.
 
 13. **The gap to the wall is held over the whole body.** The grip ray (just above the feet)
     still decides whether there is a wall, the top, gaps and corners; but the body is held

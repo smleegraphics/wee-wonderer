@@ -286,11 +286,14 @@ export function climbUpdate(dt: number): boolean {
       climbDir.normalize();
     }
     // The figure leans with the face it climbs: how far the face moves away (or toward it) from
-    // the grip up to the chest, measured from where the grip was. Not from the nearest point of
-    // the wall: that was whatever was nearest the body (a leaf hanging over a plant's pot), and
-    // never a face leaning away, whose nearest point is below the body.
+    // the grip up to the chest, measured from where the grip was. Only the same face counts (as
+    // a sideways step, rule 6: within a radius of the grip's); past the top, through a gap, or at
+    // a step back in the shape there is none, and the figure stands upright. Holding the last lean
+    // there, or reading what was behind the step, threw it 40° forward over the top of Kitchen's
+    // bulldozer. Not from the nearest point of the wall either: that was whatever was nearest the
+    // body (a leaf over a plant's pot), and never a face leaning away, whose nearest point is below.
     const chest = climbWall(climbProbe.set(climbFrom.x, climbFrom.y + charH * CLIMB.chest, climbFrom.z), climbDir, followReach * 2);
-    if (chest) tiltWanted = Math.atan2(chest.distance - grip, climbFrom.y + charH * CLIMB.chest - gripY);
+    tiltWanted = chest && Math.abs(chest.distance - grip) <= radius ? Math.atan2(chest.distance - grip, climbFrom.y + charH * CLIMB.chest - gripY) : 0;
   } else if (v > 0) {
     // no wall at this height. Going up → the top: mantle onto a surface; else, if the face
     // picks up again just above, a gap in it (carry on up); else cling.
@@ -316,27 +319,33 @@ export function climbUpdate(dt: number): boolean {
   let fits = fitClimbBody(radius);
   if (!fits && wall) { p.copy(climbFrom); fits = fitClimbBody(radius); }
   if (!fits) {
-    if (TEL && !climbUnfit) console.log(`CLIMB-UNFIT y=${p.y.toFixed(2)} sunk=${(bodyOverlap(p.x, p.y, p.z, radius) / radius).toFixed(2)}r inside=${chestInside(p.x, p.y, p.z, climbDir)}`);
+    if (TEL && !climbUnfit) console.log(`CLIMB-UNFIT y=${p.y.toFixed(2)} sunk=${(bodyOverlap(p.x, p.y, p.z, radius) / radius).toFixed(2)}r inside=${chestInside(p.x, p.y, p.z, climbDir) ? insideWhy : 'no'}`);
     p.copy(climbFrame);
   }
   climbUnfit = !fits;
   return false;
 }
 
-/** Is the chest, feet at (x, y, z), inside something solid? The first surface a ray meets ahead
- *  (along `dir`, into the wall), behind or above is seen from behind (the test scripts/climbfuzz.mjs checks the climb by).
- *  The body's overlap test cannot tell: a body wholly inside a solid crosses none of its
- *  surfaces, and reads 0 (Living Room, climbfuzz seed 2: a sideways step along the wall went
- *  into a thin solid beside it; with this the step is not made). */
+/** Is the chest, feet at (x, y, z), inside something solid? Inside a solid, the surface met
+ *  first is seen from behind whichever way one looks; so it is inside when most of six rays
+ *  (ahead along `dir`, behind, either side, up, down) meet one from behind (INSIDE_RAYS). One ray
+ *  is not enough: a scan's mesh has holes, and a ray through a hole in the wall ahead meets the
+ *  inside of the object's far side from behind (Living Room: every one of 9 climbs stuck at the
+ *  foot of an object, the body touching nothing). The overlap test cannot tell either: a body
+ *  wholly inside crosses no surface and reads 0. The climb fuzz asks the same (`__dbg.inside`). */
+const INSIDE_RAYS = 4; // of the six, meeting a surface from behind
 const insideAt = new THREE.Vector3(), insideDir = new THREE.Vector3();
-function chestInside(x: number, y: number, z: number, dir: THREE.Vector3): boolean {
+let insideWhy = ''; // which rays found it inside (telemetry)
+export function chestInside(x: number, y: number, z: number, dir: THREE.Vector3): boolean {
   if (!collision) return false;
   insideAt.set(x, y + charH * CLIMB.chest, z);
-  for (const [dx, dy, dz] of [[dir.x, 0, dir.z], [-dir.x, 0, -dir.z], [0, 1, 0]]) {
-    const w = collision.wallAhead(insideAt, insideDir.set(dx, dy, dz), charH * 2);
-    if (w && !w.front) return true;
+  let behind = 0;
+  insideWhy = '';
+  for (const [name, dx, dy, dz] of [['ahead', dir.x, 0, dir.z], ['behind', -dir.x, 0, -dir.z], ['left', -dir.z, 0, dir.x], ['right', dir.z, 0, -dir.x], ['up', 0, 1, 0], ['down', 0, -1, 0]] as const) {
+    const w = collision.wallAhead(insideAt, insideDir.set(dx, dy, dz), charH * 4);
+    if (w && !w.front) { behind++; insideWhy += `${name} `; }
   }
-  return false;
+  return behind >= INSIDE_RAYS;
 }
 
 /** Make a climber's body fit after a move, feet at the player's position. An overlap up

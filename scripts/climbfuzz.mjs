@@ -1,6 +1,6 @@
 // Regression check for climbing: random walking, jumping and climbing, sampling the
-// rule that a climber is never inside something solid (window.__dbg.probe — see
-// publishDebugState in src/telemetry.ts). Needs the dev server running.
+// rule that a climber is never inside something solid (window.__dbg.inside, chestInside in
+// src/figurine/climb.ts; `probe` says which way the surfaces are). Needs the dev server running.
 //
 //   node scripts/climbfuzz.mjs [scan] [seconds] [seed]
 //   node scripts/climbfuzz.mjs counter-clean.spz 90 1
@@ -46,9 +46,10 @@ const check = async () => {
   if (!p) return; // not climbing
   samples++;
   if (typeof d.sunk === 'number') { sunkSum += d.sunk; sunkMax = Math.max(sunkMax, d.sunk); if (d.sunk > DEEP) sunkDeep++; }
-  // `below` is not counted: flattening the floor leaves its top and underside
-  // coincident, so a ray straight down can report either side of a floor it is above.
-  if (![p.ahead, p.behind, p.above].some((v) => v.endsWith('B'))) return;
+  // Inside a solid: most of six rays from the chest meet a surface from behind (chestInside in
+  // climb.ts, the rule the climb itself keeps). One ray was fooled by holes in a scan's mesh: a ray
+  // through a hole in the wall ahead meets the far side of the object from behind.
+  if (!d.inside) return;
   violations++;
   console.log(`VIOLATION inside a solid: at ${d.px}, ${d.py}, ${d.pz} cling=${d.cling} probe=${JSON.stringify(p)}\n   after: ${recent.join(' | ')}`);
 };
