@@ -77,25 +77,45 @@ export class NavGrid {
   }
 
   /** Nearest walkable point to (x,z) with height near `targetY`, searched in
-   *  expanding rings — recovery when the player has left every platform. */
-  nearest(x: number, z: number, targetY: number, out: THREE.Vector3): boolean {
+   *  expanding rings — recovery when the player has left every platform. With `fits`
+   *  (does the body fit standing here?), the nearest cell of that same platform where it
+   *  does, if the platform has one: the cells know headroom, not width, so the nearest
+   *  cell can put a wide body back into the wall it was pushed out of. (Its own platform:
+   *  the same level, not a jump down to the floor or across the room.) */
+  nearest(x: number, z: number, targetY: number, out: THREE.Vector3, fits?: (x: number, y: number, z: number) => boolean): boolean {
+    const e0 = this.nearestEntry(x, z, -1, (e) => Math.abs(this.ey[e] - targetY));
+    if (e0 < 0) return false;
+    out.set(this.foundX, this.ey[e0], this.foundZ);
+    if (!fits || fits(out.x, out.y, out.z)) return true;
+    const fit = this.nearestEntry(x, z, this.ep[e0], (e, cx, cz) => (fits(cx, this.ey[e], cz) ? 0 : -1));
+    if (fit >= 0) out.set(this.foundX, this.ey[fit], this.foundZ);
+    return true; // (no cell of it fits: the nearest, as without `fits`)
+  }
+
+  private foundX = 0; private foundZ = 0; // the centre of the cell nearestEntry found
+  /** The entry nearest (x,z), by rings of cells, of `platform` (-1: any), that `score`s
+   *  lowest in the first ring with any (a negative score: not this one), its cell's centre
+   *  left in foundX/foundZ; -1 if none. */
+  private nearestEntry(x: number, z: number, platform: number, score: (e: number, cx: number, cz: number) => number): number {
     const ix0 = Math.floor((x - this.minX) / this.step);
     const iz0 = Math.floor((z - this.minZ) / this.step);
     for (let r = 0; r < Math.max(this.nx, this.nz); r++) {
-      let bestD = Infinity, bx = 0, by = 0, bz = 0, found = false;
+      let best = -1, bestS = Infinity;
       for (let dx = -r; dx <= r; dx++)
         for (let dz = -r; dz <= r; dz++) {
           if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue; // shell of the ring only
           const ix = ix0 + dx, iz = iz0 + dz;
           if (ix < 0 || ix >= this.nx || iz < 0 || iz >= this.nz) continue;
+          const cx = this.minX + (ix + 0.5) * this.step, cz = this.minZ + (iz + 0.5) * this.step;
           for (let e = this.head[ix * this.nz + iz]; e !== -1; e = this.nextE[e]) {
-            const d = Math.abs(this.ey[e] - targetY);
-            if (d < bestD) { bestD = d; by = this.ey[e]; bx = this.minX + (ix + 0.5) * this.step; bz = this.minZ + (iz + 0.5) * this.step; found = true; }
+            if (platform >= 0 && this.ep[e] !== platform) continue;
+            const s = score(e, cx, cz);
+            if (s >= 0 && s < bestS) { bestS = s; best = e; this.foundX = cx; this.foundZ = cz; }
           }
         }
-      if (found) { out.set(bx, by, bz); return true; }
+      if (best >= 0) return best;
     }
-    return false;
+    return -1;
   }
 
   /** Flatten to a per-cell list for the debug overlay (includes hole-filled cells). */

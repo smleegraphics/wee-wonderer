@@ -49,6 +49,16 @@ the movement settings, an ability, or how a character is animated. Climbing has 
 5. **Everything is in body heights** (speeds a second, heights, accelerations), so a
    character of another size moves the same relative to itself.
 6. **No allocations per frame** in `updateController` and what it calls.
+7. **The walkable cells know headroom, not width; the body's width is checked where it
+   stands.** A step is taken onto any walkable cell and the body pushed clear of walls, but a
+   push that leaves no cell underfoot refuses the step (the body does not fit there beside
+   the wall); recovery onto the cells (`NavGrid.nearest` with `bodyFits`) takes the nearest
+   cell of the same platform where the body fits. Before, the push left the cells and the
+   recovery put a wide body straight back into the wall. Checking width live, not storing it
+   per cell, means any width works with no rebuild (a pass over every cell costs 50 to 180
+   ms headless, per width). Measured on Counter's tops at widths 0.1 to 0.35 and heights 0.3
+   to 0.6: no standing sample over half a radius deep but the short body's (limitations),
+   against 4.3% at width 0.35 and 7.2% at height 0.6 before.
 
 ## Settings: `MOVE` (`movement.ts`)
 
@@ -96,9 +106,10 @@ The Characters tile picks one (`loadCharacter`): the model is swapped in place, 
 reload, and the choice is kept in `localStorage['ww.character']`. `character` in
 `character.ts` is the one in play. Of loads asked for in a row only the last is put in play
 (a slower earlier one, or its failure, is dropped), and picking the one in play does nothing.
-The new body takes the old one's place with `refitBody`: on the ground (back where it last
-stood, if it was in the air or on a wall, whose fit was for the old body) and pushed clear of
-walls at its width. The NavGrid is rebuilt only for a character of another height.
+The new body takes the old one's place with `refitBody` (for any change of the body's size):
+on the ground (back where it last stood, if it was in the air or on a wall, whose fit was for
+the old body) and pushed clear of walls at its width; where that leaves the cells it falls
+from there if there is ground below, or goes to the nearest cell it fits (rule 7). The NavGrid is rebuilt only for a character of another height.
 
 **Pacing is measured, not typed in** (`clip-pace.ts`): the speed at which a walk or run
 clip keeps a planted foot still, from how far the lowest bone each side travels back over
@@ -166,7 +177,12 @@ the generated one was tied to the chibi's bones, `context/climb.md`).
 - **The movement model ignores walls in the way of a jump** and assumes every air jump is
   made at the top of the last, so what it says can be reached is an upper bound.
 - **No ceiling collision in the air** (`context/climb.md`).
-- **The walkable cells know headroom, not width.** Where a wider body cannot stand clear (a
-  narrow top), pushing it out of the wall takes it off the cells and the walk's recovery puts
-  it back in: up to 0.45 radii deep, measured switching to the chibi on Counter. Walking there
-  does the same.
+- **A switch into a corner can leave up to 0.27 radii of overlap** (Counter, Human to Chibi
+  pressed into objects): `refitBody` pushes out once, and nothing pushes again until the
+  figure moves.
+- **A short body treats ground bumps as walls.** The body test skips the bottom `WALL_LIFT`
+  (a quarter of the height) so lumps in the floor do not push; the mesh's lumps are about a
+  voxel whatever the character's size, so on a body 0.3 tall they reach past that and it can
+  stick against them (0.6% of standing samples over half a radius deep, Counter's tops; the
+  same before and after the width fix). Not fixed: the skip would need to follow the mesh's
+  roughness, not only the body.
