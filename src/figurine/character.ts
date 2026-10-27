@@ -57,9 +57,17 @@ export function onLoaded(gltf: GLTF): void {
   console.log(`character: ${charH.toFixed(3)} tall, ${gltf.animations.length} clips`);
 }
 
-/** Put the figurine on the floor at the spawn point and re-frame the camera behind it. */
+/** Put the figurine at the room's own start (roomSpawn) and re-frame the camera behind it. */
+const spawnAt = new THREE.Vector3();
 export function resetToSpawn(): void {
-  // Start on the ground (unless placed with ?fx=&fz=): the spot nearest the scan's centre,
+  placeFigurine(roomSpawn(spawnAt), true);
+}
+
+/** Where the room starts the figurine, into `out`, without moving it. A theme may start it
+ *  elsewhere (context/game.md); what can be reached, and the collision health numbers, are
+ *  still measured from here. */
+export function roomSpawn(out: THREE.Vector3): THREE.Vector3 {
+  // On the ground (unless placed with ?fx=&fz=): the spot nearest the scan's centre,
   // at the level the scan's ground is (a room's floor, a table's top), where the figurine
   // fits. Without the level, findSpawn takes the lowest place near the centre with room
   // to stand, which need not be the ground: on Counter it is the inside of a glass bowl, a
@@ -68,15 +76,25 @@ export function resetToSpawn(): void {
   // one point, and Kitchen's nearest is the table under the Lego bulldozer, between its
   // tracks, where the figurine is boxed in.)
   if (q.has('fx') || q.has('fz')) {
-    player.position.set(Number(q.get('fx') ?? 0), 0, Number(q.get('fz') ?? 0));
+    out.set(Number(q.get('fx') ?? 0), 0, Number(q.get('fz') ?? 0));
   } else if (collision && charH > 0) {
     const radius = CAPSULE_RADIUS * charH, segLen = Math.max(0.02, charH - 2 * radius);
-    if (groundY === null || !collision.findSpawn(radius, segLen, player.position, groundY, charH * PLATFORM_OPTS.stepFactor))
-      collision.findSpawn(radius, segLen, player.position);
+    if (groundY === null || !collision.findSpawn(radius, segLen, out, groundY, charH * PLATFORM_OPTS.stepFactor))
+      collision.findSpawn(radius, segLen, out);
   } else {
-    player.position.set(0, 0, 0);
+    out.set(0, 0, 0);
   }
-  // align the spawn with the NavGrid so the reliability layer picks it up cleanly
+  const s = navGrid?.surfaceNear(out.x, out.z, out.y, charH) ?? null; // on the NavGrid's surface there, as placeFigurine stands it
+  if (s !== null) out.y = s;
+  return out;
+}
+
+/** Stand the figurine at `at`, still, on the walkable surface there. `opening` frames the
+ *  room's opening shot behind it (a start); without it the follow camera just catches up
+ *  (a theme putting it back somewhere safe). */
+export function placeFigurine(at: THREE.Vector3, opening: boolean): void {
+  player.position.copy(at);
+  // align with the NavGrid so the reliability layer picks it up cleanly
   const s = navGrid?.surfaceNear(player.position.x, player.position.z, player.position.y, charH) ?? null;
   if (s !== null) player.position.y = s;
   player.rotation.set(0, 0, 0);
@@ -87,7 +105,7 @@ export function resetToSpawn(): void {
   figurine.smoothFeetY = player.position.y;
   if (charModel) charModel.position.y = charFeetOffset;
   figurine.state = 'ground';
-  frameOpeningShot();
+  if (opening) frameOpeningShot();
 }
 
 function setupMixer(gltf: GLTF, model: THREE.Object3D): void {

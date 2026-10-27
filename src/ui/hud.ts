@@ -31,6 +31,8 @@ export interface Hud {
   addRoom(room: Room): void;
   setCurrentRoom(id: string): void;
   status(message: string, kind: StatusKind): void;
+  /** What the room asks of the player, kept on screen while they play (null: nothing). */
+  setGoal(text: string | null): void;
   /** Show or hide the loading note (the waiting scene itself is 3D: loading-scene.ts). */
   setLoading(on: boolean): void;
   /** What the loading note says is happening, and how far the load has got (0..1). */
@@ -144,6 +146,15 @@ export function createHud(opts: HudOptions): Hud {
     if (kind === 'done') statusTimer = window.setTimeout(() => { statusEl.hidden = true; }, DONE_STATUS_MS);
   }
 
+  // --- the room's goal: what its theme asks, and how far along it is ---
+  const goalEl = el('div', 'ww-card ww-goal');
+  goalEl.setAttribute('role', 'status');
+  goalEl.hidden = true;
+  function setGoal(text: string | null): void {
+    goalEl.hidden = text === null;
+    goalEl.textContent = text ?? '';
+  }
+
   // --- drop a scan anywhere to import it ---
   const drop = el('div', 'ww-screen ww-drop');
   drop.appendChild(el('div', 'ww-card', 'Drop a scan to import'));
@@ -215,7 +226,7 @@ export function createHud(opts: HudOptions): Hud {
   }
   title.hidden = true;
 
-  root.append(top, bottom, left, roomsCard, creditsCard, controlsCard, debug.el, picker, drop, loading, title, statusEl);
+  root.append(top, bottom, left, goalEl, roomsCard, creditsCard, controlsCard, debug.el, picker, drop, loading, title, statusEl);
   document.body.appendChild(root);
   if (!titleSeen()) showTitle();
 
@@ -229,6 +240,7 @@ export function createHud(opts: HudOptions): Hud {
     addRoom,
     setCurrentRoom,
     status,
+    setGoal,
     setLoading,
     loadProgress,
     token: (name) => getComputedStyle(root).getPropertyValue(name).trim(),

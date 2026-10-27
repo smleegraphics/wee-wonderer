@@ -51,18 +51,30 @@ export class NavGrid {
     return ix * this.nz + iz;
   }
 
+  /** The entry at (x,z) closest to `targetY` within `band`, or -1. */
+  private entryNear(x: number, z: number, targetY: number, band: number): number {
+    const c = this.cellIndex(x, z);
+    if (c < 0) return -1;
+    let best = -1, bestD = band;
+    for (let e = this.head[c]; e !== -1; e = this.nextE[e]) {
+      const d = Math.abs(this.ey[e] - targetY);
+      if (d <= bestD) { bestD = d; best = e; }
+    }
+    return best;
+  }
+
   /** The walkable surface at (x,z) closest to `targetY` within `band` (the max
    *  step you can walk over), or null if the platform doesn't continue here — i.e.
    *  an edge. Used to keep feet on the surface and to confine to the platform. */
   surfaceNear(x: number, z: number, targetY: number, band: number): number | null {
-    const c = this.cellIndex(x, z);
-    if (c < 0) return null;
-    let best: number | null = null, bestD = band;
-    for (let e = this.head[c]; e !== -1; e = this.nextE[e]) {
-      const d = Math.abs(this.ey[e] - targetY);
-      if (d <= bestD) { bestD = d; best = this.ey[e]; }
-    }
-    return best;
+    const e = this.entryNear(x, z, targetY, band);
+    return e < 0 ? null : this.ey[e];
+  }
+
+  /** Which platform the surface surfaceNear finds belongs to (its id in toField), or -1. */
+  platformAt(x: number, z: number, targetY: number, band: number): number {
+    const e = this.entryNear(x, z, targetY, band);
+    return e < 0 ? -1 : this.ep[e];
   }
 
   /** The highest walkable surface at (x,z) at or below `y` — a landing floor for

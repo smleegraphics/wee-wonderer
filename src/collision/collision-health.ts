@@ -6,16 +6,13 @@
 // counted in: GRAIN in app.ts), not in cells of whatever grid is in use, so the numbers
 // compare across scans and across grid sizes.
 
-export interface HealthInput {
-  walk: { positions: Float32Array; platformId: Int32Array; platformCount: number; sampleStep: number }; // NavGrid.toField()
+import { FACE, JUMP, MEET, type ReachInput, reachFrom, reachGraph } from './reach-graph';
+
+export interface HealthInput extends ReachInput { // (ReachInput's `unit` is also the length, and its square the area, the numbers are given in)
   mesh: { positions: ArrayLike<number>; index: ArrayLike<number> }; // the collision mesh, in the world; its last two triangles are the backstop plane
   splats: { centers: ArrayLike<number>; opacity: ArrayLike<number>; count: number; matrix: ArrayLike<number> }; // the scan's own splats, and their transform into the world
   spawn: [number, number, number]; // where the figurine starts
-  unit: number; // the length (and its square, the area) the numbers are given in
   realCells: number; // a platform of at least this many cells is somewhere to be, not a scrap
-  move: { jumpVel: number; gravity: number; runSpeed: number; climbOver: number }; // how the figurine moves, in world units: take-off speed, gravity (positive), speed in the air, and how far over a lip a climb steps
-  /** Is there a face the figurine could climb from standing at (ax, ay, az) up to the surface at (bx, by, bz)? Asked of the collision mesh itself. */
-  climbable: (ax: number, ay: number, az: number, bx: number, by: number, bz: number) => boolean;
   /** Does a straight line from (ox, oy, oz) along the unit direction (dx, dy, dz) meet the collision mesh (backstop plane included)? */
   blocked: (ox: number, oy: number, oz: number, dx: number, dy: number, dz: number) => boolean;
   eyeHeight: number; // how far above a walkable cell to look out from
@@ -127,62 +124,20 @@ function standing(input: HealthInput): Pick<CollisionHealth, 'cells' | 'platform
   };
 }
 
-/** How much of what is walkable the figurine can get to from where it starts.
- *
- *  A model of its movement, not the controller itself. From any cell it can reach a cell
- *  of another surface by jumping or dropping, if that cell is no higher than a jump rises
- *  and no further off than it travels at a run in the time the jump (or the fall) takes.
- *  That is measured against the game: a jump rises 0.24 and carries about 1.3 at a run
- *  (Playroom), against 0.26 and 1.29 by this arithmetic. Walls in the way of a jump are
- *  not considered. For climbing, a higher surface is reached from a cell within a climb's
- *  step over a lip of it, seen from above, if `climbable` finds a face between the two
- *  in the mesh (`reachShare`). Without that last test the same search gives the most
- *  that better faces could reach (`reachBound`), and what even that leaves out is out of
- *  reach for certain (`islands`). */
+/** How much of what is walkable the figurine can get to from where it starts, by the
+ *  movement model in reach-graph.ts: by jumping and dropping alone, then climbing where
+ *  `climbable` finds a face in the mesh (`reachShare`). Climbing wherever two surfaces
+ *  meet, face or no face, gives the most that better faces could reach (`reachBound`),
+ *  and what even that leaves out is out of reach for certain (`islands`). */
 function reach(input: HealthInput): Pick<CollisionHealth, 'jumpShare' | 'reachShare' | 'reachBound' | 'islands'> {
-  const { walk, move, realCells, climbable, unit } = input, cells = walk.platformId.length, start = startPlatform(input);
+  const { walk, realCells } = input, cells = walk.platformId.length, start = startPlatform(input);
   if (start < 0) return { jumpShare: 0, reachShare: 0, reachBound: 0, islands: 0 };
-  const step = walk.sampleStep, P = walk.positions;
-  let minX = Infinity, minZ = Infinity, maxX = -Infinity, maxZ = -Infinity, minY = Infinity;
-  for (let i = 0; i < cells; i++) {
-    if (P[i * 3] < minX) minX = P[i * 3]; if (P[i * 3] > maxX) maxX = P[i * 3];
-    if (P[i * 3 + 2] < minZ) minZ = P[i * 3 + 2]; if (P[i * 3 + 2] > maxZ) maxZ = P[i * 3 + 2];
-    if (P[i * 3 + 1] < minY) minY = P[i * 3 + 1];
-  }
-  const nx = Math.round((maxX - minX) / step) + 1, nz = Math.round((maxZ - minZ) / step) + 1;
-  const col = (i: number) => Math.round((P[i * 3] - minX) / step) * nz + Math.round((P[i * 3 + 2] - minZ) / step);
-  const head = new Int32Array(nx * nz).fill(-1), next = new Int32Array(cells), members: number[][] = Array.from({ length: walk.platformCount }, () => []);
-  for (let i = 0; i < cells; i++) { const c = col(i); next[i] = head[c]; head[c] = i; members[walk.platformId[i]].push(i); }
-  const rise = (move.jumpVel * move.jumpVel) / (2 * move.gravity);
-  /** How far a jump carries by the time it is `dy` above where it left (below, if negative). */
-  const carry = (dy: number) => move.runSpeed * (move.jumpVel + Math.sqrt(Math.max(0, move.jumpVel * move.jumpVel - 2 * move.gravity * dy))) / move.gravity;
-
-  const spread = (climbing: 'no' | 'faces' | 'anywhere'): Uint8Array => {
-    const reached = new Uint8Array(walk.platformCount), queue = [start];
-    reached[start] = 1;
-    for (let h = 0; h < queue.length; h++)
-      for (const a of members[queue[h]]) {
-        const ya = P[a * 3 + 1], far = Math.max(carry(minY - ya), move.climbOver + unit), span = Math.ceil(far / step);
-        const ax = Math.round((P[a * 3] - minX) / step), az = Math.round((P[a * 3 + 2] - minZ) / step);
-        for (let x = Math.max(0, ax - span); x <= Math.min(nx - 1, ax + span); x++)
-          for (let z = Math.max(0, az - span); z <= Math.min(nz - 1, az + span); z++)
-            for (let b = head[x * nz + z]; b !== -1; b = next[b]) {
-              const p = walk.platformId[b];
-              if (reached[p]) continue;
-              const dy = P[b * 3 + 1] - ya, away = Math.hypot(P[b * 3] - P[a * 3], P[b * 3 + 2] - P[a * 3 + 2]);
-              const jump = dy <= rise && away <= carry(dy);
-              const climb = !jump && climbing !== 'no' && dy > 0 && away <= move.climbOver + unit
-                && (climbing === 'anywhere' || climbable(P[a * 3], ya, P[a * 3 + 2], P[b * 3], P[b * 3 + 1], P[b * 3 + 2]));
-              if (jump || climb) { reached[p] = 1; queue.push(p); }
-            }
-      }
-    return reached;
-  };
+  const graph = reachGraph(input);
   const share = (reached: Uint8Array) => { let n = 0; for (let i = 0; i < cells; i++) n += reached[walk.platformId[i]]; return n / cells; };
-  const anywhere = spread('anywhere');
+  const anywhere = reachFrom(graph, start, JUMP | MEET);
   let islands = 0;
-  for (let p = 0; p < walk.platformCount; p++) if (!anywhere[p] && members[p].length >= realCells) islands++;
-  return { jumpShare: share(spread('no')), reachShare: share(spread('faces')), reachBound: share(anywhere), islands };
+  for (let p = 0; p < walk.platformCount; p++) if (!anywhere[p] && graph.members[p].length >= realCells) islands++;
+  return { jumpShare: share(reachFrom(graph, start, JUMP)), reachShare: share(reachFrom(graph, start, JUMP | FACE)), reachBound: share(anywhere), islands };
 }
 
 /** The area of the convex outline round cells (each a unit square centred on its x, z). */

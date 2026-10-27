@@ -24,9 +24,13 @@ export const WALK_FILL = {
   level: 0.25,   // ...where neighbouring walkable cells are level when the slope between them is within this
   under: 0.75,   // fill a spot when the scan's ground there is less opaque than this. At 0.9 the ordinary thin places in a well-captured floor are filled and show; at 0.5 the speckle in Kitchen's table is left
 };
+/** The size, in walkable cells, from which a surface is somewhere to be rather than a scrap: the
+ *  level patch the fill starts at (WALK_FILL.patch). The collision health numbers and the room's
+ *  shape for the game draw the same line. */
+export const realCells = () => Math.round(WALK_FILL.patch * cellsPerGrain() ** 2);
 export function walkFillOptions(): WalkableFillOptions {
-  const { cell, band, drop, patch, level, under } = WALK_FILL;
-  return { cell: cell * GRAIN, band: band * GRAIN, drop: drop * GRAIN, patch: Math.round(patch * cellsPerGrain() ** 2), level: level * navStep(), under };
+  const { cell, band, drop, level, under } = WALK_FILL;
+  return { cell: cell * GRAIN, band: band * GRAIN, drop: drop * GRAIN, patch: realCells(), level: level * navStep(), under };
 }
 /** Where the figurine can stand right now, for the fill; null if nowhere, or the scan is not being drawn (the mesh-only view). */
 export function walkableNow(): Walkable | null {

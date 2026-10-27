@@ -2,15 +2,16 @@
 // numbers for scripts/collisioncheck.mjs, the matte view for scripts/holes.mjs).
 
 import * as THREE from 'three';
-import { camera, CAPSULE_RADIUS, figurine, FREECAM_OPTS, GRAIN, orbit, player, surround, TARGET_RADIUS, TEL, TUNE, WORLD_DOWN, WORLD_UP } from './app';
-import { cellsPerGrain, collision, collisionDebug, lastVoxelSize, navField, platformDebug } from './collision/room-collision';
+import { camera, CAPSULE_RADIUS, figurine, FREECAM_OPTS, orbit, player, surround, TARGET_RADIUS, TEL, WORLD_DOWN, WORLD_UP } from './app';
+import { collision, collisionDebug, navField, platformDebug } from './collision/room-collision';
 import { camSwinging, camWant } from './figurine/camera';
-import { actions, activeAction, charH } from './figurine/character';
-import { CLIMB, climbCling, climbDir, climbStartsHere, climbWall, isWall } from './figurine/climb';
+import { actions, activeAction, charH, roomSpawn } from './figurine/character';
+import { CLIMB, climbCling, climbDir, climbStartsHere, reachModel } from './figurine/climb';
 import { bodyOverlap } from './figurine/controller';
+import { gameDebug } from './game/game';
 import { scanDebugThumb, scanDebugThumbRect } from './lighting/scan-light';
 import { currentSplat, lastCenters, lastMatrix, lastOpacity, revealProgress } from './scan/room';
-import { applyFillView, FILL_VIEW, WALK_FILL } from './scan/walk-fill';
+import { applyFillView, FILL_VIEW, realCells } from './scan/walk-fill';
 
 /** ?tel=1 only: publish the controller's state on `window.__dbg` for the headless
  *  tests. While climbing, `probe` is the nearest surface ahead of / behind / above /
@@ -38,25 +39,11 @@ export function publishDebugState(): void {
     climbPaused: ca ? ca.paused : null,
     reveal: +revealProgress.toFixed(3), // how much of the room is in place: 0 while waiting, 1 once it has arrived
     lightView: scanDebugThumb?.visible ? scanDebugThumbRect() : null, // where the scan light's panorama is on screen, while its debug view is on
+    game: gameDebug(), // the room's theme and how far along it is (game/game.ts)
   };
 }
 
-/** For the collision health check: is there a face the figurine could climb from
- *  standing at (ax, ay, az) up to the surface at (bx, by, bz)? That is, a wall in front of
- *  it, on the way from one to the other, at every height from its feet to where a mantle
- *  takes over. Probed as the climb itself probes (climbWall, isWall). */
-const faceFrom = new THREE.Vector3(), faceDir = new THREE.Vector3();
-function climbableFace(ax: number, ay: number, az: number, bx: number, by: number, bz: number): boolean {
-  const away = faceDir.set(bx - ax, 0, bz - az).length();
-  if (away < 1e-6) return false; // straight overhead: nothing to climb from here
-  faceDir.divideScalar(away);
-  const up = lastVoxelSize, top = by - charH * CLIMB.mantleUp; // (probed at every cell of the grid, up to where a mantle reaches: a surface this far above the feet)
-  for (let h = Math.min(ay + up / 2, (ay + by) / 2); ; h = Math.min(top, h + up)) {
-    const w = climbWall(faceFrom.set(ax, h, az), faceDir, away + GRAIN);
-    if (!w || !isWall(w)) return false;
-    if (h >= top) return true;
-  }
-}
+const faceFrom = new THREE.Vector3(), faceDir = new THREE.Vector3(), spawnAt = new THREE.Vector3(); // scratch for the probes below
 
 // ?tel=1 only: what `scripts/collisioncheck.mjs` reads. The measuring is in its own module,
 // loaded when asked for, so none of it is part of normal play.
@@ -64,14 +51,11 @@ if (TEL) (window as unknown as { __collisionHealth?: () => Promise<unknown> })._
   if (!navField || !collisionDebug || !lastCenters || !lastOpacity) return null; // no room yet
   const { collisionHealth } = await import('./collision/collision-health');
   return collisionHealth({
-    walk: navField,
+    ...reachModel(navField),
     mesh: { positions: collisionDebug.geometry.attributes.position.array, index: collisionDebug.geometry.index!.array },
     splats: { centers: lastCenters.array, opacity: lastOpacity, count: lastCenters.count, matrix: lastMatrix.elements },
-    spawn: [player.position.x, player.position.y, player.position.z],
-    unit: GRAIN,
-    realCells: Math.round(WALK_FILL.patch * cellsPerGrain() ** 2), // the same line the gap fill draws between ground and a scrap
-    move: { jumpVel: TUNE.jumpVel * charH, gravity: -TUNE.gravity * charH, runSpeed: TUNE.runSpeed * charH, climbOver: CAPSULE_RADIUS * charH * CLIMB.mantleOver },
-    climbable: climbableFace,
+    spawn: roomSpawn(spawnAt).toArray(), // the room's own start, wherever its theme has put the figurine
+    realCells: realCells(),
     blocked: (ox, oy, oz, dx, dy, dz) => !!collision && collision.wallAhead(faceFrom.set(ox, oy, oz), faceDir.set(dx, dy, dz), TARGET_RADIUS * 4) !== null, // (further than any scan reaches)
     eyeHeight: charH * 0.5,
     climbStarts: (x, y, z, dx, dz) => climbStartsHere(x, y, z, faceDir.set(dx, 0, dz)),
