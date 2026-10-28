@@ -12,15 +12,16 @@ by PolyOne Studio, on Sketchfab, licensed
 its bones renamed to Mixamo's names and Mixamo animations retargeted onto it
 (`context/character-README.md`). Animations from [Mixamo](https://www.mixamo.com) (Adobe).
 
-**Robot**: [RobotExpressive](https://github.com/mrdoob/three.js/tree/dev/examples/models/gltf/RobotExpressive)
-by Tomás Laulhé (Quaternius), with changes by Don McCurdy, from the three.js examples,
-[CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/). Credited as thanks; CC0 does
-not ask for it.
+**Skeleton**: `Skeleton_Minion` from [KayKit: Skeletons Character Pack 1.0](https://github.com/KayKit-Game-Assets/KayKit-Character-Pack-Skeletons-1.0)
+by [Kay Lousberg](https://kaylousberg.com),
+[CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) (stated in the download's
+`LICENSE.txt`). Cut down to the clips the game uses (`context/movement.md`). Credited as
+thanks; CC0 does not ask for it.
 
-**Human**: [Animated Human](https://opengameart.org/content/animated-human-low-poly) by
-Quaternius, on OpenGameArt, [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/)
-(also stated in the download's `License.txt`). Converted from its FBX to GLB in Blender,
-with its `ClothedLightSkin` palette as the colour (`context/movement.md`). Credited as thanks.
+**Mini**: `character-female-f` from [Mini Characters 1.0](https://kenney.nl/assets/mini-characters)
+by [Kenney](https://kenney.nl), [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/)
+(stated in the download's `License.txt`). Cut down to the clips the game uses, with its
+colour map embedded. Credited as thanks.
 
 ## The example scans
 

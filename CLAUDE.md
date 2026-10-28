@@ -84,12 +84,15 @@ enough to find one.
 | `camera.ts` | The follow camera (`updateCamera`), the opening shot, the fixed debug camera |
 | **`src/lighting/`** | `scan-light.ts` (the light probe and its debug view) and `contact-shadow.ts`, context/lighting.md |
 | **`src/ui/`** | The on-screen UI: `hud.ts` (tiles, cards, screens), `debug-panel.ts`, `paper.ts` (building blocks), `ui.css` (all styles and tokens) |
-| **`src/dev-pages/`** | `inspect-room.ts`, the scan inspector (`inspect.html`; not part of the app) |
+| **`src/dev-pages/`** | Pages not part of the app: `inspect-room.ts`, the scan inspector (`inspect.html`); `character-thumbs.ts` (`thumbs.html`), which renders the Characters card's pictures for `scripts/character-thumbs.mjs` |
 | `deploy/scans-worker/`, `scripts/upload-scans.mjs` | The scan host (a Worker over R2, with its own `package.json` for wrangler) and the upload of the listed scans to it |
 
 ## Testing without a human
 
-Visual and behavioural checks run headless in real Chrome through Playwright.
+Visual and behavioural checks run headless in real Chrome through Playwright. The scripts
+test the dev server on 5173; `WW_URL=http://localhost:5174 node scripts/...` points them at
+another (`scripts/app-url.mjs`). A dev server runs the code of the folder it was started in, so
+from a second checkout, start its own server on another port and pass its address.
 
 - **Screenshot:** `node scripts/shot.mjs "<url>" out.png <waitMs>`. Playroom takes
   about 3 s to build collision; use a wait of 18000 or more.
@@ -110,7 +113,7 @@ Visual and behavioural checks run headless in real Chrome through Playwright.
   waiting and 1 once it has arrived, and `lightView`: where the scan light's debug
   panorama is on screen while that view is on). Without `?tel=1` there is no `__dbg`. `window.__wwReady` is
   always set once the first frames have rendered.
-- **UI regression check:** `node scripts/uicheck.mjs` runs 30 checks of the title,
+- **UI regression check:** `node scripts/uicheck.mjs` runs 32 checks of the title,
   keys, tiles, Credits and Controls cards, Debug card, loading view, the scan light's capture at load, room switch,
   importing a scan and a failed load, and exits non-zero on a failure. Run it after any change under
   `src/ui/`, to loading, or to the scan light.

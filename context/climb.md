@@ -22,6 +22,17 @@ of it is in `src/figurine/` (`climb.ts`, `controller.ts`, `camera.ts`) unless no
   feet; A/D go along the lip, S climbs back down, Space jumps off. Every one of 36 hangs
   measured at the tops of objects had ground on the far side; hangs in the object test fell
   from 36 to 10 (Counter 9 -> 4, Living Room 26 -> 6, Kitchen 1 -> 0).
+- **Every move over a top places the body at once and is shown over `overTime` (0.35 s).** A
+  mantle (`tryMantle`), a step back to a face behind a narrow ledge (`stepToSetBack`) and a drop
+  over a thin top (`dropOverTheTop`) each move the body in one frame, as before, so collision and
+  every rule below see only where it is; each then calls `drawFrom`, and the drawn figure catches
+  up: `figurine.drawn` eases from where the body was to nothing. The model is drawn there, and
+  the camera aims there (`camera.ts`, across through `figurine.drawn`, up through `smoothFeetY`),
+  so neither snaps. A mantle also holds the keys for that long (`figurine.mantleLeft`) and plays
+  the `mantle` move; a jump press then ages as it would standing, so one in the last `jumpBuffer`
+  is made on arriving and an earlier one is dropped (a press at the start used to jump at the
+  end). Any placement (`resetMotion`) ends both. Measured: 0.37 s in 30 fps steps, the body still
+  while keys wait, the model back on the body when it ends.
 - Jump at a ledge (a face at chest height that ends below the head): grab it. Holding W tops
   out over it at once; with nothing to stand on it hangs.
 - Walk off a ledge: fall (the lip grab is gone; jump back at the face to climb it).

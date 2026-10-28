@@ -6,25 +6,31 @@
 import type { MoveSettings } from './movement';
 
 /** The moves a character animates. */
-export type Move = 'idle' | 'walk' | 'sprint' | 'jumpStart' | 'rise' | 'fall' | 'land' | 'airJump' | 'climb' | 'ledgeHang';
+export type Move = 'idle' | 'walk' | 'sprint' | 'jumpStart' | 'rise' | 'fall' | 'land' | 'airJump' | 'climb' | 'ledgeHang' | 'mantle';
 
 /** How a move plays a clip: the whole clip by name, or one frame of it held as a pose (`hold`:
  *  seconds into the clip), for a move the model has no clip of its own for. */
 export type ClipUse = string | { clip: string; hold: number };
 
+/** The clip `use` plays, and the frame it holds still (seconds in; undefined when it plays). */
+export function clipOf(use: ClipUse): { name: string; hold?: number } {
+  return typeof use === 'string' ? { name: use } : { name: use.clip, hold: use.hold };
+}
+
 /** How each move plays: looping, or once (then holding its last frame). A held frame is held either way. */
 export const MOVE_PLAYS: Record<Move, 'loop' | 'once'> = {
   idle: 'loop', walk: 'loop', sprint: 'loop', climb: 'loop', ledgeHang: 'loop',
-  jumpStart: 'once', rise: 'once', fall: 'once', land: 'once', airJump: 'once',
+  jumpStart: 'once', rise: 'once', fall: 'once', land: 'once', airJump: 'once', mantle: 'once',
 };
 
 /** A move with no clip given plays this one instead (and so on down the chain). */
-export const MOVE_FALLBACK: Partial<Record<Move, Move>> = { sprint: 'walk', airJump: 'jumpStart', rise: 'fall', fall: 'idle', land: 'idle', jumpStart: 'rise', ledgeHang: 'climb' };
+export const MOVE_FALLBACK: Partial<Record<Move, Move>> = { sprint: 'walk', airJump: 'jumpStart', rise: 'fall', fall: 'idle', land: 'idle', jumpStart: 'rise', ledgeHang: 'climb', mantle: 'climb' };
 
 export interface CharacterEntry {
   id: string;
-  label: string;
+  label: string;                             // its name, for screen readers and as a tooltip: the Characters card shows its picture
   model: string;                             // under public/
+  thumb: string;                             // its picture in the Characters card, under public/, made by scripts/character-thumbs.mjs
   height: number;                            // world units, feet to top: the model is scaled to it
   radius: number;                            // the collision capsule's radius, in body heights (BODY.radius): how wide it is to walls
   clips: Partial<Record<Move, ClipUse>>;     // move → how this model shows it
@@ -39,49 +45,54 @@ export interface CharacterEntry {
 export const CHARACTERS: CharacterEntry[] = [
   {
     // The figurine: "Free Pack – Chibi Base Mesh (Rigged)" by PolyOne Studio, CC BY 4.0, with
-    // Mixamo animations retargeted onto it (context/character-README.md). It has no clip for
-    // rising (its one-frame jump_loop shows rising and falling) or for landing.
+    // Mixamo animations retargeted onto it (context/character-README.md); its landing is our own,
+    // keyed in Blender (art/characters/chibi/). It has no clip for rising (its one-frame jump_loop
+    // shows rising and falling).
     id: 'chibi',
     label: 'Chibi',
     model: 'characters/chibi.glb',
+    thumb: 'characters/chibi.webp',
     height: 0.45,
     radius: 0.22,
-    clips: { idle: 'idle', walk: 'walk', sprint: 'run', jumpStart: 'jump_start', fall: 'jump_loop', climb: 'climb' },
+    clips: { idle: 'idle', walk: 'walk', sprint: 'run', jumpStart: 'jump_start', fall: 'jump_loop', land: 'land', climb: 'climb', ledgeHang: 'hang', mantle: 'mantle' },
     climbs: true,
     abilities: ['doubleJump'],
     tune: {},
   },
   {
-    // RobotExpressive by Tomás Laulhé (Quaternius), CC0 1.0, from the three.js examples. No
-    // clips for rising, falling or climbing: those hold frames of its Jump.
-    id: 'robot',
-    label: 'Robot',
-    model: 'characters/robot.glb',
+    // Skeleton_Minion from "KayKit: Skeletons Character Pack" 1.0 by Kay Lousberg, CC0 1.0
+    // (CREDITS.md), cut down to the clips below (context/movement.md, "Adding a character").
+    // Its take-off, in-air and landing clips stay in place. Its climb is our own, keyed in Blender
+    // (art/characters/skeleton/).
+    id: 'skeleton',
+    label: 'Skeleton',
+    model: 'characters/skeleton.glb',
+    thumb: 'characters/skeleton.webp',
     height: 0.45,
-    radius: 0.22, // the chibi's: it measures as wide (0.31 of its height across the trunk)
+    radius: 0.14, // body width at mid height 0.36 of its height, against the chibi's 0.58 at radius 0.22
     clips: {
-      idle: 'Idle', walk: 'Walking', sprint: 'Running', jumpStart: 'Jump',
-      rise: { clip: 'Jump', hold: 0.3 }, fall: { clip: 'Jump', hold: 0.45 }, climb: { clip: 'Jump', hold: 0.3 },
+      idle: 'Idle', walk: 'Walking_A', sprint: 'Running_A', jumpStart: 'Jump_Start', fall: 'Jump_Idle', land: 'Jump_Land', climb: 'climb', ledgeHang: 'hang', mantle: 'mantle',
     },
     climbs: true,
     abilities: ['doubleJump'],
     tune: {},
   },
   {
-    // "Animated Human" by Quaternius, CC0 1.0 (OpenGameArt), converted from its FBX with its
-    // ClothedLightSkin palette (CREDITS.md). No clips for rising, falling or climbing: those
-    // hold frames of its Jump.
-    id: 'human',
-    label: 'Human',
-    model: 'characters/human.glb',
+    // character-female-f from "Mini Characters" 1.0 by Kenney, CC0 1.0 (CREDITS.md), cut down to
+    // the clips below with its colour map embedded, and its walk and run hop taken down
+    // (context/movement.md, "The mini's hop"). Her climb is our own, keyed in Blender
+    // (art/characters/poppy/).
+    id: 'mini',
+    label: 'Poppy',
+    model: 'characters/mini.glb',
+    thumb: 'characters/mini.webp',
     height: 0.45,
-    radius: 0.16, // the chibi's 0.22 scaled by how much slimmer it measures: 0.23 of its height across the trunk against the chibi's 0.31
+    radius: 0.25, // body width at mid height 0.65 of its height (the big head and hair), against the chibi's 0.58 at radius 0.22
     clips: {
-      idle: 'Idle', walk: 'Walk', sprint: 'Run', jumpStart: 'Jump',
-      rise: { clip: 'Jump', hold: 0.35 }, fall: { clip: 'Jump', hold: 0.55 }, climb: { clip: 'Jump', hold: 0.35 },
+      idle: 'idle', walk: 'walk', sprint: 'sprint', jumpStart: 'jump', fall: 'fall', land: 'land', climb: 'climb', ledgeHang: 'hang', mantle: 'mantle',
     },
     climbs: true,
     abilities: ['doubleJump'],
-    tune: {},
+    tune: { paceScale: 0.65 }, // her block legs never plant: measured by their sweep at the ground they cycled too slowly, by their average too fast; set by eye
   },
 ];

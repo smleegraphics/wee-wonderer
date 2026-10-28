@@ -11,8 +11,9 @@ import { el, piece, tile } from './paper';
 import { createDebugPanel, type DebugPanel } from './debug-panel';
 import { createCreditsCard } from './credits';
 
-/** One thing in a list to pick from: a room, a character. */
-export interface Choice { id: string; label: string }
+/** One thing in a list to pick from: a room, a character. With an `image` it shows as that picture,
+ *  and `label` becomes its name for screen readers and its tooltip. */
+export interface Choice { id: string; label: string; image?: string }
 
 export interface HudOptions {
   rooms: Choice[];
@@ -67,7 +68,17 @@ function pickList(list: HTMLElement, onPick: (id: string) => void, before: HTMLE
         list.insertBefore(el('li'), before).appendChild(button);
         buttons.set(choice.id, button);
       }
-      button.textContent = choice.label;
+      if (choice.image) {
+        const img = button.querySelector('img') ?? button.appendChild(el('img'));
+        img.src = choice.image;
+        img.alt = ''; // the button carries the name
+        button.setAttribute('aria-label', choice.label);
+        button.title = choice.label;
+      } else {
+        button.textContent = choice.label;
+        button.removeAttribute('aria-label');
+        button.removeAttribute('title');
+      }
       button.setAttribute('aria-current', String(choice.id === current));
     },
     setCurrent(id: string): void {
@@ -108,7 +119,7 @@ export function createHud(opts: HudOptions): Hud {
   controlsCard.appendChild(el('h2', 'ww-heading', 'Controls'));
   const charactersCard = el('section', 'ww-card ww-characters');
   charactersCard.appendChild(el('h2', 'ww-heading', 'Characters'));
-  const characterList = charactersCard.appendChild(el('ul', 'ww-picks'));
+  const characterList = charactersCard.appendChild(el('ul', 'ww-picks ww-thumbs'));
   const cards = [{ tile: roomsTile, card: roomsCard }, { tile: charactersTile, card: charactersCard }, { tile: creditsTile, card: creditsCard }, { tile: controlsTile, card: controlsCard }, { tile: debugTile, card: debug.el }];
   function unfold(target: HTMLElement | null): void {
     for (const c of cards) {

@@ -21,6 +21,7 @@ export const MOVE_DEFAULTS = {
   coyoteTime: 0.1,    // seconds after walking off an edge that a jump still counts as from the ground
   jumpBuffer: 0.12,   // seconds before landing that a jump press is remembered and made on touching down
   turnRate: 12,       // how fast the figurine turns to face where it is going (per second, eased)
+  paceScale: 1,       // the walk and run clips' measured pace is taken as this times itself: for legs that never plant, whose right pace is a matter of eye (clip-pace.ts); animation only
 };
 export type MoveSettings = typeof MOVE_DEFAULTS;
 

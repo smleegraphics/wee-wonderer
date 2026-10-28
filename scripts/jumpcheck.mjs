@@ -10,6 +10,7 @@
 // collision health numbers and the game say can be reached rests on the model.
 
 import { chromium } from 'playwright';
+import { APP_URL } from './app-url.mjs';
 
 const scan = process.argv[2] ?? 'room2.ply';
 const TOLERANCE = 0.1; // a share of the model's number
@@ -19,7 +20,7 @@ const browser = await chromium.launch({ channel: 'chrome', headless: true, args:
 const page = await browser.newPage();
 page.on('pageerror', (e) => console.log('[pageerror]', e.message));
 await page.addInitScript(() => localStorage.setItem('ww.titleSeen', '1'));
-await page.goto(`http://localhost:5173/?scan=${scan}&tel=1`, { waitUntil: 'load' });
+await page.goto(`${APP_URL}/?scan=${scan}&tel=1`, { waitUntil: 'load' });
 await page.waitForFunction(() => window.__wwReady === true && window.__dbg?.reveal === 1, undefined, { timeout: 280000 });
 
 // The settings, the model's numbers for them, and the clearest straight line to run along from

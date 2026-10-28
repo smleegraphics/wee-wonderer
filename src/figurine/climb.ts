@@ -41,6 +41,7 @@ export const CLIMB = {
   mantleNear: 0.4,  // ...onto a surface within this of the feet...
   mantleUp: 0.3,    // ...and no more than this above them
   pullUp: 1,        // hanging at a top, W pulls up onto a surface this far above the feet (a hand's reach; Living Room has one at 0.79)
+  overTime: 0.35,   // seconds: a move over a top is shown this long, the drawn figure catching up from the face; a climb-up's keys wait as long (long enough to read, short enough not to feel slow)
   setBack: 4,       // at a top, a face going on up this many radii further back (past a narrow ledge) is stepped over to and climbed
   dropOver: 5,      // at a top, ground this many radii over the lip (the far side of a thin top) is climbed over and dropped onto
   gapAbove: 0.8,    // going up with no wall at the grip, a face picking up again within this above it is a gap in the wall, not its top (measured gaps: 0.2 to 0.7)
@@ -152,6 +153,14 @@ export function climbJumpOff(): void {
   play('rise', 0.08);
 }
 
+/** The body has just been moved over a top from `from`, in one frame (so collision and the climb
+ *  rules see only where it is): the drawn figure, and the camera with it, catch up over
+ *  overTime (controller.ts). Every move over a top calls this, so none of them snaps. */
+function drawFrom(from: THREE.Vector3): void {
+  figurine.drawnFrom.copy(from).sub(player.position);
+  figurine.drawnLeft = CLIMB.overTime;
+}
+
 /** Leave the climb standing at (x,y,z) on walkable ground. */
 function climbStandAt(x: number, y: number, z: number): void {
   const p = player.position;
@@ -170,7 +179,10 @@ function tryMantle(reachUp = CLIMB.mantleUp): boolean {
     const overX = p.x + climbDir.x * over, overZ = p.z + climbDir.z * over;
     const g = navGrid.surfaceNear(overX, overZ, p.y + charH * (reachUp - CLIMB.mantleNear) / 2, charH * (reachUp + CLIMB.mantleNear) / 2); // a surface from mantleNear below the feet to reachUp above them
     if (g === null) continue;
+    climbFrom.copy(player.position);
     climbStandAt(overX, g, overZ);
+    drawFrom(climbFrom);
+    figurine.mantleLeft = CLIMB.overTime;
     if (TEL) console.log(`CLIMB-MANTLE to=${g.toFixed(2)} over=${(over / radius).toFixed(1)}r`);
     return true;
   }
@@ -206,6 +218,7 @@ function stepToSetBack(): boolean {
     p.addScaledVector(climbDir, w.distance - gap);
     if (!fitClimbBody(radius)) { p.copy(climbFrom); return false; }
     climbCling = false;
+    drawFrom(climbFrom);
     if (TEL) console.log(`CLIMB-SETBACK y=${p.y.toFixed(2)} by=${((w.distance - gap) / radius).toFixed(1)}r`);
     return true;
   }
@@ -225,6 +238,7 @@ function dropOverTheTop(): boolean {
     p.x = x; p.z = z;
     if (!fitClimbBody(radius)) { p.copy(climbFrom); continue; }
     climbCling = false;
+    drawFrom(climbFrom);
     figurine.state = 'air';
     velocity.set(0, 0, 0);
     play('fall', 0.15);

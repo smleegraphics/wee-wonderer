@@ -2,6 +2,7 @@
 // for credit (CC BY 4.0: the Chibi figurine and the Mip-NeRF 360 scenes). CREDITS.md at the
 // repository's root says the same at more length; keep the two in step.
 
+import { CHARACTERS } from '../figurine/characters';
 import { el } from './paper';
 
 type Part = string | { text: string; href: string };
@@ -9,16 +10,18 @@ interface Credit { what: string; who: Part[]; note?: Part[] }
 
 const CC_BY = { text: 'CC BY 4.0', href: 'https://creativecommons.org/licenses/by/4.0/' };
 const CC0 = { text: 'CC0', href: 'https://creativecommons.org/publicdomain/zero/1.0/' };
+/** A character's name, as the Characters card gives it (characters.ts), so the two cannot differ. */
+const named = (id: string) => CHARACTERS.find((c) => c.id === id)!.label;
 
 const CREDITS: Credit[] = [
   { what: 'Made by', who: [{ text: 'Samantha Lee', href: 'https://samanthamlee.com' }] },
   {
-    what: 'Chibi',
+    what: named('chibi'),
     who: [{ text: 'Free Pack – Chibi Base Mesh (Rigged)', href: 'https://sketchfab.com/3d-models/free-pack-chibi-base-mesh-rigged-fed4fb329f224f1594f631eae8d2626b' }, ' by PolyOne Studio, ', CC_BY, ', adapted'],
     note: ['Animations from ', { text: 'Mixamo', href: 'https://www.mixamo.com' }],
   },
-  { what: 'Robot', who: [{ text: 'RobotExpressive', href: 'https://github.com/mrdoob/three.js/tree/dev/examples/models/gltf/RobotExpressive' }, ' by Tomás Laulhé (Quaternius), ', CC0] },
-  { what: 'Human', who: [{ text: 'Animated Human', href: 'https://opengameart.org/content/animated-human-low-poly' }, ' by Quaternius, ', CC0] },
+  { what: named('skeleton'), who: [{ text: 'KayKit Skeletons', href: 'https://github.com/KayKit-Game-Assets/KayKit-Character-Pack-Skeletons-1.0' }, ' by Kay Lousberg, ', CC0] },
+  { what: named('mini'), who: [{ text: 'Mini Characters', href: 'https://kenney.nl/assets/mini-characters' }, ' by Kenney, ', CC0] },
   {
     what: 'Kitchen, Living Room and Counter',
     who: ['From the ', { text: 'Mip-NeRF 360', href: 'https://jonbarron.info/mipnerf360/' }, ' dataset by Barron, Mildenhall, Verbin, Srinivasan and Hedman (Google), ', CC_BY],

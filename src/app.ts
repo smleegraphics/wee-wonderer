@@ -45,7 +45,7 @@ export const hud = createHud({
   rooms: LISTED_SCANS.map((s) => ({ id: s.file, label: s.label })),
   importTypes: SCAN_FILE_TYPES,
   onPickRoom: (id) => hudActions.pickRoom(id),
-  characters: CHARACTERS.map((c) => ({ id: c.id, label: c.label })),
+  characters: CHARACTERS.map((c) => ({ id: c.id, label: c.label, image: `${import.meta.env.BASE_URL}${c.thumb}` })),
   onPickCharacter: (id) => hudActions.pickCharacter(id),
   onImport: (file) => hudActions.importScan(file),
   onReset: () => hudActions.reset(),
@@ -106,5 +106,9 @@ export const figurine = {
   supportY: 0,        // height of the platform the player is standing on
   smoothFeetY: 0,     // damped feet height for RENDER only (physics stays crisp)
   wasGrounded: false,
+  mantleLeft: 0,      // seconds of a climb-up still playing: keys wait and the mantle move shows (climb.ts)
+  drawnLeft: 0,       // seconds of the drawn figure still catching up with the body after a move over a top (climb.ts)
+  drawnFrom: new THREE.Vector3(), // where the body was, from where it then stood, when that move began (world)
+  drawn: new THREE.Vector3(),     // where the drawn figure is now, from the body (world): the model and the camera follow it
 };
 export const WORLD_UP = new THREE.Vector3(0, 1, 0), WORLD_DOWN = new THREE.Vector3(0, -1, 0);

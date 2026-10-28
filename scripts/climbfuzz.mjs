@@ -15,11 +15,12 @@
 // whatever the frame rate. `seconds` is that game time, not the time the run takes. The
 // frames are not drawn (__step's `draw` false): the same run, about 11 times faster.
 import { chromium } from 'playwright';
+import { APP_URL } from './app-url.mjs';
 
 const scan = process.argv[2] ?? 'counter-clean.spz';
 const seconds = Number(process.argv[3] ?? 90);
 const seed0 = Number(process.argv[4] ?? 1);
-const url = `http://localhost:5173/?scan=${scan}&tel=1`;
+const url = `${APP_URL}/?scan=${scan}&tel=1`;
 
 let seed = seed0;
 const rnd = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296; // deterministic per seed

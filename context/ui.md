@@ -15,7 +15,11 @@ that unfold from them.
   The Credits card (`src/ui/credits.ts`) names who made what, with the licences that ask
   for credit; `CREDITS.md` says the same at length, and the two are kept in step.
 - **Cards.** Scans, Characters, Controls, Credits and Debug unfold beside their tile. The
-  Characters card lists `CHARACTERS` (`src/figurine/characters.ts`) and marks the one in play. At most one is open;
+  Characters card shows `CHARACTERS` (`src/figurine/characters.ts`) as pictures, three to a row,
+  and rings the one in play. A character's name (`label`) is its button's accessible name and
+  tooltip, not shown. The pictures (`thumb`) are made from the models by
+  `scripts/character-thumbs.mjs` (through `thumbs.html`, `src/dev-pages/character-thumbs.ts`):
+  run it after adding or changing a character. At most one is open;
   `Escape` folds it. `` ` `` toggles Debug.
 - **The controls** are not on screen in play: they are in the Controls card, so the
   view is the room alone. The title screen says how to walk and jump instead

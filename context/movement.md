@@ -76,6 +76,7 @@ run's speed (4.0); everything else was a first guess, meant to be tuned by playi
 | `jumpCut` | 0.45 | the upward speed kept on letting go of Space while rising |
 | `coyoteTime` / `jumpBuffer` | 0.1 / 0.12 s | late and early jump grace |
 | `turnRate` | 12 | how fast it turns to face where it goes |
+| `paceScale` | 1 | the walk and run clips play as if made for this times their measured pace (animation only): for legs that never plant, set by eye in a character's `tune` |
 
 `MOVE` is the defaults, then the character's `tune`, then the session's slider changes
 (`useMoveSettings`).
@@ -98,9 +99,17 @@ same whichever is chosen:
 
 | Character | Licence | Notes |
 |---|---|---|
-| Chibi (default) | CC BY 4.0 (PolyOne), Mixamo animations | `context/character-README.md`; a real climb clip |
-| Robot | CC0 (Tomás Laulhé / Quaternius) | From the three.js examples; rises, falls and climbs on held frames of its Jump |
-| Human | CC0 (Quaternius) | Converted from its FBX in Blender (below); radius 0.16, as it measures slimmer |
+| Chibi (default) | CC BY 4.0 (PolyOne), Mixamo animations | `context/character-README.md`; a real climb clip; Mixamo bone names |
+| Skeleton | CC0 (Kay Lousberg, KayKit Skeletons 1.0) | KayKit's rig, shared by every KayKit character; in-place take-off, in-air and landing clips; its climb is our own, keyed in Blender (`art/characters/skeleton/`); radius 0.14 |
+| Mini | CC0 (Kenney, Mini Characters 1.0, `character-female-f`) | A rig of rigid parts (7 bones); her climb is our own, keyed in Blender (`art/characters/poppy/`); radius 0.25 |
+
+The Robot (RobotExpressive) and Human (Quaternius) they replaced rose, fell and climbed on held
+frames of one Jump clip that lifts its own hips, which drew the body 0.3 and 0.5 body heights
+above where it collides. A held frame must come from a clip that stays in place.
+
+A radius is the chibi's 0.22 scaled by the body's width at mid height (the skinned vertices
+between 40% and 70% of the height, 5th to 95th percentile across): chibi 0.58, skeleton 0.36,
+mini 0.65 of the height.
 
 The Characters tile picks one (`loadCharacter`): the model is swapped in place, with no
 reload, and the choice is kept in `localStorage['ww.character']`. `character` in
@@ -112,19 +121,60 @@ the old body) and pushed clear of walls at its width; where that leaves the cell
 from there if there is ground below, or goes to the nearest cell it fits (rule 7). The NavGrid is rebuilt only for a character of another height.
 
 **Pacing is measured, not typed in** (`clip-pace.ts`): the speed at which a walk or run
-clip keeps a planted foot still, from how far the lowest bone each side travels back over
-a cycle, relative to the skeleton's root bone, so root motion does not count (no bone
-names). The clip then plays at the figurine's speed over that, within `PACE_RANGE` (half to
-twice); a clip that cannot be measured (no feet found) is taken to be made for the game's
-walk or sprint speed. Measured: robot 0.69 / 0.91, chibi 0.41 / 1.09, human 1.18 / 2.17
-body heights a second (walk / run), all under the game's 1.6 and 4.0.
+clip keeps a planted foot still. The foot on the ground is the skin's lowest point (no bone
+names, no left and right), measured from the skeleton's root bone so root motion does not
+count; the pace is the median speed it moves back while it stays the same point. A leg that
+never plants (a rigid block swinging like a pendulum: the mini's) swings forward at the ground as
+often as back, and is paced by its backward moments only: how fast the foot sweeps back at the
+ground. Neither that nor a stride a step (the foot's average) read right by eye: too slow and 2.2
+times too fast. With no planted foot there is no right answer to measure, so her `tune` sets
+`paceScale` 0.65, picked live with the Debug card's "Clip pace" slider. which kind a clip is, is told from the clip: a planted foot's travel is 0.74 to 1
+backward, a pendulum's 0.5. The clip then plays at the figurine's speed over that, within
+`PACE_RANGE` (half to twice); a clip that cannot be measured (no skin, or no foot that moves)
+is taken to be made for the game's walk or sprint speed (and `paceScale` scales only a measured
+pace). A planted clip whose median move is forward (the travel test and the median can disagree)
+is paced by its backward sweep instead. Measured: chibi 0.36 / 1.57,
+skeleton 0.35 / 1.76, mini 2.14 / 4.25 body heights a second (walk / run). The pace is a median, so a
+part that is lowest for a frame or two (the mini's hands, swung below her feet in her run) does
+not move it. It costs 10 to 35 ms a clip, once, as a character loads (most of it the
+first pass over every vertex, skinned on the CPU, to find the few that can touch the ground).
 
-**Adding a character:** put its GLB in `public/characters/`, add an entry, credit it in
-`CREDITS.md` and the Credits card. An FBX with its actions as separate takes can be
+Tried and replaced: the lowest *bone* each side, and a pace of twice its travel per cycle. Bone
+origins picked the wrong things (the robot's root bone, the human's toe-tip marker, the mini's
+hips, about which her rigid legs swing, so 0), and "twice the travel" assumes each foot is down
+for half the cycle: true of neither a walk (longer, so it read 11 to 29% fast) nor a run (shorter:
+26 to 40% slow). Checked against the least-slide pace (a body moved forward at a trial pace,
+the slide of its contact point summed), the new measure is within 0 to 5% on every planted clip.
+
+**The mini's hop.** Kenney's walk and run raise the whole body while the rigid legs are spread,
+so it hopped: in the run her feet left the ground by 0.37 body heights and the body bobbed 0.34
+(the chibi's and skeleton's: 0.02 to 0.07). Two things lift her: the clip's own rise of the top
+joint, and the spread legs themselves (a pair of compasses opening lifts both feet). Taking the
+top joint's rise out alone left her floating 0.11 when her legs spread; holding her lowest point
+on the ground every frame (the top joint lowered by its height, at 60 samples a second) left
+quick dips, 18 a second in the run. What she has is two thirds of that grounding, picked by eye
+in Blender among none, a third, two thirds and all: run bob 0.049 with the feet up to 0.044,
+walk 0.063 and 0.018. Only the top joint's height changed: nothing moves across, and her pace is
+the same. Done with gltf-transform (only those keys rewritten), the heights worked out in a
+page that poses her with the game's three.js.
+
+**Adding a character:** put its GLB in `public/characters/`, add an entry, make its picture for
+the Characters card (`node scripts/character-thumbs.mjs`, which writes the entry's `thumb`), and
+credit it in `CREDITS.md` and the Credits card. An FBX with its actions as separate takes can be
 converted headless in Blender (`--factory-startup --disable-autoexec`, never a `.blend`
 someone else made: it can carry scripts): import it, put each action on its own NLA track,
 and export a GLB by tracks. Exporting by actions kept only one clip. An FBX whose colour
 texture is a separate file needs it wired to the material before export.
+
+**Cutting a GLB down to the clips it uses** (the skeleton's came with 95, 4.7 MB; 542 KB with
+7): do it with gltf-transform's library (`@gltf-transform/core` and `functions`), which edits
+the file in place, not a Blender import and export, which rewrites all of it. Dispose each
+dropped clip's channels and samplers as well as the clip: they outlive it otherwise, and
+`prune` keeps their keys (the first cut left 10,013 unused accessors and 3.3 MB). Then
+`resample` and `prune`, and clear each texture's URI so a texture kept beside the file (the
+Kenney packs') is embedded in the GLB, which is the one file the game loads. Compare bone
+positions over each clip with the original afterwards (both cuts: within 0.0002 body heights).
+Props held in a hand (KayKit's hand-slot meshes) are separate meshes to remove.
 
 ### The moves a character animates
 
@@ -139,10 +189,11 @@ A model need not have a clip for every move: `clips` can hold a frame of another
 | `jumpStart` | once, over the start of the rise | `rise` | `jump_start` |
 | `rise` | once (held) | `fall` | (falls back) |
 | `fall` | once (held) | `idle` | `jump_loop`, a one-frame pose |
-| `land` | once, on a landing faster than `LAND_HARD` | `idle` | (falls back) |
+| `land` | once, on a landing faster than `LAND_HARD` | `idle` | `land` (our own, `art/characters/chibi/`) |
 | `airJump` | once, from its start again for each air jump | `jumpStart` | (falls back) |
 | `climb` | loop, paused while not moving on the wall | — | `climb` |
-| `ledgeHang` | loop, while hanging from a lip | `climb` | (falls back) |
+| `ledgeHang` | loop, while hanging from a lip | `climb` | `hang` (our own) |
+| `mantle` | once, climbing up over a lip (`CLIMB.overTime`; keys wait for it, `context/climb.md`) | `climb` | `mantle` (our own) |
 
 A character for the game wants all of these, and could add a sideways climb (there is none:
 the generated one was tied to the chibi's bones, `context/climb.md`).
@@ -171,14 +222,22 @@ the generated one was tied to the chibi's bones, `context/climb.md`).
 
 ## Known limitations
 
-- **Feet slide at speed.** Every character's clips keep their feet planted under the
-  game's speeds (above); at twice their authored speed only the human's walk keeps up.
+- **Feet slide at speed.** The chibi's and skeleton's walks would need about 4.4 times their
+  authored speed to keep up with the game's walk, so at the 2x cap their feet cover about 45% of
+  the ground; the mini's walk and run play at 1.15x and 1.45x (her `paceScale`). The root cause is leg length: speeds are in body
+  heights, and the hips stand at 0.15 (chibi), 0.17 (skeleton) and 0.26 (mini) body heights.
+- **Walking is uneven from frame to frame.** In a straight walk `__dbg.speed` holds 1.6, but the
+  position advances 0.66 to 1.67 body heights a second frame to frame (Playroom: 4 to 19 of 44
+  frames short, every character). It reads as speeding up and slowing down. Not yet
+  investigated; the clips are not the cause (the mini's walk moves her head 0.001 of her height
+  forward and back). Her run's torso pitches about 30° a step; scaling it to a quarter made no
+  visible difference, so it was left.
 - **`airControl` is low for a jump made from a standstill**: it drifts forward slowly.
 - **The movement model ignores walls in the way of a jump** and assumes every air jump is
   made at the top of the last, so what it says can be reached is an upper bound.
 - **No ceiling collision in the air** (`context/climb.md`).
-- **A switch into a corner can leave up to 0.27 radii of overlap** (Counter, Human to Chibi
-  pressed into objects): `refitBody` pushes out once, and nothing pushes again until the
+- **A switch into a corner can leave up to 0.27 radii of overlap** (measured on Counter, from
+  the old Human to the Chibi, pressed into objects): `refitBody` pushes out once, and nothing pushes again until the
   figure moves.
 - **A short body treats ground bumps as walls.** The body test skips the bottom `WALL_LIFT`
   (a quarter of the height) so lumps in the floor do not push; the mesh's lumps are about a

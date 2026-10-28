@@ -50,6 +50,7 @@ export function setupDebugMenu(): void {
   moveSlider('coyoteTime', 'Late jump grace (s)', 0, 0.3, 0.01, 'Seconds after walking off an edge that Space still jumps as if from the ground.');
   moveSlider('jumpBuffer', 'Early jump grace (s)', 0, 0.3, 0.01, 'Seconds before landing that a press of Space is remembered and jumps on touching down.');
   moveSlider('turnRate', 'Turning', 2, 30, 1, 'How quickly the figurine turns to face where it is going.');
+  moveSlider('paceScale', 'Clip pace ×', 0.3, 2, 0.05, 'The walk and run clips play as if made for this times their measured pace: lower = legs cycle faster. For a character whose legs never plant, set by eye, then written into its tune.');
 
   const climbing = hud.debug.section('Climbing');
   climbing.addToggle('Tilt with the wall', CLIMB_TILT.on, (on) => { CLIMB_TILT.on = on; },
