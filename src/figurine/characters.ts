@@ -40,15 +40,16 @@ export interface CharacterEntry {
 export const CHARACTERS: CharacterEntry[] = [
   {
     // The figurine: "Free Pack – Chibi Base Mesh (Rigged)" by PolyOne Studio, CC BY 4.0, with
-    // Mixamo animations retargeted onto it (context/character-README.md). It has no clip for
-    // rising (its one-frame jump_loop shows rising and falling) or for landing.
+    // Mixamo animations retargeted onto it (context/character-README.md); its landing is our own,
+    // keyed in Blender (art/characters/chibi/). It has no clip for rising (its one-frame jump_loop
+    // shows rising and falling).
     id: 'chibi',
     label: 'Chibi',
     model: 'characters/chibi.glb',
     thumb: 'characters/chibi.webp',
     height: 0.45,
     radius: 0.22,
-    clips: { idle: 'idle', walk: 'walk', sprint: 'run', jumpStart: 'jump_start', fall: 'jump_loop', climb: 'climb' },
+    clips: { idle: 'idle', walk: 'walk', sprint: 'run', jumpStart: 'jump_start', fall: 'jump_loop', land: 'land', climb: 'climb' },
     climbs: true,
     abilities: ['doubleJump'],
     tune: {},

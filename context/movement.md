@@ -187,7 +187,7 @@ A model need not have a clip for every move: `clips` can hold a frame of another
 | `jumpStart` | once, over the start of the rise | `rise` | `jump_start` |
 | `rise` | once (held) | `fall` | (falls back) |
 | `fall` | once (held) | `idle` | `jump_loop`, a one-frame pose |
-| `land` | once, on a landing faster than `LAND_HARD` | `idle` | (falls back) |
+| `land` | once, on a landing faster than `LAND_HARD` | `idle` | `land` (our own, `art/characters/chibi/`) |
 | `airJump` | once, from its start again for each air jump | `jumpStart` | (falls back) |
 | `climb` | loop, paused while not moving on the wall | — | `climb` |
 | `ledgeHang` | loop, while hanging from a lip | `climb` | (falls back) |
