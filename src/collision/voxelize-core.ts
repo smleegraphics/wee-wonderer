@@ -38,6 +38,18 @@ export interface VoxelSurface {
   triangleCount: number;
 }
 
+/** The voxel grid before and after cleanup, for the Density voxels and Cleanup voxels
+ *  overlays. Each holds the solid voxels on the outside only (one buried in the solid
+ *  cannot be seen, and there are many times more of those). */
+export interface VoxelGrids {
+  voxelSize: number;
+  /** Before cleanup: the voxels whose density reaches the isovalue. */
+  density: { centers: Float32Array; value: Float32Array }; // world-space centres (x,y,z,...); density as a multiple of the isovalue (1 = just solid)
+  /** Solid before or after cleanup, and what cleanup did to each (CLEANUP_KEPT, _ADDED, _REMOVED). */
+  cleanup: { centers: Float32Array; change: Uint8Array };
+}
+export const CLEANUP_KEPT = 0, CLEANUP_ADDED = 1, CLEANUP_REMOVED = 2;
+
 // Surface Nets tables: the 12 edges of the cube (as pairs of corner ids, where a
 // corner id's bits are +x=1, +y=2, +z=4), and, per 8-corner occupancy mask, which
 // edges are crossed by the surface. Built once at module load.
@@ -61,6 +73,42 @@ const EDGE_TABLE = new Int32Array(256);
   }
 })();
 
+const EMPTY_SURFACE = (voxelSize: number): VoxelSurface =>
+  ({ positions: new Float32Array(0), index: new Uint32Array(0), voxelSize, occupiedCount: 0, detail: 1, groundY: null, triangleCount: 0 });
+
+/** The grids for the voxel overlays (VoxelGrids): `raw` is the occupancy before cleanup, `occ` after it. */
+function voxelGrids(raw: Uint8Array, occ: Uint8Array, dens: Float32Array, iso: number, gx: number, gy: number, gz: number,
+  minX: number, minY: number, minZ: number, vs: number): VoxelGrids {
+  // the solid voxels of `solid` with a face open to the outside (a non-solid neighbour, or the grid's edge)
+  const outer = (solid: (c: number) => boolean): number[] => {
+    const at = (x: number, y: number, z: number) => x >= 0 && x < gx && y >= 0 && y < gy && z >= 0 && z < gz && solid((x * gy + y) * gz + z);
+    const out: number[] = [];
+    for (let x = 0; x < gx; x++)
+      for (let y = 0; y < gy; y++)
+        for (let z = 0; z < gz; z++) {
+          if (!at(x, y, z)) continue;
+          if (at(x - 1, y, z) && at(x + 1, y, z) && at(x, y - 1, z) && at(x, y + 1, z) && at(x, y, z - 1) && at(x, y, z + 1)) continue;
+          out.push((x * gy + y) * gz + z);
+        }
+    return out;
+  };
+  const centresOf = (cells: number[]): Float32Array => {
+    const centers = new Float32Array(cells.length * 3);
+    cells.forEach((c, i) => {
+      const z = c % gz, y = Math.floor(c / gz) % gy, x = Math.floor(c / (gy * gz));
+      centers[i * 3] = minX + (x + 0.5) * vs; centers[i * 3 + 1] = minY + (y + 0.5) * vs; centers[i * 3 + 2] = minZ + (z + 0.5) * vs;
+    });
+    return centers;
+  };
+  const before = outer((c) => raw[c] === 1);
+  const either = outer((c) => raw[c] === 1 || occ[c] === 1); // so a removed voxel shows where it was, and an added one where it now is
+  return {
+    voxelSize: vs,
+    density: { centers: centresOf(before), value: Float32Array.from(before, (c) => dens[c] / iso) },
+    cleanup: { centers: centresOf(either), change: Uint8Array.from(either, (c) => (raw[c] === occ[c] ? CLEANUP_KEPT : occ[c] ? CLEANUP_ADDED : CLEANUP_REMOVED)) },
+  };
+}
+
 /**
  * Voxelize splats into a smooth collision surface. `positions` is a flat
  * [x,y,z,...] array of `count` centers, `opacity` the matching per-splat rendered
@@ -76,6 +124,7 @@ export function voxelizeCore(
   opts: VoxelOptions = {},
   cov?: ArrayLike<number> | null, // per-splat 3-D covariance (6 floats: Cxx,Cxy,Cxz,Cyy,Cyz,Czz) for anisotropic splatting
   unit: number = voxelSize, // the length the options' sizes are counted in (see `per` below); the voxel size itself unless a finer grid is asked for
+  voxelsOut?: (v: VoxelGrids) => void, // given: hand over the voxel grid before and after cleanup instead, and build no surface (the voxel overlays)
 ): VoxelSurface {
   const isoFactor = opts.iso ?? 0.35;
   const despeckleMin = opts.despeckle ?? 20;
@@ -111,8 +160,10 @@ export function voxelizeCore(
       if (x > maxX) maxX = x; if (y > maxY) maxY = y; if (z > maxZ) maxZ = z;
     }
   }
-  if (!Number.isFinite(minX)) // empty scan
-    return { positions: new Float32Array(0), index: new Uint32Array(0), voxelSize, occupiedCount: 0, detail: 1, groundY: null, triangleCount: 0 };
+  if (!Number.isFinite(minX)) { // empty scan
+    voxelsOut?.({ voxelSize, density: { centers: new Float32Array(0), value: new Float32Array(0) }, cleanup: { centers: new Float32Array(0), change: new Uint8Array(0) } });
+    return EMPTY_SURFACE(voxelSize);
+  }
 
   // choose the voxel size, coarsening it if the dense grid would be too large to
   // allocate — a hard cap against a pathological extent OOMing the worker.
@@ -224,6 +275,7 @@ export function voxelizeCore(
   // binary occupancy (density above the isovalue) for the cleanup passes
   let occ: Uint8Array = new Uint8Array(dens.length);
   for (let c = 0; c < dens.length; c++) occ[c] = dens[c] >= iso ? 1 : 0;
+  const raw = voxelsOut ? occ.slice() : null; // (the voxel overlays: what cleanup started from)
   if (despeckleMin > 0) despeckle(occ, gy, gz, Math.round(despeckleMin * perArea)); // (a speck is a scrap of surface: so many voxels to an area)
   const closeVoxels = Math.round(closeIters * per);
   for (let i = 0; i < closeVoxels; i++) occ = dilate(occ, gx, gy, gz);
@@ -236,6 +288,7 @@ export function voxelizeCore(
   // multi-room scans (would need to tell a furniture panel from a passage — see PR #7).
   if (panelArea > 0) fillVerticalPanelHoles(occ, gx, gy, gz, Math.round(panelArea / (vs * vs)));
   for (let i = 0; i < smoothPasses; i++) occ = majority(occ, gx, gy, gz);
+  if (voxelsOut && raw) { voxelsOut(voxelGrids(raw, occ, dens, iso, gx, gy, gz, minX, minY, minZ, vs)); return EMPTY_SURFACE(vs); }
 
   let occupied = 0;
   for (let c = 0; c < occ.length; c++) occupied += occ[c];

@@ -95,6 +95,13 @@ Visual and behavioural checks run headless in real Chrome through Playwright.
   about 3 s to build collision; use a wait of 18000 or more.
 - **See the collision mesh:** `?meshonly=1` hides the splat and draws the mesh solid
   and lit. `?voxel=1` (or `V`) overlays it as a wireframe.
+- **See the voxel grid it is made from:** the Debug card's Density voxels (the grid before
+  cleanup, blue by density) and Cleanup voxels (after cleanup: grey kept, purple added,
+  orange removed). Both come from one extra voxelize, not cached, that logs
+  `voxel overlays: …` (with the grid's density spread) when it lands; it uses the settings
+  in `VOXEL_OPTS`. Two sliders under them (`VOXEL_VIEW`) step through what they show: the
+  lowest density drawn, and cleanup from before (0) to after (2). A script can move them
+  frame by frame for an animation.
 - **Frame a region:** `?az=&el=&dist=&cx=&cy=&cz=` parks a fixed orbit camera
   (`dist` in `TARGET_RADIUS` units). Without it the camera follows the figurine.
 - **Telemetry and internal state:** `?tel=1` logs `CLIMB-*` events to the console
@@ -144,6 +151,41 @@ Visual and behavioural checks run headless in real Chrome through Playwright.
 - **Blind walks rarely reach walls.** Holding one key from spawn usually ends at a
   walkable-area edge. Counter and Kitchen have climbable objects near spawn;
   Playroom and Living Room mostly need a human to aim at a wall.
+
+## Making media
+
+Videos and pictures of the game for a write-up (the project page's trailer, its voxel
+clips and diagram) are made by `scripts/media/`, into the gitignored `media-out/`. Needs the
+dev server, the scans, and ffmpeg. What is published lives in `docs/media/`.
+
+- `node scripts/media/trailer.mjs`: the trailer, from six clips listed as data (scan,
+  route, the frames used). `--clip <name>` captures one again, `--cut` only cuts.
+  `--aim <scan> '<route>' <turns>` tries camera turns and reports which reach a climb.
+- `node scripts/media/voxel-loops.mjs [density|cleanup]`: the two voxel loops, made by
+  stepping the Debug card's overlay sliders a frame at a time.
+- `node scripts/media/bvh-diagram.mjs [seed]`: the BVH diagram (SVG).
+- `capture.mjs` holds what they share: frame-by-frame capture through `__step`, so a
+  video plays smoothly however slow the capture, and a route gives the same frames each run.
+  The title and the room's arrival are the exception: the room starts to arrive on the
+  real clock as it finishes loading, so they can be a frame or two out between runs.
+
+Things that cost time:
+
+- **Let the camera settle after a turn.** It eases into a mouse drag over the next
+  second, and W runs toward where it faces, so a run that starts mid-turn swerves (in one
+  clip by 180°). `turn()` waits; never move the camera while a movement key is held
+  (`play()` refuses a pan then).
+- **Walk, don't run.** At a run the figurine's sway and the scan's bumps read as jitter.
+  A walk covers 40% of the ground, so a route aimed at a run misses its target walking.
+- **Release the keys on top of a climb.** Held, W walks the figurine into the far lip and
+  its legs move on the spot (the `untilOnTop` segment).
+- **The camera pulls in close** whenever something comes between it and the figurine.
+  Raise it (a vertical turn) rather than walking further along the same line.
+- **`V` toggles the wireframe flag, which starts off**, so in `?meshonly=1` it takes two
+  presses to hide the solid mesh. A key reaches the game only once the page has been clicked.
+- **Free-camera angles are radians** (`?az=0.9`) and `dist` is in `TARGET_RADIUS` units.
+- **Vimeo blocks headless Chrome**, so an embedded video can only be seen playing in a
+  real browser.
 
 ## Conventions
 
