@@ -114,8 +114,8 @@ export function loadScan(file: string): void {
 }
 
 /** Load a scan that is already in memory: an imported one, read and cleaned (import.ts). */
-export function loadScanData(scan: ParsedScan, id: string): void {
-  loadRoom({ scan }, id);
+export function loadScanData(scan: ParsedScan, id: string, collision?: Uint8Array): void {
+  loadRoom({ scan, collision }, id);
 }
 
 /** An imported scan's room id: its file name, marked so it is never taken for an example
@@ -125,7 +125,9 @@ export const importedId = (name: string) => `${IMPORTED}${name}`;
 export const isImported = (id: string) => id.startsWith(IMPORTED);
 
 /** Where a room's scan comes from: an address to fetch and parse it from, or its splats. */
-type ScanSource = { url: string } | { scan: ParsedScan };
+/** A scan to fetch, or one already in memory; `collision` marks the splats its collision is
+ *  built from (clean-scan-core.ts), all of them without it. */
+type ScanSource = { url: string } | { scan: ParsedScan; collision?: Uint8Array };
 
 // The scan is fetched and parsed in a worker (load-scan.worker.ts): on the main
 // thread a large scan froze the page for seconds.
@@ -197,6 +199,20 @@ function loadRoom(source: ScanSource, id: string): void {
   showScan(source, id, token, abort.signal).then(() => finish(), finish);
 }
 
+/** The splats `marked` picks out of a scan's centres, opacities and covariances, in order. */
+function subsetOf(marked: Uint8Array, all: { centers: Float32Array; opacity: Float32Array; covariances: Float32Array }): { centers: Float32Array; opacity: Float32Array; covariances: Float32Array } {
+  let n = 0;
+  for (const m of marked) n += m;
+  const centers = new Float32Array(n * 3), opacity = new Float32Array(n), covariances = new Float32Array(n * 6);
+  for (let i = 0, k = 0; i < marked.length; i++) {
+    if (!marked[i]) continue;
+    centers.set(all.centers.subarray(i * 3, i * 3 + 3), k * 3);
+    covariances.set(all.covariances.subarray(i * 6, i * 6 + 6), k * 6);
+    opacity[k++] = all.opacity[i];
+  }
+  return { centers, opacity, covariances };
+}
+
 /** Fetch and parse the scan (unless its splats are already here), put it in the room
  *  levelled and scaled, and build its collision. */
 async function showScan(source: ScanSource, id: string, token: number, cancelled: AbortSignal): Promise<void> {
@@ -205,8 +221,14 @@ async function showScan(source: ScanSource, id: string, token: number, cancelled
   await roomGone; // the old room has to be out of the way first; it usually is long before this
   if (token !== loadToken) return; // superseded while loading
   loadStep(token, 'build');
-  const ownCenters = new THREE.BufferAttribute(parsed.centers, 3);
-  const o = orientScan(ownCenters);
+  const own = parsed.centers.length / 3;
+  const opacity = new Float32Array(own);
+  for (let i = 0; i < own; i++) opacity[i] = parsed.colors[i * 4 + 3] / 255;
+  // The splats the collision is built from, and the room levelled by: all of them, or those an
+  // import's cleanup marked (it draws more than it builds collision from: clean-scan-core.ts).
+  const marked = 'collision' in source ? source.collision : undefined;
+  const solid = marked ? subsetOf(marked, { centers: parsed.centers, opacity, covariances: parsed.covariances }) : { centers: parsed.centers, opacity, covariances: parsed.covariances };
+  const o = orientScan(new THREE.BufferAttribute(solid.centers, 3));
   // scans have arbitrary unit scales — normalize each to a consistent world
   // size so the fixed-size figurine stays a sensible fraction of every room.
   const k = TARGET_RADIUS / o.radius;
@@ -217,10 +239,7 @@ async function showScan(source: ScanSource, id: string, token: number, cancelled
   const toWorld = new THREE.Matrix4().makeTranslation(-o.center.x, -o.center.y, -o.center.z).premultiply(room.matrixWorld); // the scan recentred on the origin, then the room's transform
   // Collision first, from the scan as it was captured: where the figurine can stand
   // decides where splats are added (context/splat-fill.md).
-  const own = parsed.centers.length / 3;
-  const opacity = new Float32Array(own);
-  for (let i = 0; i < own; i++) opacity[i] = parsed.colors[i * 4 + 3] / 255;
-  await buildCollision(id, token, ownCenters, opacity, parsed.covariances, toWorld);
+  await buildCollision(id, token, new THREE.BufferAttribute(solid.centers, 3), solid.opacity, solid.covariances, toWorld);
   if (token !== loadToken) return; // superseded while building
   // The spawn needs only the collision, and must be decided now, before the next frame:
   // from here the camera tests the new room's mesh, and a figurine still at its old spot

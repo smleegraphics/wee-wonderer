@@ -67,7 +67,7 @@ enough to find one.
 | `scan-list.ts`, `scans.ts` | The example scans (`SCANS`, which are listed, `SCAN_DIR`) as plain data the Vite config and scripts also read; and `scanURL`, the one place a scan's address is decided (`VITE_SCAN_BASE`) |
 | `load-scan.worker.ts`, `parse-scan.ts` | Fetches and parses a scan off the main thread; `parseScan` picks PLY or SPZ by the file's bytes, and every scan becomes one form, `ParsedScan` |
 | `orient-scan.ts` | Levels the floor and yaw-aligns walls to X/Z (seeded, deterministic) |
-| `clean-scan-core.ts` (+ worker), `scripts/clean-scan.mjs` | Floater removal, in-browser and offline |
+| `clean-scan-core.ts` (+ worker), `scripts/clean-scan.mjs` | Cleanup of an import: what is drawn (levelled, cropped to the room) and, from the same pass, what the collision is built from (also floater-filtered); the script crops `.ply` files offline the same way. Two sets, and why: context/collision.md, "Scan cleanup" |
 | `fill-scan-core.ts` (+ worker) | Walkable gap fill: flat splats added where the ground the figurine can stand on lets the backdrop through |
 | **`src/collision/`** | **Collision from the splats:** |
 | `collision.ts` | `MeshCollision` (three-mesh-bvh over the collision mesh) and `NavGrid` (walkable cells) |
