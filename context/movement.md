@@ -101,7 +101,7 @@ same whichever is chosen:
 |---|---|---|
 | Chibi (default) | CC BY 4.0 (PolyOne), Mixamo animations | `context/character-README.md`; a real climb clip; Mixamo bone names |
 | Skeleton | CC0 (Kay Lousberg, KayKit Skeletons 1.0) | KayKit's rig, shared by every KayKit character; in-place take-off, in-air and landing clips; climbs on a held frame of its Cheer; radius 0.14 |
-| Mini | CC0 (Kenney, Mini Characters 1.0, `character-female-f`) | A rig of rigid parts (7 bones); climbs on a held frame of `holding-both`; radius 0.25 |
+| Mini | CC0 (Kenney, Mini Characters 1.0, `character-female-f`) | A rig of rigid parts (7 bones); her climb is our own, keyed in Blender (`art/characters/poppy/`); radius 0.25 |
 
 The Robot (RobotExpressive) and Human (Quaternius) they replaced rose, fell and climbed on held
 frames of one Jump clip that lifts its own hips, which drew the body 0.3 and 0.5 body heights

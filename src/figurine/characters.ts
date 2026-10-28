@@ -75,8 +75,8 @@ export const CHARACTERS: CharacterEntry[] = [
   {
     // character-female-f from "Mini Characters" 1.0 by Kenney, CC0 1.0 (CREDITS.md), cut down to
     // the clips below with its colour map embedded, and its walk and run hop taken down
-    // (context/movement.md, "The mini's hop").
-    // No climb clip: the climb holds holding-both, arms out in front.
+    // (context/movement.md, "The mini's hop"). Her climb is our own, keyed in Blender
+    // (art/characters/poppy/).
     id: 'mini',
     label: 'Poppy',
     model: 'characters/mini.glb',
@@ -84,8 +84,7 @@ export const CHARACTERS: CharacterEntry[] = [
     height: 0.45,
     radius: 0.25, // body width at mid height 0.65 of its height (the big head and hair), against the chibi's 0.58 at radius 0.22
     clips: {
-      idle: 'idle', walk: 'walk', sprint: 'sprint', jumpStart: 'jump', fall: 'fall',
-      climb: { clip: 'holding-both', hold: 0.08 },
+      idle: 'idle', walk: 'walk', sprint: 'sprint', jumpStart: 'jump', fall: 'fall', climb: 'climb',
     },
     climbs: true,
     abilities: ['doubleJump'],
