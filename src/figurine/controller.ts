@@ -19,7 +19,7 @@ const SPEED_STILL = 0.1;       // body heights a second: slower than this the fi
 const LAND_HARD = 3;           // body heights a second, down: a landing at least this hard shows as one (the land move), a softer one goes straight on
 const EDGE_WALL = 0.5;         // capsule radii: a body this far into something at an edge is against a wall there, not over a drop
 
-const camFwd = new THREE.Vector3(), camRight = new THREE.Vector3(), wishDir = new THREE.Vector3();
+const camFwd = new THREE.Vector3(), camRight = new THREE.Vector3(), wishDir = new THREE.Vector3(), mantleLocal = new THREE.Vector3();
 export function lerpAngle(a: number, b: number, t: number): number {
   let d = (b - a) % (Math.PI * 2);
   if (d > Math.PI) d -= Math.PI * 2;
@@ -57,6 +57,7 @@ export function resetMotion(): void {
   sprint = coyote = 0;
   pressedAgo = -1;
   cutArmed = false;
+  figurine.mantleLeft = 0; // (put somewhere else mid climb-up: it ends there)
   for (const a of abilities) a.landed?.();
 }
 
@@ -86,10 +87,15 @@ export function updateController(dt: number): void {
 
   let grounded: boolean;
   let wasClimbing = false;
-  if (figurine.state === 'climb') {
+  if (figurine.mantleLeft > 0) {
+    // climbing up over a lip: already standing on top; keys wait until the climb-up has played
+    figurine.mantleLeft = Math.max(0, figurine.mantleLeft - dt);
+    grounded = true;
+  } else if (figurine.state === 'climb') {
     wasClimbing = true;
     grounded = climbUpdate(dt); // true only on the frame it ends standing (mantle / stepping off)
     if (grounded) landed(0);
+    if (figurine.mantleLeft > 0) play('mantle', 0.05);
   } else {
     if (player.position.y < -charH * 3) { // lost the surface (rare): back to the last place stood on
       placeFigurine(lastGood, false);
@@ -105,13 +111,21 @@ export function updateController(dt: number): void {
 
   // Visual-only vertical smoothing, run for EVERY state so the camera follows: when
   // grounded, damp the bump bob; otherwise (airborne / climbing) track physics exactly.
-  if (grounded && !wasClimbing) figurine.smoothFeetY += (player.position.y - figurine.smoothFeetY) * Math.min(1, 10 * dt);
+  // A climb-up eases the model from where the body was onto the top, the height through
+  // smoothFeetY so the camera rises with it: 1 at the start, 0 when it has played.
+  const ease = figurine.mantleLeft > 0 ? (figurine.mantleLeft / CLIMB.mantleTime) ** 2 : 0;
+  if (ease > 0) figurine.smoothFeetY = player.position.y + figurine.mantleFrom.y * ease;
+  else if (grounded && !wasClimbing) figurine.smoothFeetY += (player.position.y - figurine.smoothFeetY) * Math.min(1, 10 * dt);
   else figurine.smoothFeetY = player.position.y;
   if (charModel) {
     // lean with the wall while climbing (climbTilt), about the chest, where the hands meet it
     const tilt = climbTilt(dt), chest = charH * CLIMB.chest;
     charModel.rotation.x = tilt;
     charModel.position.set(0, figurine.smoothFeetY - player.position.y + chest * (1 - Math.cos(tilt)), -chest * Math.sin(tilt));
+    if (ease > 0) { // across: the offset in the player's own (turned) frame
+      mantleLocal.set(figurine.mantleFrom.x, 0, figurine.mantleFrom.z).applyAxisAngle(WORLD_UP, -player.rotation.y).multiplyScalar(ease);
+      charModel.position.x += mantleLocal.x; charModel.position.z += mantleLocal.z;
+    }
   }
 
   animate(moving);
@@ -317,7 +331,7 @@ function landed(impact: number): void {
  *  matched to the speed so the feet do not slide while it builds), in the air the take-off then
  *  rising or falling. Climbing shows itself (climb.ts). */
 function animate(moving: boolean): void {
-  if (figurine.state === 'climb') return;
+  if (figurine.state === 'climb' || figurine.mantleLeft > 0) return; // (a climb-up shows itself)
   if (figurine.state === 'air') {
     if (moveIsPlaying('jumpStart') || moveIsPlaying('airJump')) return; // the take-off plays out over the rise
     play(velocity.y > 0 ? 'rise' : 'fall', 0.15);

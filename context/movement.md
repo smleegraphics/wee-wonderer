@@ -190,7 +190,8 @@ A model need not have a clip for every move: `clips` can hold a frame of another
 | `land` | once, on a landing faster than `LAND_HARD` | `idle` | `land` (our own, `art/characters/chibi/`) |
 | `airJump` | once, from its start again for each air jump | `jumpStart` | (falls back) |
 | `climb` | loop, paused while not moving on the wall | — | `climb` |
-| `ledgeHang` | loop, while hanging from a lip | `climb` | (falls back) |
+| `ledgeHang` | loop, while hanging from a lip | `climb` | `hang` (our own) |
+| `mantle` | once, climbing up over a lip (`CLIMB.mantleTime`; keys wait for it, `context/climb.md`) | `climb` | `mantle` (our own) |
 
 A character for the game wants all of these, and could add a sideways climb (there is none:
 the generated one was tied to the chibi's bones, `context/climb.md`).

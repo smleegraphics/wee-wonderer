@@ -17,6 +17,10 @@ left out (they ship only inside `public/characters/chibi.glb`, as before).
   plane (no twist) to 30 degrees above level, the highest with nothing inside its head
   (`art/tools/pose_check.py`: 35 puts 6 vertices in); legs swinging a little. Its armature's own
   axes are not the world's (its y is up), so bones are turned about world axes.
+- **`mantle`** (the action `mantle_chibi`): 8 frames, once, in the same beats as the Skeleton's,
+  placed by target as fractions of its own reach (arm 0.074, leg 0.041 on a body 0.47 tall): its
+  limbs are too small to carry the read, so the lean does (38 degrees at the push, its head going
+  over the lip). Nothing in its head on any frame.
 
 Tried and dropped: squash from the hips (on this rig a scale on the hips made it taller, not
 shorter) and a crouch with the knees bent by Blender's IK (it moved the feet off the ground even at

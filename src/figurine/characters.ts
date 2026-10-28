@@ -6,7 +6,7 @@
 import type { MoveSettings } from './movement';
 
 /** The moves a character animates. */
-export type Move = 'idle' | 'walk' | 'sprint' | 'jumpStart' | 'rise' | 'fall' | 'land' | 'airJump' | 'climb' | 'ledgeHang';
+export type Move = 'idle' | 'walk' | 'sprint' | 'jumpStart' | 'rise' | 'fall' | 'land' | 'airJump' | 'climb' | 'ledgeHang' | 'mantle';
 
 /** How a move plays a clip: the whole clip by name, or one frame of it held as a pose (`hold`:
  *  seconds into the clip), for a move the model has no clip of its own for. */
@@ -15,11 +15,11 @@ export type ClipUse = string | { clip: string; hold: number };
 /** How each move plays: looping, or once (then holding its last frame). A held frame is held either way. */
 export const MOVE_PLAYS: Record<Move, 'loop' | 'once'> = {
   idle: 'loop', walk: 'loop', sprint: 'loop', climb: 'loop', ledgeHang: 'loop',
-  jumpStart: 'once', rise: 'once', fall: 'once', land: 'once', airJump: 'once',
+  jumpStart: 'once', rise: 'once', fall: 'once', land: 'once', airJump: 'once', mantle: 'once',
 };
 
 /** A move with no clip given plays this one instead (and so on down the chain). */
-export const MOVE_FALLBACK: Partial<Record<Move, Move>> = { sprint: 'walk', airJump: 'jumpStart', rise: 'fall', fall: 'idle', land: 'idle', jumpStart: 'rise', ledgeHang: 'climb' };
+export const MOVE_FALLBACK: Partial<Record<Move, Move>> = { sprint: 'walk', airJump: 'jumpStart', rise: 'fall', fall: 'idle', land: 'idle', jumpStart: 'rise', ledgeHang: 'climb', mantle: 'climb' };
 
 export interface CharacterEntry {
   id: string;
@@ -49,7 +49,7 @@ export const CHARACTERS: CharacterEntry[] = [
     thumb: 'characters/chibi.webp',
     height: 0.45,
     radius: 0.22,
-    clips: { idle: 'idle', walk: 'walk', sprint: 'run', jumpStart: 'jump_start', fall: 'jump_loop', land: 'land', climb: 'climb', ledgeHang: 'hang' },
+    clips: { idle: 'idle', walk: 'walk', sprint: 'run', jumpStart: 'jump_start', fall: 'jump_loop', land: 'land', climb: 'climb', ledgeHang: 'hang', mantle: 'mantle' },
     climbs: true,
     abilities: ['doubleJump'],
     tune: {},
@@ -66,7 +66,7 @@ export const CHARACTERS: CharacterEntry[] = [
     height: 0.45,
     radius: 0.14, // body width at mid height 0.36 of its height, against the chibi's 0.58 at radius 0.22
     clips: {
-      idle: 'Idle', walk: 'Walking_A', sprint: 'Running_A', jumpStart: 'Jump_Start', fall: 'Jump_Idle', land: 'Jump_Land', climb: 'climb', ledgeHang: 'hang',
+      idle: 'Idle', walk: 'Walking_A', sprint: 'Running_A', jumpStart: 'Jump_Start', fall: 'Jump_Idle', land: 'Jump_Land', climb: 'climb', ledgeHang: 'hang', mantle: 'mantle',
     },
     climbs: true,
     abilities: ['doubleJump'],
@@ -84,7 +84,7 @@ export const CHARACTERS: CharacterEntry[] = [
     height: 0.45,
     radius: 0.25, // body width at mid height 0.65 of its height (the big head and hair), against the chibi's 0.58 at radius 0.22
     clips: {
-      idle: 'idle', walk: 'walk', sprint: 'sprint', jumpStart: 'jump', fall: 'fall', land: 'land', climb: 'climb', ledgeHang: 'hang',
+      idle: 'idle', walk: 'walk', sprint: 'sprint', jumpStart: 'jump', fall: 'fall', land: 'land', climb: 'climb', ledgeHang: 'hang', mantle: 'mantle',
     },
     climbs: true,
     abilities: ['doubleJump'],

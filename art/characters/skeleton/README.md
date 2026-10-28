@@ -17,6 +17,11 @@ in by bone name, compare).
 - **`hang`** (the action `hang_skeleton`): 24 frames, looping. Both arms up and out past the skull,
   legs hanging with a little bend and swing. No arm vertex inside the skull; its upper arms rise
   from under its cloak (`art/tools/pose_check.py` counts those as inside the body).
+- **`mantle`** (the action `mantle_skeleton`): 8 frames, once: press (hands planted on the ledge at
+  waist height, elbows bent, leaning over them), push (arms straightening, a knee driven high with
+  its foot forward onto the lip, leaning further), step up (onto that foot, the back leg following),
+  its idle. Hands and feet are placed by target with `art/tools/pose_tools.py`'s two-bone solve,
+  within its leg reach (0.38 from hip to ankle). Nothing in its skull on any frame.
 
 The skull itself reaches about 0.12 past that wall line (its collision radius is 0.14 of its
 height); that is its proportions, not the animation.

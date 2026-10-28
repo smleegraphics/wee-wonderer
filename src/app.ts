@@ -106,5 +106,7 @@ export const figurine = {
   supportY: 0,        // height of the platform the player is standing on
   smoothFeetY: 0,     // damped feet height for RENDER only (physics stays crisp)
   wasGrounded: false,
+  mantleLeft: 0,      // seconds of a climb-up still playing: the body is already on top, the model eases there (climb.ts)
+  mantleFrom: new THREE.Vector3(), // where the body was, from where it stands, when the climb-up began (world)
 };
 export const WORLD_UP = new THREE.Vector3(0, 1, 0), WORLD_DOWN = new THREE.Vector3(0, -1, 0);

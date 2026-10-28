@@ -41,6 +41,7 @@ export const CLIMB = {
   mantleNear: 0.4,  // ...onto a surface within this of the feet...
   mantleUp: 0.3,    // ...and no more than this above them
   pullUp: 1,        // hanging at a top, W pulls up onto a surface this far above the feet (a hand's reach; Living Room has one at 0.79)
+  mantleTime: 0.35, // seconds: a climb-up over the lip plays this long, the model easing from the face onto the top (long enough to read, short enough not to feel slow)
   setBack: 4,       // at a top, a face going on up this many radii further back (past a narrow ledge) is stepped over to and climbed
   dropOver: 5,      // at a top, ground this many radii over the lip (the far side of a thin top) is climbed over and dropped onto
   gapAbove: 0.8,    // going up with no wall at the grip, a face picking up again within this above it is a gap in the wall, not its top (measured gaps: 0.2 to 0.7)
@@ -170,7 +171,10 @@ function tryMantle(reachUp = CLIMB.mantleUp): boolean {
     const overX = p.x + climbDir.x * over, overZ = p.z + climbDir.z * over;
     const g = navGrid.surfaceNear(overX, overZ, p.y + charH * (reachUp - CLIMB.mantleNear) / 2, charH * (reachUp + CLIMB.mantleNear) / 2); // a surface from mantleNear below the feet to reachUp above them
     if (g === null) continue;
+    figurine.mantleFrom.copy(player.position);
     climbStandAt(overX, g, overZ);
+    figurine.mantleFrom.sub(player.position); // the body is on top at once; the model starts where it was (controller.ts)
+    figurine.mantleLeft = CLIMB.mantleTime;
     if (TEL) console.log(`CLIMB-MANTLE to=${g.toFixed(2)} over=${(over / radius).toFixed(1)}r`);
     return true;
   }

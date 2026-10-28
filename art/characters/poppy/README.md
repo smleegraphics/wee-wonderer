@@ -19,6 +19,10 @@ frame longer).
   arms point forward at chest height, gripping; her legs swing a little. Her head is wider than her
   rigid arms reach: every raised-arm pose put 35 to 120 arm vertices in her hair
   (`art/tools/pose_check.py`); this one leaves 12 under her hair line, which do not show.
+- **`mantle`** (the action `mantle_poppy`): 8 frames, once, climbing over a lip, in the beats
+  climb-over reference uses (press, push with a leg onto the lip, step up): hands planted on the
+  ledge, then leaning well over with her arms pushing down and one leg swung up onto it, stepping
+  through, her idle. 18 arm vertices under her hair line at frame 0 only (`art/tools/pose_check.py`).
 
 ## Putting a clip from here into the game
 
