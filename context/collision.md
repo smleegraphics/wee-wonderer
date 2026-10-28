@@ -37,29 +37,29 @@ numbers repeat exactly. `--with key=value` tries a setting without saving it (an
 Lengths and areas are in grains (see "Sizes are in grains" below), not cells of whatever
 grid is in use, so numbers compare across grid sizes.
 
-Baseline (SCHEMA g31, default settings; Playroom is built at mesh detail 2, the rest at 1):
+Baseline (SCHEMA g34, default settings; Playroom is built at mesh detail 2, the rest at 1):
 
 | | Living Room | Counter | Kitchen | Playroom | Marishka |
 |---|---|---|---|---|---|
-| Walkable area (grains²) | 9,672 | 4,458 | 4,586 | 16,614 | 10,964 |
-| Platforms (of 40 grains² or more) | 85 (25) | 72 (15) | 67 (16) | 121 (38) | 19 (8) |
-| Cells on small perches | 9.3% | 19.8% | 15.9% | 7.6% | 1.5% |
-| Cells reached from spawn by walking | 46.6% | 44.2% | 55.9% | 54.8% | 81.3% |
-| ...and jumping or dropping | 46.8% | 52.5% | 75.8% | 65.1% | 82.5% |
-| ...and climbing the mesh's faces | 99.4% | 55.3% | 75.8% | 99.2% | 99.9% |
-| ...if every meeting of surfaces had a face | 99.6% | 55.3% | 75.8% | 100.0% | 99.9% |
-| Real platforms no face could join | 0 | 12 | 5 | 0 | 0 |
-| Area a climb can start from (grains²) | 1,085 | 448 | 222 | 2,253 | 358 |
-| Holes in the spawn surface | 1.1% | 4.5% | 4.4% | 3.3% | 0.4% |
-| Spawn surface cells on an edge | 12.8% | 20.3% | 14.6% | 11.1% | 5.9% |
-| Spawn surface fills its convex outline | 67.5% | 86.1% | 81.2% | 82.7% | 90.4% |
-| Spawn surface roughness (slope) | 0.05 | 0.34 | 0.18 | 0.04 | 0.60 |
-| Triangles | 107,692 | 50,480 | 42,796 | 744,456 | 102,900 |
-| Mesh pieces | 34 | 39 | 53 | 32 | 13 |
-| Mesh bumpiness | 0.091 | 0.130 | 0.098 | 0.090 | 0.101 |
-| Mesh to nearest opaque splat, median / 90th pct (grains) | 0.60 / 1.05 | 0.56 / 0.95 | 0.60 / 1.33 | 0.42 / 0.84 | 0.54 / 0.81 |
-| Opaque splats with no mesh within 2 grains | 8.1% | 10.8% | 13.6% | 2.5% | 12.4% |
-| Sight lines that meet no collision | 32.0% | 42.2% | 43.7% | 21.7% | 43.5% |
+| Walkable area (grains²) | 9,652 | 4,643 | 4,588 | 16,655 | 11,125 |
+| Platforms (of 40 grains² or more) | 88 (21) | 71 (15) | 59 (17) | 113 (34) | 17 (7) |
+| Cells on small perches | 12.2% | 20.7% | 15.3% | 7.6% | 1.4% |
+| Cells reached from spawn by walking | 47.7% | 40.5% | 54.4% | 53.8% | 80.2% |
+| ...and jumping or dropping | 99.7% | 72.6% | 95.0% | 100.0% | 99.9% |
+| ...and climbing the mesh's faces | 99.7% | 97.3% | 95.0% | 100.0% | 99.9% |
+| ...if every meeting of surfaces had a face | 99.8% | 99.7% | 95.0% | 100.0% | 99.9% |
+| Real platforms no face could join | 0 | 0 | 0 | 0 | 0 |
+| Area a climb can start from (grains²) | 1,462 | 561 | 402 | 2,657 | 741 |
+| Holes in the spawn surface | 1.6% | 8.8% | 2.2% | 3.8% | 1.1% |
+| Spawn surface cells on an edge | 13.9% | 18.7% | 12.1% | 10.8% | 6.3% |
+| Spawn surface fills its convex outline | 66.0% | 81.8% | 83.8% | 83.5% | 87.7% |
+| Spawn surface roughness (slope) | 0.12 | 0.37 | 0.10 | 0.00 | 0.58 |
+| Triangles | 106,568 | 50,608 | 40,076 | 731,156 | 102,996 |
+| Mesh pieces | 34 | 40 | 46 | 32 | 14 |
+| Mesh bumpiness | 0.096 | 0.103 | 0.119 | 0.084 | 0.100 |
+| Mesh to nearest opaque splat, median / 90th pct (grains) | 0.58 / 0.97 | 0.56 / 0.95 | 0.54 / 1.24 | 0.41 / 0.84 | 0.53 / 0.81 |
+| Opaque splats with no mesh within 2 grains | 7.9% | 10.5% | 13.3% | 2.5% | 12.7% |
+| Sight lines that meet no collision | 31.3% | 43.6% | 42.3% | 22.2% | 43.5% |
 
 How far each number can be trusted:
 
@@ -501,7 +501,44 @@ to about 0.6 tightens Playroom a lot but thins faint surfaces on cleaner scans
 
 `orientScan` levels the floor with a seeded RANSAC fit and yaw-aligns walls to X/Z.
 Both matter: unseeded, the mesh differed every load; without yaw alignment the
-axis-sliced panel fill broke.
+axis-sliced panel fill broke. The offline cleaner calls the same function (through Vite),
+so a file cleaned offline and the same file imported are levelled the same way.
+
+**The floor search must find the floor whatever splats it is given.** It tries planes
+through three points and keeps the one most points lie on. Drawn from anywhere, all three
+are on the floor (floor share)³ of the time: with the floor 7% of an AI-generated room's
+splats (SpAItial's "Cozy room"), 500 tries missed it, and the room came in 25° tilted with
+the figurine trapped on a strip of floor. Seeding made that repeatable, not safe: the same
+file imported (cleaned in the browser) failed and cleaned offline worked, because the two
+cleaners keep slightly different splats. Measured over 20 runs, each without a different
+5% of the splats: the old search was off by over 1° in 13 (the cozy room, worst 30°), 10
+(Living Room, worst 18.5°) and 10 (Kitchen) of them.
+
+Now a try's second and third points come from near its first (`NEAR`), so it finds a
+surface about as often as its first point lands on one; the number of tries follows from
+the smallest floor it must not miss (`FLOOR_SHARE_MIN`, `MISS_ODDS`); the best few planes
+are refitted to all of their points until they stop moving, and only then is the one most
+points lie on chosen. Over the same 20 runs: no run off by more than 0.1° on the cozy room,
+Living Room, Kitchen and Playroom. It costs 20 to 110 ms more per load (all main-thread,
+during the loading view).
+
+- **It moved every shipped room by 0.4 to 5°,** to floors closer to level (the floor layer
+  left tilted by 0.01 to 0.15°, where the old search left 0.2 to 1.3°), and with it every
+  collision number (SCHEMA g33, then g34 after review fixes; the baseline above). Counter's walkable-from-spawn fell
+  44.7% → 40.9% (against the g32 baseline; the g31 table had 44.2%): its worktop is more level (0.99° → 0.59°) but part of it split off as its
+  own surface. Not traced further.
+- **Curled Up Dog has no floor** (a dog on a blanket): many nearly flat patches compete,
+  and the result still varies by up to 6° from one set of splats to another (the old search
+  varied by 3°).
+
+**The collision is very sensitive to the room's exact placement.** Tipping Playroom's old
+levelling 0.45° further cut its walkable-from-spawn from 54% to 28% (holes 4% → 19%): a
+big floor a fraction of a degree off level crosses the voxel layers and breaks up. And
+moving a room up by a quarter or half a grain, with no change of angle, moved "mesh
+bumpiness" by up to 25% (Counter 0.130 → 0.099, Playroom 0.077 → 0.093) while walkable
+area and holes did not move: bumpiness mostly measures how surfaces line up with the
+voxel grid. A change that moves a room at all will move bumpiness; read it with that in
+mind (open: a bumpiness that does not depend on the grid's alignment).
 
 ## Scan cleanup
 
@@ -514,7 +551,8 @@ splats failing on opacity, size, or local density, then level and crop to the ro
   the covariance's largest eigenvalue, which is the splat's largest scale. It levels with
   `orientScan`, the seeded fit the room itself is placed with, so the same file is always
   cleaned the same way (with its own unseeded copy of the fit, the same import kept a
-  different number of splats each time). Measured on Counter: the `.ply` and `.spz` of
+  different number of splats each time). The offline cleaner had kept such a copy; it now
+  loads `orientScan` too. Measured on Counter: the `.ply` and `.spz` of
   the same cleaned scan keep 110,823 and 111,077 (SPZ's rounding moves a few across the
   thresholds); the raw `counter.ply` keeps 123,766 of 261,551, every time.
 

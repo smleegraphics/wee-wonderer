@@ -118,7 +118,9 @@ Visual and behavioural checks run headless in real Chrome through Playwright.
   reach, how ragged it is, how closely the mesh fits the splats) and fails if a number is worse than
   `scripts/collision-baseline.json`. Run it after any change to the voxelizer, its
   settings or the NavGrid; `--save` a new baseline when a change is meant to move one,
-  and `--with key=value` tries a setting without saving.
+  and `--with key=value` tries a setting without saving. Anything that moves a room (the
+  levelling) moves every number, and "mesh bumpiness" swings by up to 25% with the room's
+  alignment to the voxel grid alone (`context/collision.md`, "Scan orientation").
 - **Frame time:** `node scripts/frametime.mjs [scan ...]` prints how long a frame takes
   while walking, on the real graphics card. The numbers move between runs; compare a
   change with what it replaced in the same sitting (`context/frame-time.md`).

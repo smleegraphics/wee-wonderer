@@ -14,7 +14,8 @@
 // floor fit the app uses at load) to get a floor-at-y=0 frame, then crops to the
 // room's robust extent — this removes the far-background "spray" that density
 // alone leaves behind. Leveling is computed only to DECIDE which splats to keep;
-// the output .ply keeps original coordinates (the app auto-levels at load).
+// the output .ply keeps original coordinates (the app auto-levels at load). The levelling is
+// the app's own (orientScan), loaded through Vite.
 //
 // The voxel occupancy grid AND the leveling transform built here are the seed
 // for the planned collision voxelization — same load -> filter -> level -> bin
@@ -27,6 +28,8 @@
 //   --floorMargin=0.03  keep splats down to this x radius below the floor
 //   --noCrop / --noLevel  disable step 4 (and leveling) entirely
 import { readFileSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { createServer } from 'vite';
 
 const args = process.argv.slice(2);
 const positional = args.filter((a) => !a.startsWith('--'));
@@ -97,57 +100,24 @@ for (let i = 0; i < count; i++) {
 }
 const passOpacitySize = (i) => alpha[i] >= ALPHA_MIN && sizeOf[i] <= scaleCap;
 
-// --- auto-level: RANSAC floor normal in a rough-flipped, recentered frame ---
-// (mirrors src/scan/orient-scan.ts so the crop frame matches the app's load frame)
-const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
-const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-const norm = (a) => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
-const flip = (p) => [p[0] - cx, -(p[1] - cy), -(p[2] - cz)]; // rough 180° about X, recentered
-
-let level = null; // { rot(axis,angle applied via rodrigues), floorY }  -> leveled(i)
+// --- auto-level: the app's own levelling (src/scan/orient-scan.ts), so the crop frame is
+// the frame the app loads the scan in. Read through Vite, as the app imports it; nothing is
+// served, so the watcher and hot reload stay off.
+let level = null; // { leveled(i) -> [x, y, z] with the floor at y = 0, tiltDeg }
 if (DO_CROP) {
-  const S = [];
-  const st = Math.max(1, Math.floor(count / 60000));
-  for (let i = 0; i < count; i += st) S.push(flip([fx(i, 'x'), fx(i, 'y'), fx(i, 'z')]));
-  // RANSAC: largest near-horizontal plane's up-normal
-  const thresh = radius * 0.012, minCos = Math.cos((35 * Math.PI) / 180);
-  const step = Math.max(1, Math.floor(S.length / 8000));
-  let best = [0, 1, 0], bestIn = -1;
-  for (let iter = 0; iter < 500; iter++) {
-    const a = S[(Math.random() * S.length) | 0], b = S[(Math.random() * S.length) | 0], c = S[(Math.random() * S.length) | 0];
-    let n = cross([b[0] - a[0], b[1] - a[1], b[2] - a[2]], [c[0] - a[0], c[1] - a[1], c[2] - a[2]]);
-    const l2 = n[0] * n[0] + n[1] * n[1] + n[2] * n[2];
-    if (l2 < 1e-12) continue;
-    n = norm(n);
-    if (n[1] < 0) n = [-n[0], -n[1], -n[2]];
-    if (n[1] < minCos) continue;
-    const d = dot(n, a);
-    let cnt = 0;
-    for (let i = 0; i < S.length; i += step) if (Math.abs(dot(n, S[i]) - d) < thresh) cnt++;
-    if (cnt > bestIn) { bestIn = cnt; best = n; }
-  }
-  // rotation that sends the floor normal to +Y (Rodrigues about axis = normal x up)
-  const up = [0, 1, 0];
-  const axis = norm(cross(best, up));
-  const ang = Math.acos(Math.max(-1, Math.min(1, dot(best, up))));
-  const ca = Math.cos(ang), sa = Math.sin(ang);
-  const rodrigues = (v) => {
-    if (!(ang > 1e-6)) return v;
-    const kxv = cross(axis, v), kdv = dot(axis, v);
-    return [
-      v[0] * ca + kxv[0] * sa + axis[0] * kdv * (1 - ca),
-      v[1] * ca + kxv[1] * sa + axis[1] * kdv * (1 - ca),
-      v[2] * ca + kxv[2] * sa + axis[2] * kdv * (1 - ca),
-    ];
-  };
-  // floor height = low percentile of leveled Y over a sample
-  const lys = S.map((p) => rodrigues(p)[1]).sort((a, b) => a - b);
-  const floorY = pct(lys, 0.06);
+  const vite = await createServer({ root: fileURLToPath(new URL('..', import.meta.url)), server: { middlewareMode: true, hmr: false, watch: null }, appType: 'custom', logLevel: 'error' }); // (the repo, wherever it is run from)
+  const { orientScan } = await vite.ssrLoadModule('/src/scan/orient-scan.ts');
+  const THREE = await vite.ssrLoadModule('three');
+  await vite.close();
+  const centers = new Float32Array(count * 3);
+  for (let i = 0; i < count; i++) { centers[i * 3] = fx(i, 'x'); centers[i * 3 + 1] = fx(i, 'y'); centers[i * 3 + 2] = fx(i, 'z'); }
+  const o = orientScan(new THREE.BufferAttribute(centers, 3));
+  const v = new THREE.Vector3();
   level = {
-    leveled: (i) => { const r = rodrigues(flip([fx(i, 'x'), fx(i, 'y'), fx(i, 'z')])); return [r[0], r[1] - floorY, r[2]]; },
-    tiltDeg: (Math.acos(Math.max(-1, Math.min(1, best[1]))) * 180) / Math.PI,
+    leveled: (i) => { v.set(fx(i, 'x'), fx(i, 'y'), fx(i, 'z')).sub(o.center).applyQuaternion(o.quaternion); return [v.x, v.y + o.floorOffsetY, v.z]; },
+    tiltDeg: o.tiltDeg,
   };
-  console.log(`  leveled: floor tilt ${level.tiltDeg.toFixed(1)}° corrected, radius ${radius.toFixed(2)}`);
+  console.log(`  leveled: floor tilt ${level.tiltDeg.toFixed(1)}° corrected, radius ${o.radius.toFixed(2)}`);
 }
 
 // --- accumulate opacity mass per voxel (opacity/size pre-filtered) ---
