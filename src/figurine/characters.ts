@@ -83,7 +83,7 @@ export const CHARACTERS: CharacterEntry[] = [
     height: 0.45,
     radius: 0.25, // body width at mid height 0.65 of its height (the big head and hair), against the chibi's 0.58 at radius 0.22
     clips: {
-      idle: 'idle', walk: 'walk', sprint: 'sprint', jumpStart: 'jump', fall: 'fall', climb: 'climb',
+      idle: 'idle', walk: 'walk', sprint: 'sprint', jumpStart: 'jump', fall: 'fall', land: 'land', climb: 'climb',
     },
     climbs: true,
     abilities: ['doubleJump'],

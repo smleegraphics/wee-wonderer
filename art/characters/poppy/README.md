@@ -9,6 +9,11 @@ frame longer).
   [Mini Characters 1.0](https://kenney.nl/assets/mini-characters), CC0 1.0 (`CREDITS.md`).
 - **`climb`:** keyed here, 20 frames at 24 fps, looping. Arms reach toward the wall in turn,
   legs step up against them, the torso turns 3° each way. Made for this project.
+- **`land`:** keyed here, 8 frames at 24 fps, played once on a hard landing. Squash and stretch
+  from the root, which is at her feet, so they stay on the ground: stretched at touchdown with her
+  arms up, squashed (108% wide, 86% tall) with her head nodding at frame 2, a small rebound,
+  her idle at frame 7. Her legs are rigid blocks: spreading them raises her body, not lowers
+  it, so they stay straight. Made for this project.
 
 ## Putting a clip from here into the game
 
