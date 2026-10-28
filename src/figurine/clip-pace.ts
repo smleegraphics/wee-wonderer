@@ -79,11 +79,15 @@ export function clipPace(model: THREE.Object3D, clip: THREE.AnimationClip, heigh
   const back = moves.reduce((a, d) => a + Math.max(0, -d), 0), all = moves.reduce((a, d) => a + Math.abs(d), 0);
   if (all === 0) return null;
   const dt = clip.duration / SAMPLES;
-  // the median: steadier than the mean where a heel rolls onto a toe, and a hand that is lowest for
-  // a frame or two does not move it
-  const sweep = back / all >= PLANTED ? moves : moves.filter((d) => d < 0);
-  sweep.sort((a, b) => a - b);
-  let pace = -sweep[Math.floor(sweep.length / 2)] / dt;
+  // Medians: steadier than the mean where a heel rolls onto a toe, and a hand that is lowest for a
+  // frame or two does not move them. A planted foot's pace is the median of all its moves (within
+  // 5% of the least-slide pace on every planted clip measured; a travel-weighted median read 10 to
+  // 17% fast). PLANTED weighs travel and the median counts samples, so the two can disagree: a few
+  // long sweeps back among many short rolls forward pass the test with a forward median. Then, as
+  // for a pendulum, the pace is how fast the foot sweeps back.
+  const median = (xs: number[]) => xs.sort((a, b) => a - b)[Math.floor(xs.length / 2)];
+  let pace = back / all >= PLANTED ? -median([...moves]) / dt : 0;
+  if (!(pace > 0)) pace = -median(moves.filter((d) => d < 0)) / dt;
   pace *= toBodyHeights;
   return pace > 0 ? pace : null;
 }

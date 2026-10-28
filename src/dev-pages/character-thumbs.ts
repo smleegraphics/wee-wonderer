@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 import { WebGPURenderer } from 'three/webgpu';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { CHARACTERS } from '../figurine/characters';
+import { CHARACTERS, type ClipUse, clipOf } from '../figurine/characters';
 
 const SIZE = 192;         // pixels square: three to a row in the card, sharp on a 2x screen
 const TURN = 0.5;         // radians round from straight ahead: enough to show the face and the side
@@ -23,14 +23,13 @@ key.position.set(1.5, 3, 2.5);
 scene.add(key);
 const camera = new THREE.PerspectiveCamera(FOV, 1, 0.01, 100);
 
-async function picture(model: string, idle: string | { clip: string; hold: number } | undefined): Promise<string> {
+async function picture(model: string, idle: ClipUse | undefined): Promise<string> {
   const gltf = await new GLTFLoader().loadAsync(`${import.meta.env.BASE_URL}${model}`);
   const root = gltf.scene;
   root.traverse((o) => { if ((o as THREE.SkinnedMesh).isSkinnedMesh) o.frustumCulled = false; });
   // the idle pose, as the game shows it standing still
-  const name = typeof idle === 'string' ? idle : idle?.clip;
-  const clip = gltf.animations.find((c) => c.name === name);
-  if (clip) { const mixer = new THREE.AnimationMixer(root); mixer.clipAction(clip).play(); mixer.setTime(typeof idle === 'string' ? 0 : idle!.hold); }
+  const use = idle && clipOf(idle), clip = use && gltf.animations.find((c) => c.name === use.name);
+  if (clip) { const mixer = new THREE.AnimationMixer(root); mixer.clipAction(clip).play(); mixer.setTime(use.hold ?? 0); }
   scene.add(root);
   root.updateMatrixWorld(true);
   // framed by its posed, skinned bounds (a skinned mesh's own bounds are its bind pose): its longest

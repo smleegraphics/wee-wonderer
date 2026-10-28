@@ -131,7 +131,9 @@ times too fast. With no planted foot there is no right answer to measure, so her
 `paceScale` 0.65, picked live with the Debug card's "Clip pace" slider. which kind a clip is, is told from the clip: a planted foot's travel is 0.74 to 1
 backward, a pendulum's 0.5. The clip then plays at the figurine's speed over that, within
 `PACE_RANGE` (half to twice); a clip that cannot be measured (no skin, or no foot that moves)
-is taken to be made for the game's walk or sprint speed. Measured: chibi 0.36 / 1.57,
+is taken to be made for the game's walk or sprint speed (and `paceScale` scales only a measured
+pace). A planted clip whose median move is forward (the travel test and the median can disagree)
+is paced by its backward sweep instead. Measured: chibi 0.36 / 1.57,
 skeleton 0.35 / 1.76, mini 2.14 / 4.25 body heights a second (walk / run). The pace is a median, so a
 part that is lowest for a frame or two (the mini's hands, swung below her feet in her run) does
 not move it. It costs 10 to 35 ms a clip, once, as a character loads (most of it the
@@ -191,7 +193,7 @@ A model need not have a clip for every move: `clips` can hold a frame of another
 | `airJump` | once, from its start again for each air jump | `jumpStart` | (falls back) |
 | `climb` | loop, paused while not moving on the wall | — | `climb` |
 | `ledgeHang` | loop, while hanging from a lip | `climb` | `hang` (our own) |
-| `mantle` | once, climbing up over a lip (`CLIMB.mantleTime`; keys wait for it, `context/climb.md`) | `climb` | `mantle` (our own) |
+| `mantle` | once, climbing up over a lip (`CLIMB.overTime`; keys wait for it, `context/climb.md`) | `climb` | `mantle` (our own) |
 
 A character for the game wants all of these, and could add a sideways climb (there is none:
 the generated one was tied to the chibi's bones, `context/climb.md`).

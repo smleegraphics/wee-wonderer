@@ -12,6 +12,11 @@ export type Move = 'idle' | 'walk' | 'sprint' | 'jumpStart' | 'rise' | 'fall' | 
  *  seconds into the clip), for a move the model has no clip of its own for. */
 export type ClipUse = string | { clip: string; hold: number };
 
+/** The clip `use` plays, and the frame it holds still (seconds in; undefined when it plays). */
+export function clipOf(use: ClipUse): { name: string; hold?: number } {
+  return typeof use === 'string' ? { name: use } : { name: use.clip, hold: use.hold };
+}
+
 /** How each move plays: looping, or once (then holding its last frame). A held frame is held either way. */
 export const MOVE_PLAYS: Record<Move, 'loop' | 'once'> = {
   idle: 'loop', walk: 'loop', sprint: 'loop', climb: 'loop', ledgeHang: 'loop',

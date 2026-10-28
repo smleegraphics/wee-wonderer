@@ -6,7 +6,7 @@ import { BODY, camera, figurine, hud, move, orbit, player, q, TEL } from '../app
 import { collision, groundY, navGrid, PLATFORM_OPTS, rebuildPlatformOverlay, setPlatformOverlay, setVoxelOverlay, showPlatforms, showVoxels } from '../collision/room-collision';
 import { loadout } from './abilities';
 import { camLatch, frameOpeningShot } from './camera';
-import { type CharacterEntry, CHARACTERS, type ClipUse, type Move, MOVE_FALLBACK, MOVE_PLAYS } from './characters';
+import { type CharacterEntry, CHARACTERS, type ClipUse, clipOf, type Move, MOVE_FALLBACK, MOVE_PLAYS } from './characters';
 import { clipPace } from './clip-pace';
 import { jumpKey, jumpRelease, lastGood, refitBody, resetMotion, setLoadout } from './controller';
 import { MOVE, useMoveSettings } from './movement';
@@ -120,7 +120,7 @@ function disposeModel(root: THREE.Object3D): void {
 function measurePaces(gltf: GLTF, root: THREE.Object3D): void {
   paces = {};
   for (const m of ['walk', 'sprint'] as const) {
-    const use = character.clips[m], clip = typeof use === 'string' ? gltf.animations.find((c) => c.name === use) : undefined;
+    const use = character.clips[m], clip = use && clipOf(use).hold === undefined ? gltf.animations.find((c) => c.name === clipOf(use).name) : undefined;
     const pace = clip ? clipPace(root, clip, charH) : null;
     if (pace !== null) paces[m] = pace;
   }
@@ -133,14 +133,14 @@ function setupMixer(gltf: GLTF, model: THREE.Object3D): void {
   actions = {}; heldAt = new Map(); activeAction = null; activeMove = null;
   const clipByName = new Map(gltf.animations.map((c) => [c.name, c]));
   for (const [m, use] of Object.entries(character.clips) as [Move, ClipUse][]) {
-    const name = typeof use === 'string' ? use : use.clip, clip = clipByName.get(name);
+    const { name, hold } = clipOf(use), clip = clipByName.get(name);
     if (!clip) { console.warn(`character ${character.id}: no clip "${name}" for ${m}`); continue; }
     // a held frame is its own action (the clip played from that frame, paused), so it can blend like any other
-    const a = mixer.clipAction(typeof use === 'string' ? clip : clip.clone(), model);
-    if (typeof use !== 'string') { a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; a.time = use.hold; a.paused = true; }
+    const a = mixer.clipAction(hold === undefined ? clip : clip.clone(), model);
+    if (hold !== undefined) { a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; a.time = hold; a.paused = true; }
     else if (MOVE_PLAYS[m] === 'loop') a.setLoop(THREE.LoopRepeat, Infinity);
     else { a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; }
-    if (typeof use !== 'string') heldAt.set(a, use.hold);
+    if (hold !== undefined) heldAt.set(a, hold);
     actions[m] = a;
   }
 }
@@ -190,8 +190,9 @@ export function pauseMove(m: Move, still: boolean): void {
  *  slide instead. */
 export function setMovePace(speed: number): void {
   if (!activeMove || !activeAction || heldAt.has(activeAction)) return;
-  const pace = paces[activeMove] ?? (activeMove === 'sprint' ? MOVE.sprintSpeed : activeMove === 'walk' ? MOVE.walkSpeed : undefined);
-  if (pace) activeAction.timeScale = THREE.MathUtils.clamp(speed / (pace * MOVE.paceScale), PACE_RANGE[0], PACE_RANGE[1]);
+  const measured = paces[activeMove];
+  const pace = measured !== undefined ? measured * MOVE.paceScale : activeMove === 'sprint' ? MOVE.sprintSpeed : activeMove === 'walk' ? MOVE.walkSpeed : undefined;
+  if (pace) activeAction.timeScale = THREE.MathUtils.clamp(speed / pace, PACE_RANGE[0], PACE_RANGE[1]);
 }
 
 /** Put the figurine on the floor at the spawn point and re-frame the camera behind it. */

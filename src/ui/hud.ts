@@ -69,13 +69,16 @@ function pickList(list: HTMLElement, onPick: (id: string) => void, before: HTMLE
         buttons.set(choice.id, button);
       }
       if (choice.image) {
-        const img = el('img');
+        const img = button.querySelector('img') ?? button.appendChild(el('img'));
         img.src = choice.image;
         img.alt = ''; // the button carries the name
-        button.replaceChildren(img);
         button.setAttribute('aria-label', choice.label);
         button.title = choice.label;
-      } else button.textContent = choice.label;
+      } else {
+        button.textContent = choice.label;
+        button.removeAttribute('aria-label');
+        button.removeAttribute('title');
+      }
       button.setAttribute('aria-current', String(choice.id === current));
     },
     setCurrent(id: string): void {

@@ -38,7 +38,7 @@ export const camLatch = {
  *  on a wall, bring it round behind the figurine if that wall is what's in the way. */
 export function updateCamera(dt: number): void {
   const t = orbit.target;
-  camLook.set(player.position.x, figurine.smoothFeetY + charH * CAM_PIVOT, player.position.z);
+  camLook.set(player.position.x + figurine.drawn.x, figurine.smoothFeetY + charH * CAM_PIVOT, player.position.z + figurine.drawn.z); // the drawn figure (it catches up after a move over a top)
   t.lerp(camLook, 0.15);
   // Climbing puts the figurine flat against a wall, so a camera left on the wall's far
   // side (e.g. it walked off a ledge and now hangs on the face below) can't be fixed by

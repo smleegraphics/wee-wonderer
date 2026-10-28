@@ -19,7 +19,7 @@ const SPEED_STILL = 0.1;       // body heights a second: slower than this the fi
 const LAND_HARD = 3;           // body heights a second, down: a landing at least this hard shows as one (the land move), a softer one goes straight on
 const EDGE_WALL = 0.5;         // capsule radii: a body this far into something at an edge is against a wall there, not over a drop
 
-const camFwd = new THREE.Vector3(), camRight = new THREE.Vector3(), wishDir = new THREE.Vector3(), mantleLocal = new THREE.Vector3();
+const camFwd = new THREE.Vector3(), camRight = new THREE.Vector3(), wishDir = new THREE.Vector3(), drawnLocal = new THREE.Vector3();
 export function lerpAngle(a: number, b: number, t: number): number {
   let d = (b - a) % (Math.PI * 2);
   if (d > Math.PI) d -= Math.PI * 2;
@@ -48,6 +48,9 @@ export function jumpKey(): void {
   if (figurine.state === 'climb') { climbJumpOff(); cutArmed = true; return; }
   pressedAgo = 0; // tried this frame whatever the grace, then for MOVE.jumpBuffer after
 }
+/** A press waits MOVE.jumpBuffer to be made; older, it is dropped. */
+function dropStalePress(): void { if (pressedAgo > MOVE.jumpBuffer) pressedAgo = -1; }
+
 /** Space let go: a jump still rising is cut short (MOVE.jumpCut). */
 export function jumpRelease(): void { move.jump = false; }
 
@@ -57,7 +60,7 @@ export function resetMotion(): void {
   sprint = coyote = 0;
   pressedAgo = -1;
   cutArmed = false;
-  figurine.mantleLeft = 0; // (put somewhere else mid climb-up: it ends there)
+  figurine.mantleLeft = figurine.drawnLeft = 0; // (put somewhere else mid climb-up: it ends there)
   for (const a of abilities) a.landed?.();
 }
 
@@ -88,8 +91,12 @@ export function updateController(dt: number): void {
   let grounded: boolean;
   let wasClimbing = false;
   if (figurine.mantleLeft > 0) {
-    // climbing up over a lip: already standing on top; keys wait until the climb-up has played
+    // climbing up over a lip: already standing on top; keys wait until the climb-up has played.
+    // A jump press still ages, as standing it would: within jumpBuffer of the end it is made on
+    // arriving, as a press just before landing is; earlier, it is dropped.
     figurine.mantleLeft = Math.max(0, figurine.mantleLeft - dt);
+    dropStalePress();
+    if (pressedAgo >= 0) pressedAgo += dt;
     grounded = true;
   } else if (figurine.state === 'climb') {
     wasClimbing = true;
@@ -102,7 +109,7 @@ export function updateController(dt: number): void {
       return;
     }
     steer(dt, moving);
-    if (pressedAgo > MOVE.jumpBuffer) pressedAgo = -1; // a press too long ago: dropped
+    dropStalePress();
     if (pressedAgo >= 0) tryJump();
     grounded = figurine.state === 'ground' ? walk(dt) : fall(dt);
     if (pressedAgo >= 0) pressedAgo += dt;
@@ -111,10 +118,13 @@ export function updateController(dt: number): void {
 
   // Visual-only vertical smoothing, run for EVERY state so the camera follows: when
   // grounded, damp the bump bob; otherwise (airborne / climbing) track physics exactly.
-  // A climb-up eases the model from where the body was onto the top, the height through
-  // smoothFeetY so the camera rises with it: 1 at the start, 0 when it has played.
-  const ease = figurine.mantleLeft > 0 ? (figurine.mantleLeft / CLIMB.mantleTime) ** 2 : 0;
-  if (ease > 0) figurine.smoothFeetY = player.position.y + figurine.mantleFrom.y * ease;
+  // After a move over a top the drawn figure catches up with the body (climb.ts drawFrom): its
+  // offset eases from where the body was to nothing. The camera aims at the drawn figure
+  // (figurine.drawn across, smoothFeetY up), so neither snaps.
+  figurine.drawnLeft = Math.max(0, figurine.drawnLeft - dt);
+  const ease = (figurine.drawnLeft / CLIMB.overTime) ** 2;
+  figurine.drawn.copy(figurine.drawnFrom).multiplyScalar(ease);
+  if (ease > 0) figurine.smoothFeetY = player.position.y + figurine.drawn.y;
   else if (grounded && !wasClimbing) figurine.smoothFeetY += (player.position.y - figurine.smoothFeetY) * Math.min(1, 10 * dt);
   else figurine.smoothFeetY = player.position.y;
   if (charModel) {
@@ -123,8 +133,8 @@ export function updateController(dt: number): void {
     charModel.rotation.x = tilt;
     charModel.position.set(0, figurine.smoothFeetY - player.position.y + chest * (1 - Math.cos(tilt)), -chest * Math.sin(tilt));
     if (ease > 0) { // across: the offset in the player's own (turned) frame
-      mantleLocal.set(figurine.mantleFrom.x, 0, figurine.mantleFrom.z).applyAxisAngle(WORLD_UP, -player.rotation.y).multiplyScalar(ease);
-      charModel.position.x += mantleLocal.x; charModel.position.z += mantleLocal.z;
+      drawnLocal.set(figurine.drawn.x, 0, figurine.drawn.z).applyAxisAngle(WORLD_UP, -player.rotation.y);
+      charModel.position.x += drawnLocal.x; charModel.position.z += drawnLocal.z;
     }
   }
 
