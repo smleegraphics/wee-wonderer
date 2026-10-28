@@ -191,7 +191,7 @@ export function pauseMove(m: Move, still: boolean): void {
 export function setMovePace(speed: number): void {
   if (!activeMove || !activeAction || heldAt.has(activeAction)) return;
   const pace = paces[activeMove] ?? (activeMove === 'sprint' ? MOVE.sprintSpeed : activeMove === 'walk' ? MOVE.walkSpeed : undefined);
-  if (pace) activeAction.timeScale = THREE.MathUtils.clamp(speed / pace, PACE_RANGE[0], PACE_RANGE[1]);
+  if (pace) activeAction.timeScale = THREE.MathUtils.clamp(speed / (pace * MOVE.paceScale), PACE_RANGE[0], PACE_RANGE[1]);
 }
 
 /** Put the figurine on the floor at the spawn point and re-frame the camera behind it. */

@@ -7,8 +7,9 @@
 //
 // A foot that plants moves back under the body while it carries the weight, so the pace is how
 // fast the contact point moves back while it stays the same point. A leg that swings like a
-// pendulum and never plants (a rigid block leg, the mini's) has no such speed; it is paced at a
-// stride a step instead: the contact point's travel, twice a cycle.
+// pendulum and never plants (a rigid block leg, the mini's) swings forward at the ground as often
+// as back; it is paced by its backward moments only: how fast the foot sweeps back at the ground,
+// which is what the eye compares with the body's speed.
 
 import * as THREE from 'three';
 
@@ -22,10 +23,6 @@ const NEAR = 0.04;    // body heights
 // (chibi, skeleton, the old human: walks and runs); a pendulum leg measures 0.5 (as far forward
 // as back: the mini, the old robot).
 const PLANTED = 0.6;
-// A stride is the spread of the contact point between these percentiles of its travel, not its
-// full spread: a part that is lowest for a frame or two (the mini's hands, in 5 of 96 samples of
-// her run, swung far forward) must not stretch it. Feet are lowest in 7% or more each (heels).
-const STRIDE_FROM = 0.05;
 
 /** The speed, in body heights a second, at which `clip` carries `model` (posed and scaled as it
  *  stands in the game, `height` world units tall): measured along the model's forward (+Z),
@@ -82,14 +79,11 @@ export function clipPace(model: THREE.Object3D, clip: THREE.AnimationClip, heigh
   const back = moves.reduce((a, d) => a + Math.max(0, -d), 0), all = moves.reduce((a, d) => a + Math.abs(d), 0);
   if (all === 0) return null;
   const dt = clip.duration / SAMPLES;
-  let pace: number;
-  if (back / all >= PLANTED) {
-    moves.sort((a, b) => a - b);
-    pace = -moves[Math.floor(moves.length / 2)] / dt; // the median: steadier than the mean where a heel rolls onto a toe
-  } else {
-    const sorted = [...zs].sort((a, b) => a - b), at = (q: number) => sorted[Math.round(q * (sorted.length - 1))];
-    pace = (2 * (at(1 - STRIDE_FROM) - at(STRIDE_FROM))) / clip.duration; // a stride a step, two steps a cycle
-  }
+  // the median: steadier than the mean where a heel rolls onto a toe, and a hand that is lowest for
+  // a frame or two does not move it
+  const sweep = back / all >= PLANTED ? moves : moves.filter((d) => d < 0);
+  sweep.sort((a, b) => a - b);
+  let pace = -sweep[Math.floor(sweep.length / 2)] / dt;
   pace *= toBodyHeights;
   return pace > 0 ? pace : null;
 }

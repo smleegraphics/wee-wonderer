@@ -76,6 +76,7 @@ run's speed (4.0); everything else was a first guess, meant to be tuned by playi
 | `jumpCut` | 0.45 | the upward speed kept on letting go of Space while rising |
 | `coyoteTime` / `jumpBuffer` | 0.1 / 0.12 s | late and early jump grace |
 | `turnRate` | 12 | how fast it turns to face where it goes |
+| `paceScale` | 1 | the walk and run clips play as if made for this times their measured pace (animation only): for legs that never plant, set by eye in a character's `tune` |
 
 `MOVE` is the defaults, then the character's `tune`, then the session's slider changes
 (`useMoveSettings`).
@@ -123,16 +124,17 @@ from there if there is ground below, or goes to the nearest cell it fits (rule 7
 clip keeps a planted foot still. The foot on the ground is the skin's lowest point (no bone
 names, no left and right), measured from the skeleton's root bone so root motion does not
 count; the pace is the median speed it moves back while it stays the same point. A leg that
-never plants (a rigid block swinging like a pendulum: the mini's) is paced at a stride a step
-instead; which kind a clip is, is told from the clip: a planted foot's travel is 0.74 to 1
+never plants (a rigid block swinging like a pendulum: the mini's) swings forward at the ground as
+often as back, and is paced by its backward moments only: how fast the foot sweeps back at the
+ground. Neither that nor a stride a step (the foot's average) read right by eye: too slow and 2.2
+times too fast. With no planted foot there is no right answer to measure, so her `tune` sets
+`paceScale` 0.65, picked live with the Debug card's "Clip pace" slider. which kind a clip is, is told from the clip: a planted foot's travel is 0.74 to 1
 backward, a pendulum's 0.5. The clip then plays at the figurine's speed over that, within
 `PACE_RANGE` (half to twice); a clip that cannot be measured (no skin, or no foot that moves)
 is taken to be made for the game's walk or sprint speed. Measured: chibi 0.36 / 1.57,
-skeleton 0.35 / 1.76, mini 0.88 / 1.49 body heights a second (walk / run), all under the
-game's 1.6 and 4.0. A stride is the contact point's spread between its 5th and 95th
-percentiles, not its full spread: in the mini's run a hand is lowest for a few frames, swung
-far forward, which took her pace to 2.22 (feet are lowest 7% of a clip or more each, heels
-included). It costs 10 to 35 ms a clip, once, as a character loads (most of it the
+skeleton 0.35 / 1.76, mini 2.14 / 4.25 body heights a second (walk / run). The pace is a median, so a
+part that is lowest for a frame or two (the mini's hands, swung below her feet in her run) does
+not move it. It costs 10 to 35 ms a clip, once, as a character loads (most of it the
 first pass over every vertex, skinned on the CPU, to find the few that can touch the ground).
 
 Tried and replaced: the lowest *bone* each side, and a pace of twice its travel per cycle. Bone
@@ -219,7 +221,7 @@ the generated one was tied to the chibi's bones, `context/climb.md`).
 
 - **Feet slide at speed.** The chibi's and skeleton's walks would need about 4.4 times their
   authored speed to keep up with the game's walk, so at the 2x cap their feet cover about 45% of
-  the ground; the mini's walk keeps up (1.8x) and her run covers 75%. The root cause is leg length: speeds are in body
+  the ground; the mini's walk and run play at 1.15x and 1.45x (her `paceScale`). The root cause is leg length: speeds are in body
   heights, and the hips stand at 0.15 (chibi), 0.17 (skeleton) and 0.26 (mini) body heights.
 - **Walking is uneven from frame to frame.** In a straight walk `__dbg.speed` holds 1.6, but the
   position advances 0.66 to 1.67 body heights a second frame to frame (Playroom: 4 to 19 of 44

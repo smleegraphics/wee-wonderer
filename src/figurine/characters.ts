@@ -89,6 +89,6 @@ export const CHARACTERS: CharacterEntry[] = [
     },
     climbs: true,
     abilities: ['doubleJump'],
-    tune: {},
+    tune: { paceScale: 0.65 }, // her block legs never plant: measured by their sweep at the ground they cycled too slowly, by their average too fast; set by eye
   },
 ];
