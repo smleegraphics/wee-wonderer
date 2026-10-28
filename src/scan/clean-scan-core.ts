@@ -1,9 +1,10 @@
-// Scan cleanup, two sets of splats from one pass. What is drawn: the scan levelled, less the
-// splats outside the room (the far-off spray past the walls, above the ceiling and below the
-// floor; insideRoom). What the collision is built from: those that also pass the floater
-// filters on opacity, size and density (collisionKeep). It runs on an imported scan in a Web
-// Worker (clean-scan.worker.ts). scripts/clean-scan.mjs crops .ply files offline with insideRoom,
-// loaded through Vite; a file loaded by name builds its collision from every splat in it.
+// Scan cleanup: one pass, two sets of splats (cleanMasks). The scan is levelled once, and the
+// room box is worked out once, from the splats that pass the floater filters on opacity, size
+// and density. What is drawn: every splat inside that box (the far-off spray past the walls,
+// above the ceiling and below the floor is left out). What the collision is built from: those
+// of them that also pass the floater filters. It runs on an imported scan in a Web Worker
+// (clean-scan.worker.ts), and on .ply files offline (scripts/clean-scan.mjs, through Vite),
+// which keep what is drawn; a file loaded by name builds its collision from every splat in it.
 //
 // The floater filters used to choose what was drawn too. They made scans see-through (Living
 // Room 0.2% of the view raw, 25% cleaned; Counter 0.2% and 8.5%), the size filter most, since
@@ -12,31 +13,30 @@
 // "Scan cleanup".
 
 import * as THREE from 'three';
-import { orientScan, type ScanOrientation } from './orient-scan';
+import { orientScan } from './orient-scan';
 import type { ParsedScan } from './parse-scan';
 
 export interface CleanOptions {
-  alphaMin?: number;    // collision only: drop splats fainter than this (default 0.35)
-  scaleCapMul?: number; // collision only: drop splats larger than this x median size (default 4)
-  minMass?: number;     // collision only: min accumulated opacity in a voxel to keep (default 4)
-  grid?: number;        // collision only: density-grid resolution across 2*radius (default 160)
-  ceil?: number;        // ceiling crop percentile (default 0.98)
-  wall?: number;        // horizontal crop percentile (default 0.99)
-  margin?: number;      // slack on cropped faces, fraction of span (default 0.08)
-  floorMargin?: number; // keep splats to this x radius below the floor (default 0.03)
-  crop?: boolean;       // crop to the room box (default true); off, every splat is kept
+  alphaMin?: number;    // floater filter: splats fainter than this (default 0.35)
+  scaleCapMul?: number; // floater filter: splats larger than this x the median size (default 4)
+  minMass?: number;     // floater filter: splats in a voxel with less opacity than this in it (default 4)
+  grid?: number;        // the density grid's cells across 2 x radius (default 160)
+  ceil?: number;        // room box: the ceiling, this percentile of levelled height (default 0.98)
+  wall?: number;        // room box: across, this percentile of levelled x and z (default 0.99)
+  margin?: number;      // room box: slack on each face, as a share of its span (default 0.08)
+  floorMargin?: number; // room box: kept this far below the floor, in radii (default 0.03)
+  crop?: boolean;       // crop to the room box (default true); off, every splat is drawn
 }
 
 export interface CleanResult {
-  scan: ParsedScan;      // the splats kept: inside the room, and any the collision is built from
-  collision: Uint8Array; // per kept splat, 1 if the collision is built from it (collisionKeep)
+  scan: ParsedScan;      // the splats drawn
+  collision: Uint8Array; // per splat drawn, 1 if the collision is built from it
   kept: number;
   total: number;
   collisionKept: number;
 }
 
 const median = (a: number[]) => { a.sort((p, q) => p - q); return a[a.length >> 1]; };
-const pctOf = (sorted: number[], p: number) => sorted[Math.min(sorted.length - 1, Math.max(0, Math.floor(sorted.length * p)))];
 const pct = (sorted: Float32Array, p: number) => sorted[Math.min(sorted.length - 1, Math.max(0, Math.floor(sorted.length * p)))];
 
 /** The largest eigenvalue of the symmetric 3x3 matrix (xx, xy, xz, yy, yz, zz), in closed
@@ -51,12 +51,9 @@ function largestEigenvalue(xx: number, xy: number, xz: number, yy: number, yz: n
   return q + 2 * p * Math.cos(Math.acos(r) / 3);
 }
 
-/** The splats the collision is built from: those that pass the floater filters (opacity, size,
- *  density) and are inside the box round them. Not used to choose what is drawn: those filters
- *  made the scan see-through, but the collision built from what they keep is better than from
- *  the crop alone (Kitchen walkable from spawn 55% against 27%). Unchanged from when they
- *  chose what was drawn too, so the collision is too. */
-function collisionKeep(scan: ParsedScan, o: ScanOrientation, opts: CleanOptions): Uint8Array {
+/** Which splats are drawn, and which of those the collision is built from (see the top of the
+ *  file). `tiltDeg` is how far the levelling turned the floor. */
+export function cleanMasks(scan: ParsedScan, opts: CleanOptions = {}): { drawn: Uint8Array; collision: Uint8Array; tiltDeg: number } {
   const ALPHA_MIN = opts.alphaMin ?? 0.35;
   const SCALE_CAP_MUL = opts.scaleCapMul ?? 4;
   const MIN_MASS = opts.minMass ?? 4;
@@ -65,14 +62,13 @@ function collisionKeep(scan: ParsedScan, o: ScanOrientation, opts: CleanOptions)
   const WALL_PCT = opts.wall ?? 0.99;
   const MARGIN = opts.margin ?? 0.08;
   const FLOOR_MARGIN = opts.floorMargin ?? 0.03;
-  const DO_CROP = opts.crop ?? true;
 
   const { centers, covariances, colors } = scan;
   const count = centers.length / 3;
-
+  const o = orientScan(new THREE.BufferAttribute(centers, 3));
   const cx = o.center.x, cy = o.center.y, cz = o.center.z, radius = o.radius;
 
-  // per-splat opacity and size
+  // the floater filters: opacity and size, then the opacity in each voxel of what passes those
   const alpha = new Float32Array(count), sizeOf = new Float32Array(count);
   for (let i = 0; i < count; i++) {
     alpha[i] = colors[i * 4 + 3] / 255;
@@ -83,105 +79,54 @@ function collisionKeep(scan: ParsedScan, o: ScanOrientation, opts: CleanOptions)
   const sizeSample: number[] = [];
   for (let i = 0; i < count; i += sampleStride) sizeSample.push(sizeOf[i]);
   const scaleCap = median(sizeSample) * SCALE_CAP_MUL;
-  const passOpacitySize = (i: number) => alpha[i] >= ALPHA_MIN && sizeOf[i] <= scaleCap;
-
-  // accumulate opacity mass per voxel (opacity/size pre-filtered)
   const voxel = (2 * radius) / GRID;
   const key = (i: number) => {
     const vx = Math.floor((centers[i * 3] - cx) / voxel), vy = Math.floor((centers[i * 3 + 1] - cy) / voxel), vz = Math.floor((centers[i * 3 + 2] - cz) / voxel);
     return (vx + 524288) * 1099511627776 + (vy + 524288) * 1048576 + (vz + 524288);
   };
-  const mass = new Map<number, number>();
+  const solid = new Uint8Array(count), mass = new Map<number, number>();
   for (let i = 0; i < count; i++) {
-    if (!passOpacitySize(i)) continue;
+    if (alpha[i] < ALPHA_MIN || sizeOf[i] > scaleCap) continue;
+    solid[i] = 1;
     const k = key(i);
     mass.set(k, (mass.get(k) ?? 0) + alpha[i]);
   }
-  const passDensity = (i: number) => (mass.get(key(i)) ?? 0) >= MIN_MASS;
+  let solidCount = 0;
+  for (let i = 0; i < count; i++) if (solid[i] && (mass.get(key(i)) ?? 0) < MIN_MASS) solid[i] = 0; else if (solid[i]) solidCount++;
+  // (filters that leave nothing are not floater filters for this scan: the box and the collision fall back to every splat)
+  const boxFrom = solidCount ? solid : new Uint8Array(count).fill(1);
 
-  // crop box: robust extent of the levelled, density-passing splats
-  let levelled: Float32Array | null = null;
-  let box: { minX: number; maxX: number; minY: number; maxY: number; minZ: number; maxZ: number } | null = null;
-  if (DO_CROP) {
-    levelled = new Float32Array(count * 3);
+  // the room box: every splat levelled, and the robust extent of those that pass the filters
+  const drawn = new Uint8Array(count).fill(1);
+  if (opts.crop ?? true) {
+    const lx = new Float32Array(count), ly = new Float32Array(count), lz = new Float32Array(count);
     const v = new THREE.Vector3();
     for (let i = 0; i < count; i++) {
-      v.set(centers[i * 3] - cx, centers[i * 3 + 1] - cy, centers[i * 3 + 2] - cz).applyQuaternion(o.quaternion);
-      levelled[i * 3] = v.x; levelled[i * 3 + 1] = v.y + o.floorOffsetY; levelled[i * 3 + 2] = v.z;
+      v.set(centers[i * 3], centers[i * 3 + 1], centers[i * 3 + 2]).sub(o.center).applyQuaternion(o.quaternion);
+      lx[i] = v.x; ly[i] = v.y + o.floorOffsetY; lz[i] = v.z;
     }
-    const lx: number[] = [], lz: number[] = [], ly: number[] = [];
-    for (let i = 0; i < count; i++) {
-      if (!passOpacitySize(i) || !passDensity(i)) continue;
-      lx.push(levelled[i * 3]); ly.push(levelled[i * 3 + 1]); lz.push(levelled[i * 3 + 2]);
-    }
-    if (lx.length) {
-      lx.sort((a, b) => a - b); lz.sort((a, b) => a - b); ly.sort((a, b) => a - b);
-      const spanX = pctOf(lx, WALL_PCT) - pctOf(lx, 1 - WALL_PCT);
-      const spanZ = pctOf(lz, WALL_PCT) - pctOf(lz, 1 - WALL_PCT);
-      const ceil = pctOf(ly, CEIL_PCT);
-      box = {
-        minX: pctOf(lx, 1 - WALL_PCT) - MARGIN * spanX, maxX: pctOf(lx, WALL_PCT) + MARGIN * spanX,
-        minZ: pctOf(lz, 1 - WALL_PCT) - MARGIN * spanZ, maxZ: pctOf(lz, WALL_PCT) + MARGIN * spanZ,
-        minY: -FLOOR_MARGIN * radius, maxY: ceil + MARGIN * ceil,
-      };
-    }
+    const pick = (a: Float32Array) => { const out: number[] = []; for (let i = 0; i < count; i++) if (boxFrom[i]) out.push(a[i]); return Float32Array.from(out).sort(); };
+    const sx = pick(lx), sy = pick(ly), sz = pick(lz);
+    const spanX = pct(sx, WALL_PCT) - pct(sx, 1 - WALL_PCT), spanZ = pct(sz, WALL_PCT) - pct(sz, 1 - WALL_PCT), ceil = pct(sy, CEIL_PCT);
+    const minX = pct(sx, 1 - WALL_PCT) - MARGIN * spanX, maxX = pct(sx, WALL_PCT) + MARGIN * spanX;
+    const minZ = pct(sz, 1 - WALL_PCT) - MARGIN * spanZ, maxZ = pct(sz, WALL_PCT) + MARGIN * spanZ;
+    const minY = -FLOOR_MARGIN * radius, maxY = ceil + MARGIN * ceil;
+    for (let i = 0; i < count; i++) drawn[i] = lx[i] >= minX && lx[i] <= maxX && ly[i] >= minY && ly[i] <= maxY && lz[i] >= minZ && lz[i] <= maxZ ? 1 : 0;
   }
-  const passBounds = (i: number) => {
-    if (!box || !levelled) return true;
-    const x = levelled[i * 3], y = levelled[i * 3 + 1], z = levelled[i * 3 + 2];
-    return x >= box.minX && x <= box.maxX && y >= box.minY && y <= box.maxY && z >= box.minZ && z <= box.maxZ;
-  };
-
-  const keep = new Uint8Array(count);
-  for (let i = 0; i < count; i++) if (passOpacitySize(i) && passDensity(i) && passBounds(i)) keep[i] = 1;
-  return keep;
+  const collision = new Uint8Array(count);
+  for (let i = 0; i < count; i++) collision[i] = drawn[i] & boxFrom[i];
+  return { drawn, collision, tiltDeg: o.tiltDeg };
 }
 
-/** Which of the splats centred at `centers` are inside the room: the scan levelled as the room
- *  is placed at load (orientScan), and the box round where nearly all of them are (the `wall`
- *  and `ceil` percentiles, plus `margin` of the span), from a little below the floor up.
- *  `tiltDeg` is how far the levelling turned the floor. */
-export function insideRoom(centers: Float32Array, opts: CleanOptions = {}): { keep: Uint8Array; kept: number; tiltDeg: number; orientation: ScanOrientation } {
-  const CEIL_PCT = opts.ceil ?? 0.98;
-  const WALL_PCT = opts.wall ?? 0.99;
-  const MARGIN = opts.margin ?? 0.08;
-  const FLOOR_MARGIN = opts.floorMargin ?? 0.03;
-  const count = centers.length / 3;
-  const keep = new Uint8Array(count).fill(1);
-  const o = orientScan(new THREE.BufferAttribute(centers, 3));
-  if (!(opts.crop ?? true)) return { keep, kept: count, tiltDeg: o.tiltDeg, orientation: o };
-
-  // every splat levelled, and the robust extent of them all
-  const lx = new Float32Array(count), ly = new Float32Array(count), lz = new Float32Array(count);
-  const v = new THREE.Vector3();
-  for (let i = 0; i < count; i++) {
-    v.set(centers[i * 3], centers[i * 3 + 1], centers[i * 3 + 2]).sub(o.center).applyQuaternion(o.quaternion);
-    lx[i] = v.x; ly[i] = v.y + o.floorOffsetY; lz[i] = v.z;
-  }
-  const sx = lx.slice().sort(), sy = ly.slice().sort(), sz = lz.slice().sort();
-  const spanX = pct(sx, WALL_PCT) - pct(sx, 1 - WALL_PCT), spanZ = pct(sz, WALL_PCT) - pct(sz, 1 - WALL_PCT), ceil = pct(sy, CEIL_PCT);
-  const minX = pct(sx, 1 - WALL_PCT) - MARGIN * spanX, maxX = pct(sx, WALL_PCT) + MARGIN * spanX;
-  const minZ = pct(sz, 1 - WALL_PCT) - MARGIN * spanZ, maxZ = pct(sz, WALL_PCT) + MARGIN * spanZ;
-  const minY = -FLOOR_MARGIN * o.radius, maxY = ceil + MARGIN * ceil;
-  let kept = 0;
-  for (let i = 0; i < count; i++) {
-    const inside = lx[i] >= minX && lx[i] <= maxX && ly[i] >= minY && ly[i] <= maxY && lz[i] >= minZ && lz[i] <= maxZ;
-    keep[i] = inside ? 1 : 0;
-    if (inside) kept++;
-  }
-  return { keep, kept, tiltDeg: o.tiltDeg, orientation: o };
-}
-
-/** Clean a scan: the splats inside the room (insideRoom) are drawn; the collision is built from
- *  those that also pass the floater filters (collisionKeep), marked in `collision`. */
+/** Clean a scan: the splats drawn (cleanMasks), in the same form, and which of them the
+ *  collision is built from. */
 export function cleanScan(scan: ParsedScan, opts: CleanOptions = {}): CleanResult {
   const { centers, covariances, colors } = scan;
   const count = centers.length / 3;
   if (count <= 0) throw new Error('The scan has no splats.');
-  const { keep: inside, orientation } = insideRoom(centers, opts);
-  const forCollision = collisionKeep(scan, orientation, opts);
+  const { drawn, collision: forCollision } = cleanMasks(scan, opts);
   const keep: number[] = [];
-  for (let i = 0; i < count; i++) if (inside[i] || forCollision[i]) keep.push(i); // (the two boxes differ a little at the edges)
+  for (let i = 0; i < count; i++) if (drawn[i]) keep.push(i);
   const kept = keep.length;
   const pick = <T extends Float32Array | Uint8ClampedArray | Uint32Array>(src: T, per: number, make: (n: number) => T): T => {
     const out = make(kept * per);

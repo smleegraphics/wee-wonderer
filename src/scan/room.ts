@@ -28,6 +28,9 @@ export let currentFile = DEFAULT_SCAN;
 export let lastCenters: THREE.BufferAttribute | null = null;
 export let lastOpacity: Float32Array | null = null;
 export let lastCov: Float32Array | null = null; // per-splat covariance (6/splat) for anisotropic voxelization
+/** The splats the room's collision is built from, which a rebuild builds from again: those
+ *  drawn, or the part of them an import's cleanup marked (clean-scan-core.ts). */
+export let collisionSplats: { centers: THREE.BufferAttribute; opacity: Float32Array; covariances: Float32Array } | null = null;
 export const lastMatrix = new THREE.Matrix4();
 export let loadToken = 0; // guards against a slow async collision build landing after a scan swap
 /** A new load (or collision rebuild) begins: every one still running is now superseded. */
@@ -227,7 +230,9 @@ async function showScan(source: ScanSource, id: string, token: number, cancelled
   // The splats the collision is built from, and the room levelled by: all of them, or those an
   // import's cleanup marked (it draws more than it builds collision from: clean-scan-core.ts).
   const marked = 'collision' in source ? source.collision : undefined;
-  const solid = marked ? subsetOf(marked, { centers: parsed.centers, opacity, covariances: parsed.covariances }) : { centers: parsed.centers, opacity, covariances: parsed.covariances };
+  const all = { centers: parsed.centers, opacity, covariances: parsed.covariances };
+  const picked = marked && subsetOf(marked, all);
+  const solid = picked && picked.opacity.length ? picked : all; // (none marked: every splat drawn)
   const o = orientScan(new THREE.BufferAttribute(solid.centers, 3));
   // scans have arbitrary unit scales — normalize each to a consistent world
   // size so the fixed-size figurine stays a sensible fraction of every room.
@@ -237,8 +242,9 @@ async function showScan(source: ScanSource, id: string, token: number, cancelled
   room.position.y = k * o.floorOffsetY; // floor at y=0 (in scaled space)
   room.updateMatrixWorld(true);
   const toWorld = new THREE.Matrix4().makeTranslation(-o.center.x, -o.center.y, -o.center.z).premultiply(room.matrixWorld); // the scan recentred on the origin, then the room's transform
-  // Collision first, from the scan as it was captured: where the figurine can stand
-  // decides where splats are added (context/splat-fill.md).
+  // Collision first, from the scan's own splats (an import: those its cleanup marked), before any
+  // are added: where the figurine can stand decides where splats are added (context/splat-fill.md).
+  collisionSplats = null; // (set once the room is in place, below)
   await buildCollision(id, token, new THREE.BufferAttribute(solid.centers, 3), solid.opacity, solid.covariances, toWorld);
   if (token !== loadToken) return; // superseded while building
   // The spawn needs only the collision, and must be decided now, before the next frame:
@@ -252,6 +258,9 @@ async function showScan(source: ScanSource, id: string, token: number, cancelled
   if (token !== loadToken) return; // superseded while filling
   if (walk) reportWalkFill(id, filled, tFill);
   const shown = showSplat(filled, o.center.multiplyScalar(-1), opacity, cellsUsed); // recentred on the origin
+  // What a rebuild builds from: the marked splats, or every splat drawn. (Not `parsed`'s arrays:
+  // the fill above took those over to its worker, and they are empty here now.)
+  collisionSplats = picked && picked.opacity.length ? { centers: new THREE.BufferAttribute(picked.centers, 3), opacity: picked.opacity, covariances: picked.covariances } : { centers: shown.centers, opacity, covariances: shown.cov };
   // The walkable cells may have been rebuilt while the fill was being worked out (the
   // figurine arriving gives them its real height), when there was no splat to refill.
   void refillWalkable();

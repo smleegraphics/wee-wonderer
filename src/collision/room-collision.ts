@@ -11,7 +11,7 @@ import { workerCaller } from '../worker-call';
 import { SCANS } from '../scan/scans';
 import { GRAIN, hud, MESHONLY, num, q, scene, TARGET_RADIUS, VOXEL_SIZE } from '../app';
 import { charH } from '../figurine/character';
-import { isImported, currentFile, lastCenters, lastCov, lastMatrix, lastOpacity, loadToken, newLoadToken, scanLoading } from '../scan/room';
+import { collisionSplats, isImported, currentFile, lastMatrix, loadToken, newLoadToken, scanLoading } from '../scan/room';
 import { refillWalkable } from '../scan/walk-fill';
 
 /** The spacing of the walkable cells: a grain, however fine the collision grid is. (Coarser
@@ -206,9 +206,9 @@ export async function buildCollision(file: string, token: number, centers: THREE
  *  and bumping loadToken would tell the load it had been replaced, so that it never ends.
  *  The load builds collision itself, and catches up afterwards if the settings moved. */
 export function rebuildCollision(): void {
-  if (scanLoading || !lastCenters || !lastOpacity) return;
+  if (scanLoading || !collisionSplats) return;
   disposeCollision();
-  buildCollision(currentFile, newLoadToken(), lastCenters, lastOpacity, lastCov, lastMatrix)
+  buildCollision(currentFile, newLoadToken(), collisionSplats.centers, collisionSplats.opacity, collisionSplats.covariances, lastMatrix) // (the splats it was built from, not all of those drawn)
     .catch((err: unknown) => hud.status(err instanceof Error ? err.message : String(err), 'error'));
 }
 

@@ -542,18 +542,21 @@ mind (open: a bumpiness that does not depend on the grid's alignment).
 
 ## Scan cleanup
 
-**Two sets of splats, from one pass** (`src/scan/clean-scan-core.ts`, on import in a worker):
+**Two sets of splats, from one pass** (`cleanMasks` in `src/scan/clean-scan-core.ts`, on import
+in a worker, and offline in `scripts/clean-scan.mjs`, which reads and cleans a `.ply` with the
+same code through Vite):
 
-- **What is drawn** (`insideRoom`): the scan levelled, less the splats outside the room box:
-  past the walls, above the ceiling, below the floor. The box is the 1st-99th percentile of
-  every splat's levelled position across (98th up), plus 8% slack. It keeps 94 to 98% of a
-  scan (Counter 94.0%, Living Room 97.2%, Kitchen 93.8%, SpAItial's cozy room 97.6%).
-- **What the collision is built from, and the room levelled by** (`collisionKeep`): those
-  that also pass the floater filters: opacity (`alphaMin 0.35`), size (under 4x the median),
-  and density (opacity in their voxel, `minMass 4`), inside the box round what passes. These
-  are the old cleanup's filters, unchanged, so the collision is too (the cozy room imported:
-  the same start, 52.7% walkable from it, 88% with jumps; `collisioncheck` nothing worse).
-  `room.ts` builds the collision from the splats an import marks (`ScanSource.collision`).
+- **The floater filters** pick the solid splats: opacity at least `alphaMin` (0.35), size
+  under 4x the median, and in a voxel with at least `minMass` (4) of opacity among them.
+- **The room box** is worked out once, from the solid splats' levelled positions: the
+  1st-99th percentile across (98th up), plus 8% slack, from a little below the floor.
+- **What is drawn:** every splat inside the box, solid or not. It keeps 94 to 98% of a scan.
+- **What the collision is built from, and the room levelled by:** the drawn splats that are
+  also solid: exactly what the old cleanup kept (the cozy room imported: the same start,
+  52.7% walkable from it, 88% with jumps; `collisioncheck` nothing worse). `room.ts` builds
+  from what an import marks (`ScanSource.collision`) and keeps it (`collisionSplats`) for a
+  rebuild from a Debug slider, which otherwise rebuilt from every drawn splat. If the filters
+  leave nothing, the box and the collision use every splat.
 
 **Why two:** measured, one filter at a time, raw against cleaned:
 
@@ -572,15 +575,15 @@ mind (open: a bumpiness that does not depend on the grid's alignment).
 - **Without even the crop, collision fails:** raw Living Room's far-off spray stretches the
   collision's grid; it came out with 11k triangles instead of 107k and 0.5% walkable from
   spawn.
-- **Speed:** the cozy room (4.7M splats) draws in 43 ms raw, 33 ms cropped (what is drawn
-  now), 17 ms with the old cleaning (60 fps cap; 1440 x 900 at ratio 2): the size filter
+- **Speed:** the cozy room (4.7M splats) draws in 43 ms raw, 33 ms cropped to a box from every
+  splat (what is drawn now crops to the solid splats' box, a little tighter), 17 ms with the old cleaning (60 fps cap; 1440 x 900 at ratio 2): the size filter
   bought that by deleting its walls. Counter and Living Room draw at the cap either way. A
   splat budget for heavy scans is a separate step (not done).
 
 **Scans loaded by name do not have two sets yet.** The shipped scans on the scan host are the
 old cleanup's files (holes and all), and a file loaded by name builds its collision from
-every splat in it. `scripts/clean-scan.mjs` crops a `.ply` the way the drawn set is cropped
-(`insideRoom`, loaded through Vite), but a scan re-cleaned with it and shipped would build
+every splat in it. `scripts/clean-scan.mjs` keeps a `.ply`'s drawn set, but a scan re-cleaned
+with it and shipped would build
 its collision from the crop alone: worse, as above (Kitchen). Shipping crop-only files waits
 on the collision filters running at load (and measuring what that costs).
 
