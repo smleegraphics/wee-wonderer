@@ -37,29 +37,29 @@ numbers repeat exactly. `--with key=value` tries a setting without saving it (an
 Lengths and areas are in grains (see "Sizes are in grains" below), not cells of whatever
 grid is in use, so numbers compare across grid sizes.
 
-Baseline (SCHEMA g35, default settings, the `*-crop` files, collision floater-filtered at load; Playroom is built at mesh detail 2, the rest at 1):
+Baseline (SCHEMA g36, default settings, the `*-crop` files, collision floater-filtered at load; Playroom is built at mesh detail 2, the rest at 1):
 
 | | Living Room | Counter | Kitchen | Playroom | Marishka |
 |---|---|---|---|---|---|
-| Walkable area (grains²) | 9,567 | 4,421 | 4,739 | 16,655 | 11,125 |
-| Platforms (of 40 grains² or more) | 80 (20) | 66 (19) | 41 (13) | 113 (34) | 17 (7) |
-| Cells on small perches | 9.2% | 15.4% | 9.3% | 7.6% | 1.4% |
-| Cells reached from spawn by walking | 49.5% | 43.4% | 71.2% | 53.8% | 80.2% |
-| ...and jumping or dropping | 100.0% | 97.3% | 89.9% | 100.0% | 99.9% |
-| ...and climbing the mesh's faces | 100.0% | 97.8% | 89.9% | 100.0% | 99.9% |
-| ...if every meeting of surfaces had a face | 100.0% | 100.0% | 89.9% | 100.0% | 99.9% |
-| Real platforms no face could join | 0 | 0 | 4 | 0 | 0 |
-| Area a climb can start from (grains²) | 1,337 | 521 | 361 | 2,657 | 741 |
-| Holes in the spawn surface | 1.2% | 9.7% | 4.8% | 3.8% | 1.1% |
-| Spawn surface cells on an edge | 12.2% | 16.2% | 11.1% | 10.8% | 6.3% |
-| Spawn surface fills its convex outline | 67.1% | 85.4% | 81.5% | 83.5% | 87.7% |
-| Spawn surface roughness (slope) | 0.12 | 0.40 | 0.05 | 0.00 | 0.58 |
-| Triangles | 103,208 | 47,284 | 39,312 | 731,156 | 102,996 |
-| Mesh pieces | 31 | 43 | 32 | 32 | 14 |
-| Mesh bumpiness | 0.086 | 0.097 | 0.113 | 0.084 | 0.100 |
-| Mesh to nearest opaque splat, median / 90th pct (grains) | 0.52 / 0.86 | 0.51 / 0.91 | 0.42 / 0.80 | 0.41 / 0.84 | 0.53 / 0.81 |
-| Opaque splats with no mesh within 2 grains | 15.7% | 22.0% | 25.5% | 2.5% | 12.7% |
-| Sight lines that meet no collision | 32.8% | 42.8% | 43.4% | 22.2% | 43.5% |
+| Walkable area (grains²) | 11,487 | 5,186 | 4,796 | 16,655 | 11,125 |
+| Platforms (of 40 grains² or more) | 68 (26) | 60 (20) | 64 (13) | 113 (34) | 17 (7) |
+| Cells on small perches | 4.9% | 10.5% | 15.2% | 7.6% | 1.4% |
+| Cells reached from spawn by walking | 52.5% | 33.0% | 52.8% | 53.8% | 80.2% |
+| ...and jumping or dropping | 96.9% | 96.3% | 95.1% | 100.0% | 99.9% |
+| ...and climbing the mesh's faces | 100.0% | 99.8% | 95.1% | 100.0% | 99.9% |
+| ...if every meeting of surfaces had a face | 100.0% | 99.8% | 95.1% | 100.0% | 99.9% |
+| Real platforms no face could join | 0 | 0 | 0 | 0 | 0 |
+| Area a climb can start from (grains²) | 1,997 | 715 | 463 | 2,657 | 741 |
+| Holes in the spawn surface | 2.5% | 10.6% | 1.4% | 3.8% | 1.1% |
+| Spawn surface cells on an edge | 12.0% | 20.1% | 12.2% | 10.8% | 6.3% |
+| Spawn surface fills its convex outline | 79.2% | 83.1% | 82.1% | 83.5% | 87.7% |
+| Spawn surface roughness (slope) | 0.09 | 0.38 | 0.19 | 0.00 | 0.58 |
+| Triangles | 123,172 | 61,296 | 185,472 | 731,156 | 102,996 |
+| Mesh pieces | 11 | 33 | 47 | 32 | 14 |
+| Mesh bumpiness | 0.084 | 0.112 | 0.135 | 0.084 | 0.100 |
+| Mesh to nearest opaque splat, median / 90th pct (grains) | 0.56 / 0.94 | 0.54 / 0.90 | 0.53 / 0.96 | 0.41 / 0.84 | 0.53 / 0.81 |
+| Opaque splats with no mesh within 2 grains | 9.8% | 14.5% | 18.5% | 2.5% | 12.7% |
+| Sight lines that meet no collision | 28.6% | 39.0% | 42.9% | 22.2% | 43.5% |
 
 How far each number can be trusted:
 
@@ -551,12 +551,15 @@ same code through Vite):
 - **The room box** is worked out once, from the solid splats' levelled positions: the
   1st-99th percentile across (98th up), plus 8% slack, from a little below the floor.
 - **What is drawn:** every splat inside the box, solid or not. It keeps 94 to 98% of a scan.
-- **What the collision is built from, and the room levelled by:** the drawn splats that are
-  also solid: for an import, exactly what the old cleanup kept (the cozy room imported: the same start,
-  52.7% walkable from it, 88% with jumps; `collisioncheck` nothing worse). `room.ts` builds
-  from what an import marks (`ScanSource.collision`) and keeps it (`collisionSplats`) for a
-  rebuild from a Debug slider, which otherwise rebuilt from every drawn splat. If the filters
-  leave nothing, the box and the collision use every splat.
+- **What the collision is built from, and the room levelled by:** the drawn splats less the big
+  floaters: those over the size cap, unless flat and solid (at most `FLAT_MAX` 0.1 as thick as
+  wide, at least `SOLID_MIN` 0.5 opaque: a tile of a wall or floor). Not the opacity or density
+  filters: the voxelizer already weighs each splat by its opacity and leaves thin space empty,
+  and filtering first also took the faint and sparse splats walls are made of (below, "See it
+  but cannot touch it"). `room.ts` builds from what is marked (`ScanSource.collision`, or the
+  load worker's) and keeps it (`collisionSplats`) for a rebuild from a Debug slider, which
+  otherwise rebuilt from every drawn splat. If the filters leave nothing, the box uses every
+  splat.
 
 **Why two:** measured, one filter at a time, raw against cleaned:
 
@@ -598,16 +601,44 @@ Measured, the new files against the old floater-stripped ones (`*-clean.spz`):
 | | Living Room | Counter | Kitchen |
 |---|---|---|---|
 | See-through, share of the view (`holes.mjs`) | 25.1% → 2.3% | 8.5% → 2.0% | 25.6% → 12.1% (raw 15.1%) |
-| Walkable from spawn | 47.7% → 49.5% | 40.5% → 43.4% | 54.4% → 71.2% |
-| ...and by jumping or dropping | 99.7% → 100% | 72.6% → 97.3% | 95.0% → 89.9% |
-| Holes in the spawn surface | 1.6% → 1.2% | 8.8% → 9.7% | 2.2% → 4.8% |
-| Real platforms nothing reaches | 0 → 0 | 0 → 0 | 0 → 4 |
+| Visible splats with no collision near | 7.9% → 9.8% | 10.6% → 14.5% | 13.4% → 18.5% |
+| Walkable from spawn | 47.7% → 52.5% | 40.5% → 33.0% | 54.4% → 52.8% |
+| ...and by jumping or dropping | 99.7% → 96.9% | 72.6% → 96.3% | 95.0% → 95.1% |
+| Holes in the spawn surface | 1.6% → 2.5% | 8.8% → 10.6% | 2.2% → 1.4% |
+| Real platforms nothing reaches | 0 → 0 | 0 → 0 | 0 → 0 |
 
-The collision is not the old one exactly: the filters now run on the cropped file, not the raw
-one, so the median size and the density grid they measure against shift. Mostly better; Kitchen
-is mixed. "Opaque splats with no mesh near" rises on every scan (Living Room 7.9% to 15.7%):
-it is measured against what is drawn, which now includes the big and faint splats the
-collision leaves out, so it no longer compares with the old figure.
+"Visible splats with no collision near" counts what is drawn, which is now far more (the old
+files had dropped the faint and big splats from both), so it rises; against the same drawn
+splats, the collision built from all three floater filters left 15.7%, 21.8% and 25.6% (see
+below). Walkable from spawn falls on Counter and Kitchen because more of what is seen is solid:
+objects now split the floor the figurine starts on.
+
+**See it but cannot touch it.** With the floater filters choosing the collision, a quarter of
+Kitchen's visible splats had no collision near them, mostly on walls. Of those uncovered splats,
+left out as faint 24-28%, as sparse 25-31%, as too big 10-14%, and kept but given no surface by
+the voxelizer 33-35%. One filter off at a time (Living Room / Counter / Kitchen, visible with no
+collision near, then reach with jumps):
+
+| | Uncovered | With jumps |
+|---|---|---|
+| All three filters | 15.7 / 21.8 / 25.6% | 100 / 97.3 / 89.9% |
+| No opacity filter | 14.1 / 18.5 / 21.8% | 97.1 / 95.3 / 98.3% |
+| No size filter | 14.6 / 19.0 / 24.1% | 99.8 / 75.2 / 80.7% (Kitchen: 6 surfaces nothing reaches) |
+| No density filter | 11.0 / 17.4 / 23.2% | 98.9 / 96.6 / 98.0% |
+| Size filter alone | 9.0 / 14.3 / 17.3% | 96.7 / 96.8 / 94.1% |
+| Size filter alone, flat solid big splats kept (what is used) | 8.5 / 12.8 / 16.9% | 97.7 / 96.9 / 94.9% |
+
+(Those runs also worked the room box out from the same filters; with the box from all three,
+as used, it is 9.8 / 14.5 / 18.5%.) The size filter is what keeps the collision whole: big round
+splats in the captures make solid lumps in mid-air. What is left uncovered (8 to 18%) is now
+mostly the voxelizer's: 54 to 70% of it is splats in the collision set that made no surface (thin
+surfaces under its density threshold). Not fixed yet.
+
+In the cozy room (Record Player Table), nearly all its big splats are flat and solid, so its
+collision takes almost every splat (4,222,712 of 4,250,407): its floor gained a fifth more
+walkable cells, and the top of its ceiling, 22 body heights up, became one walkable surface of
+5,623 cells, which "with jumps" counts (87.5% → 70.3%) though nothing in the room was lost
+(climbing reaches 100%). Visible with no collision near: 7.2%.
 
 **Costs:** loading (to the room arriving, headless): Kitchen 1.5-1.7 s → 1.8 s, Record Player
 Table 8.5 s → 9.5 s. Files: about twice the size (Kitchen 3.1 → 5.6 MB; Record Player Table
