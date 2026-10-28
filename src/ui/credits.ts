@@ -27,7 +27,7 @@ const CREDITS: Credit[] = [
     who: ['From the ', { text: 'Mip-NeRF 360', href: 'https://jonbarron.info/mipnerf360/' }, ' dataset by Barron, Mildenhall, Verbin, Srinivasan and Hedman (Google), ', CC_BY],
     note: ['Trained into splats with msplat by ', { text: 'alexmkwizu', href: 'https://huggingface.co/datasets/alexmkwizu/gaussian_training_datasets' }, ', then cleaned and converted for this site'],
   },
-  { what: 'Curled Up Dog', who: ['Captured by Samantha Lee'] },
+  { what: 'Record Player Table', who: ['Captured by Samantha Lee, with SpAItial'] },
   { what: 'Type', who: ['Pixelify Sans and Patrick Hand SC, ', { text: 'SIL Open Font License', href: 'https://openfontlicense.org' }] },
   { what: 'Built with', who: [{ text: 'three.js', href: 'https://threejs.org' }] },
 ];

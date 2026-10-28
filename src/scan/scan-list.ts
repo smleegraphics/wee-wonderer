@@ -28,7 +28,8 @@ export const SCANS: ScanEntry[] = [
   { file: 'kitchen-clean.spz', label: 'Kitchen', listed: true }, // Mip-NeRF 360, floater-stripped (scripts/clean-scan.mjs)
   { file: 'livingroom-clean.spz', label: 'Living Room', listed: true },
   { file: 'counter-clean.spz', label: 'Counter', listed: true },
-  { file: 'Marishka-clean.spz', label: 'Curled Up Dog', listed: true }, // a scan of our own: a dog on a blanket, the kind of capture a visitor brings
+  { file: 'record-player-table-clean.spz', label: 'Record Player Table', listed: true }, // our own, made with SpAItial: a sideboard with a record player, plants and a guitar. Floater-stripped like the others (scripts/clean-scan.mjs)
+  { file: 'Marishka-clean.spz', label: 'Curled Up Dog', listed: false }, // our own capture: a dog on a blanket, the kind of capture a visitor brings. No longer shipped (Record Player Table took its place); kept for the checks that measure on it (a soft scan with no flat ground)
   { file: 'room2.ply', label: 'Playroom', listed: false, collision: { floorFlat: 2 } }, // not shipped: its licence is unclear. Kept for the checks that measure on it. Already tightly bounded — no cleanup needed. Its rug is uneven: ridges of it stand above the usual 1.5 grains and were left as bumps on the floor
 ];
 

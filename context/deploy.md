@@ -27,7 +27,8 @@ purpose:** their addresses are not allowed, and they do not need scans. Do not w
 | Scan | Source |
 |---|---|
 | Kitchen, Living Room, Counter | Mip-NeRF 360's `kitchen`, `room`, `counter` (CC BY 4.0), trained with msplat by alexmkwizu: `https://huggingface.co/datasets/alexmkwizu/gaussian_training_datasets/resolve/main/tested_outputs/{kitchen,room,counter}.ply`, downloaded 2026-09-20 |
-| Curled Up Dog | Samantha Lee's own capture |
+| Record Player Table | Samantha Lee's own capture, made with SpAItial (`Cozy_room_with_music_and_plants.spz`, exported from SpAItial on 2026-10-27) |
+| Curled Up Dog (no longer shipped) | Samantha Lee's own capture |
 | Playroom (unlisted) | Deep Blending's `playroom` from `huggingface.co/datasets/Voxel51/gaussian_splatting` (`FO_dataset/playroom/point_cloud/iteration_30000/point_cloud.ply`); licence unstated, so never shipped |
 
 The downloads were made with `curl`, which leaves no "Where from" on the file; they were
@@ -47,7 +48,8 @@ That writes SPZ version 4 (zstd). Measured file sizes, `.ply` → `.spz`:
 | Kitchen | 40.3 → 3.1 MB |
 | Living Room | 33.4 → 2.2 MB |
 | Counter | 30.7 → 2.3 MB |
-| Curled Up Dog | 30.9 → 2.8 MB |
+| Curled Up Dog (no longer shipped) | 30.9 → 2.8 MB |
+| Record Player Table | 148.8 → 39.4 MB (2.66 million splats, about ten times the others) |
 
 Unpacking in the worker went from about 500 ms to about 45 ms. They look the same as the `.ply` side by side. SPZ rounds positions (by at most
 1.2e-4 scan units here), which moves Kitchen's collision a little
