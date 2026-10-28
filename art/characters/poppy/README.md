@@ -15,6 +15,11 @@ frame longer).
   her idle at frame 7. Her legs are rigid blocks: spreading them raises her body, not lowers
   it, so they stay straight. Made for this project.
 
+- **`hang`** (the action `hang_poppy_forward`): 24 frames, looping, for hanging from a lip. Her
+  arms point forward at chest height, gripping; her legs swing a little. Her head is wider than her
+  rigid arms reach: every raised-arm pose put 35 to 120 arm vertices in her hair
+  (`art/tools/pose_check.py`); this one leaves 12 under her hair line, which do not show.
+
 ## Putting a clip from here into the game
 
 1. In Blender, put the clip on an NLA track of its own and export the armature and meshes as

@@ -14,6 +14,9 @@ in by bone name, compare).
   pulling with its elbow bent, legs stepping against them, the spine turning 3 degrees each way.
   Checked every frame: no hand past the wall the game holds the body from (1.1 radii), no forearm
   or hand inside the skull. Made for this project.
+- **`hang`** (the action `hang_skeleton`): 24 frames, looping. Both arms up and out past the skull,
+  legs hanging with a little bend and swing. No arm vertex inside the skull; its upper arms rise
+  from under its cloak (`art/tools/pose_check.py` counts those as inside the body).
 
 The skull itself reaches about 0.12 past that wall line (its collision radius is 0.14 of its
 height); that is its proportions, not the animation.

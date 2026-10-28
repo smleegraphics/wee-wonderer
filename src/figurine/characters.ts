@@ -49,7 +49,7 @@ export const CHARACTERS: CharacterEntry[] = [
     thumb: 'characters/chibi.webp',
     height: 0.45,
     radius: 0.22,
-    clips: { idle: 'idle', walk: 'walk', sprint: 'run', jumpStart: 'jump_start', fall: 'jump_loop', land: 'land', climb: 'climb' },
+    clips: { idle: 'idle', walk: 'walk', sprint: 'run', jumpStart: 'jump_start', fall: 'jump_loop', land: 'land', climb: 'climb', ledgeHang: 'hang' },
     climbs: true,
     abilities: ['doubleJump'],
     tune: {},
@@ -66,7 +66,7 @@ export const CHARACTERS: CharacterEntry[] = [
     height: 0.45,
     radius: 0.14, // body width at mid height 0.36 of its height, against the chibi's 0.58 at radius 0.22
     clips: {
-      idle: 'Idle', walk: 'Walking_A', sprint: 'Running_A', jumpStart: 'Jump_Start', fall: 'Jump_Idle', land: 'Jump_Land', climb: 'climb',
+      idle: 'Idle', walk: 'Walking_A', sprint: 'Running_A', jumpStart: 'Jump_Start', fall: 'Jump_Idle', land: 'Jump_Land', climb: 'climb', ledgeHang: 'hang',
     },
     climbs: true,
     abilities: ['doubleJump'],
@@ -84,7 +84,7 @@ export const CHARACTERS: CharacterEntry[] = [
     height: 0.45,
     radius: 0.25, // body width at mid height 0.65 of its height (the big head and hair), against the chibi's 0.58 at radius 0.22
     clips: {
-      idle: 'idle', walk: 'walk', sprint: 'sprint', jumpStart: 'jump', fall: 'fall', land: 'land', climb: 'climb',
+      idle: 'idle', walk: 'walk', sprint: 'sprint', jumpStart: 'jump', fall: 'fall', land: 'land', climb: 'climb', ledgeHang: 'hang',
     },
     climbs: true,
     abilities: ['doubleJump'],

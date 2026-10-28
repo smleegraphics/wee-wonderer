@@ -13,6 +13,10 @@ left out (they ship only inside `public/characters/chibi.glb`, as before).
   easing into its idle at frame 7. Arms are
   posed by where their joints are (shoulder to elbow, elbow to wrist): on this imported rig the
   bones' own direction does not follow the limb. Made for this project.
+- **`hang`** (the action `hang_chibi`): 24 frames, looping. Both arms swung up sideways in the body's
+  plane (no twist) to 30 degrees above level, the highest with nothing inside its head
+  (`art/tools/pose_check.py`: 35 puts 6 vertices in); legs swinging a little. Its armature's own
+  axes are not the world's (its y is up), so bones are turned about world axes.
 
 Tried and dropped: squash from the hips (on this rig a scale on the hips made it taller, not
 shorter) and a crouch with the knees bent by Blender's IK (it moved the feet off the ground even at
