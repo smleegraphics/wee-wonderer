@@ -45,7 +45,10 @@ const PLANE_BAND = 0.012;    // radii: how far from a plane a point still counts
 const NEAR = 0.1;            // radii: where a try's other two points come from. About 8 bands wide, so three points span enough of the surface to fix its tilt
 const FLOOR_SHARE_MIN = 0.02; // the smallest floor, as a share of the sample, the search is sized for
 const MISS_ODDS = 1e-6;      // the chance it may miss a floor that small
-const TRIES = Math.ceil(Math.log(MISS_ODDS) / Math.log(1 - FLOOR_SHARE_MIN)); // 684
+const TRIES = Math.ceil(Math.log(MISS_ODDS) / Math.log(1 - FLOOR_SHARE_MIN)); // 684 tries that make a plane (a draw that cannot is not counted)
+const DRAWS_MAX = TRIES * 20; // draws at most: a scan too sparse for even this many to make TRIES planes has no floor to find
+const NEIGHBOUR_DRAWS = 32;   // cells drawn round a point for a neighbour before it counts as having none
+const CELLS_OUT = 500;        // cells of the neighbour grid from the centre each way (50 radii): a point beyond is spray, not the floor
 const REFITS_MAX = 20;       // refits of the found plane, at most (it settles in a few)
 const SETTLED = THREE.MathUtils.degToRad(0.01); // a refit that turns the plane less than this: done
 const CANDIDATES = 8;        // the tries' best planes kept to refit and compare
@@ -58,12 +61,18 @@ function ransacFloorNormal(P: THREE.Vector3[], r: number, rng: () => number, max
   const thresh = r * PLANE_BAND, near = r * NEAR;
   const minCos = Math.cos(THREE.MathUtils.degToRad(maxTiltDeg));
   // the points by cell of a grid `near` wide, to draw a point's neighbours from
-  const cells = new Map<number, number[]>(), cellOf = (x: number, y: number, z: number) => ((Math.floor(x / near) + 512) * 1024 + Math.floor(y / near) + 512) * 1024 + Math.floor(z / near) + 512;
-  P.forEach((p, i) => { const k = cellOf(p.x, p.y, p.z), c = cells.get(k); if (c) c.push(i); else cells.set(k, [i]); });
+  // (a cell's key packs its three indices, each within ±CELLS_OUT, so no two cells share one)
+  const W = 2 * CELLS_OUT + 1, inGrid = (i: number) => Math.abs(i) <= CELLS_OUT;
+  const cellOf = (x: number, y: number, z: number) => {
+    const ix = Math.floor(x / near), iy = Math.floor(y / near), iz = Math.floor(z / near);
+    return inGrid(ix) && inGrid(iy) && inGrid(iz) ? ((ix + CELLS_OUT) * W + iy + CELLS_OUT) * W + iz + CELLS_OUT : -1;
+  };
+  const cells = new Map<number, number[]>();
+  P.forEach((p, i) => { const k = cellOf(p.x, p.y, p.z); if (k < 0) return; const c = cells.get(k); if (c) c.push(i); else cells.set(k, [i]); });
   /** A point from the cells round `a`, further from it than a third of `near` and nearer than
    *  `near` (far enough to tilt a plane, not just its own splat's noise); null after a few misses. */
   const neighbour = (a: THREE.Vector3): THREE.Vector3 | null => {
-    for (let t = 0; t < 32; t++) {
+    for (let t = 0; t < NEIGHBOUR_DRAWS; t++) {
       const c = cells.get(cellOf(a.x + (((rng() * 3) | 0) - 1) * near, a.y + (((rng() * 3) | 0) - 1) * near, a.z + (((rng() * 3) | 0) - 1) * near));
       if (!c) continue;
       const q = P[c[(rng() * c.length) | 0]], d = q.distanceTo(a);
@@ -77,11 +86,12 @@ function ransacFloorNormal(P: THREE.Vector3[], r: number, rng: () => number, max
   // near-ties (a soft blanket's many nearly flat patches) flipped with any change to the input.
   const found: { n: THREE.Vector3; off: number; count: number }[] = [];
   const step = Math.max(1, Math.floor(P.length / 8000));
-  for (let iter = 0; iter < TRIES; iter++) {
+  for (let tries = 0, draws = 0; tries < TRIES && draws < DRAWS_MAX; draws++) {
     const a = P[(rng() * P.length) | 0], b = neighbour(a), c = b && neighbour(a);
     if (!b || !c) continue;
     e1.subVectors(b, a); e2.subVectors(c, a); nrm.crossVectors(e1, e2);
-    if (nrm.lengthSq() < (near * near / 9) ** 2 * SPREAD_MIN) continue; // (the three nearly in a line: no tilt to read)
+    if (nrm.lengthSq() < e1.lengthSq() * e2.lengthSq() * SPREAD_MIN) continue; // (the three nearly in a line: no tilt to read)
+    tries++; // a plane: a try, whatever it turns out to be
     nrm.normalize();
     if (nrm.y < 0) nrm.negate();
     if (nrm.y < minCos) continue;
@@ -97,6 +107,9 @@ function ransacFloorNormal(P: THREE.Vector3[], r: number, rng: () => number, max
   let best = found[0], bestCount = -1;
   for (const f of found) {
     refitPlane(P, f, thresh);
+    if (f.n.y < 0) { f.n.negate(); f.off = -f.off; }
+    // (Not held to the tilt window after refitting: the window says where tries start, not where a
+    // floor may be. Kitchen's floor is 37.7° from its file's up; a try within the window refits onto it.)
     let count = 0;
     for (const q of P) if (Math.abs(f.n.dot(q) - f.off) < thresh) count++;
     if (count > bestCount) { bestCount = count; best = f; }
@@ -113,7 +126,7 @@ function refitPlane(P: THREE.Vector3[], plane: { n: THREE.Vector3; off: number }
   let off = plane.off;
   for (let pass = 0; pass < REFITS_MAX; pass++) {
     was.copy(best);
-    u.set(1, 0, 0).cross(best); if (u.lengthSq() < 1e-6) u.set(0, 0, 1).cross(best); u.normalize(); v.crossVectors(best, u);
+    u.set(1, 0, 0).cross(best); if (u.lengthSq() < 0.5) u.set(0, 0, 1).cross(best); u.normalize(); v.crossVectors(best, u); // (two axes in the plane, from whichever of x and z is further from its normal)
     let suu = 0, suv = 0, svv = 0, su = 0, sv = 0, sw = 0, suw = 0, svw = 0, n = 0;
     for (const p of P) {
       const w = best.dot(p) - off;
@@ -125,7 +138,7 @@ function refitPlane(P: THREE.Vector3[], plane: { n: THREE.Vector3; off: number }
     // w = α u + β v + γ, by the normal equations
     const M = [[suu, suv, su], [suv, svv, sv], [su, sv, n]], rhs = [suw, svw, sw];
     const det3 = (m: number[][]) => m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
-    const D = det3(M); if (Math.abs(D) < 1e-18) break;
+    const D = det3(M); if (D === 0) break; // (all its points in a line: nothing to fit)
     const col = (k: number) => M.map((row, i) => row.map((x, j) => (j === k ? rhs[i] : x)));
     const alpha = det3(col(0)) / D, beta = det3(col(1)) / D, gamma = det3(col(2)) / D;
     // the fitted plane, best·p = off + α u·p + β v·p + γ, as a unit normal and its offset

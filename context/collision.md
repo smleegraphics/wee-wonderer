@@ -37,29 +37,29 @@ numbers repeat exactly. `--with key=value` tries a setting without saving it (an
 Lengths and areas are in grains (see "Sizes are in grains" below), not cells of whatever
 grid is in use, so numbers compare across grid sizes.
 
-Baseline (SCHEMA g33, default settings; Playroom is built at mesh detail 2, the rest at 1):
+Baseline (SCHEMA g34, default settings; Playroom is built at mesh detail 2, the rest at 1):
 
 | | Living Room | Counter | Kitchen | Playroom | Marishka |
 |---|---|---|---|---|---|
-| Walkable area (grains²) | 9,652 | 4,565 | 4,575 | 16,772 | 10,846 |
-| Platforms (of 40 grains² or more) | 88 (21) | 73 (15) | 61 (17) | 113 (34) | 22 (8) |
-| Cells on small perches | 12.2% | 18.1% | 15.1% | 7.6% | 2.0% |
-| Cells reached from spawn by walking | 47.7% | 40.9% | 54.7% | 54.1% | 82.4% |
-| ...and jumping or dropping | 99.7% | 75.3% | 95.6% | 100.0% | 99.9% |
-| ...and climbing the mesh's faces | 99.7% | 97.4% | 95.6% | 100.0% | 99.9% |
-| ...if every meeting of surfaces had a face | 99.8% | 100.0% | 95.6% | 100.0% | 99.9% |
+| Walkable area (grains²) | 9,652 | 4,643 | 4,588 | 16,655 | 11,125 |
+| Platforms (of 40 grains² or more) | 88 (21) | 71 (15) | 59 (17) | 113 (34) | 17 (7) |
+| Cells on small perches | 12.2% | 20.7% | 15.3% | 7.6% | 1.4% |
+| Cells reached from spawn by walking | 47.7% | 40.5% | 54.4% | 53.8% | 80.2% |
+| ...and jumping or dropping | 99.7% | 72.6% | 95.0% | 100.0% | 99.9% |
+| ...and climbing the mesh's faces | 99.7% | 97.3% | 95.0% | 100.0% | 99.9% |
+| ...if every meeting of surfaces had a face | 99.8% | 99.7% | 95.0% | 100.0% | 99.9% |
 | Real platforms no face could join | 0 | 0 | 0 | 0 | 0 |
-| Area a climb can start from (grains²) | 1,462 | 545 | 416 | 2,672 | 865 |
-| Holes in the spawn surface | 1.6% | 9.6% | 2.2% | 3.8% | 0.5% |
-| Spawn surface cells on an edge | 13.9% | 19.3% | 12.0% | 10.8% | 6.1% |
-| Spawn surface fills its convex outline | 66.0% | 80.9% | 83.3% | 83.5% | 91.1% |
-| Spawn surface roughness (slope) | 0.12 | 0.32 | 0.11 | 0.00 | 0.61 |
-| Triangles | 106,568 | 50,732 | 40,432 | 730,820 | 103,700 |
-| Mesh pieces | 34 | 43 | 47 | 32 | 14 |
-| Mesh bumpiness | 0.096 | 0.137 | 0.117 | 0.084 | 0.112 |
-| Mesh to nearest opaque splat, median / 90th pct (grains) | 0.58 / 0.97 | 0.56 / 0.96 | 0.54 / 1.24 | 0.41 / 0.83 | 0.53 / 0.79 |
-| Opaque splats with no mesh within 2 grains | 7.9% | 10.6% | 13.4% | 2.5% | 11.5% |
-| Sight lines that meet no collision | 31.3% | 43.1% | 42.8% | 22.2% | 43.5% |
+| Area a climb can start from (grains²) | 1,462 | 561 | 402 | 2,657 | 741 |
+| Holes in the spawn surface | 1.6% | 8.8% | 2.2% | 3.8% | 1.1% |
+| Spawn surface cells on an edge | 13.9% | 18.7% | 12.1% | 10.8% | 6.3% |
+| Spawn surface fills its convex outline | 66.0% | 81.8% | 83.8% | 83.5% | 87.7% |
+| Spawn surface roughness (slope) | 0.12 | 0.37 | 0.10 | 0.00 | 0.58 |
+| Triangles | 106,568 | 50,608 | 40,076 | 731,156 | 102,996 |
+| Mesh pieces | 34 | 40 | 46 | 32 | 14 |
+| Mesh bumpiness | 0.096 | 0.103 | 0.119 | 0.084 | 0.100 |
+| Mesh to nearest opaque splat, median / 90th pct (grains) | 0.58 / 0.97 | 0.56 / 0.95 | 0.54 / 1.24 | 0.41 / 0.84 | 0.53 / 0.81 |
+| Opaque splats with no mesh within 2 grains | 7.9% | 10.5% | 13.3% | 2.5% | 12.7% |
+| Sight lines that meet no collision | 31.3% | 43.6% | 42.3% | 22.2% | 43.5% |
 
 How far each number can be trusted:
 
@@ -511,7 +511,7 @@ splats (SpAItial's "Cozy room"), 500 tries missed it, and the room came in 25° 
 the figurine trapped on a strip of floor. Seeding made that repeatable, not safe: the same
 file imported (cleaned in the browser) failed and cleaned offline worked, because the two
 cleaners keep slightly different splats. Measured over 20 runs, each without a different
-5% of the splats: the old search was off by over 1° in 13 (your room, worst 30°), 10
+5% of the splats: the old search was off by over 1° in 13 (the cozy room, worst 30°), 10
 (Living Room, worst 18.5°) and 10 (Kitchen) of them.
 
 Now a try's second and third points come from near its first (`NEAR`), so it finds a
@@ -524,8 +524,8 @@ during the loading view).
 
 - **It moved every shipped room by 0.4 to 5°,** to floors closer to level (the floor layer
   left tilted by 0.01 to 0.15°, where the old search left 0.2 to 1.3°), and with it every
-  collision number (SCHEMA g33; the baseline above). Counter's walkable-from-spawn fell
-  44.7% → 40.9%: its worktop is more level (0.99° → 0.59°) but part of it split off as its
+  collision number (SCHEMA g33, then g34 after review fixes; the baseline above). Counter's walkable-from-spawn fell
+  44.7% → 40.9% (against the g32 baseline; the g31 table had 44.2%): its worktop is more level (0.99° → 0.59°) but part of it split off as its
   own surface. Not traced further.
 - **Curled Up Dog has no floor** (a dog on a blanket): many nearly flat patches compete,
   and the result still varies by up to 6° from one set of splats to another (the old search

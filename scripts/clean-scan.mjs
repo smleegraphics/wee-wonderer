@@ -28,6 +28,7 @@
 //   --floorMargin=0.03  keep splats down to this x radius below the floor
 //   --noCrop / --noLevel  disable step 4 (and leveling) entirely
 import { readFileSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 
 const args = process.argv.slice(2);
@@ -104,7 +105,7 @@ const passOpacitySize = (i) => alpha[i] >= ALPHA_MIN && sizeOf[i] <= scaleCap;
 // served, so the watcher and hot reload stay off.
 let level = null; // { leveled(i) -> [x, y, z] with the floor at y = 0, tiltDeg }
 if (DO_CROP) {
-  const vite = await createServer({ server: { middlewareMode: true, hmr: false, watch: null }, appType: 'custom', logLevel: 'error' });
+  const vite = await createServer({ root: fileURLToPath(new URL('..', import.meta.url)), server: { middlewareMode: true, hmr: false, watch: null }, appType: 'custom', logLevel: 'error' }); // (the repo, wherever it is run from)
   const { orientScan } = await vite.ssrLoadModule('/src/scan/orient-scan.ts');
   const THREE = await vite.ssrLoadModule('three');
   await vite.close();
