@@ -3,8 +3,9 @@
 // and density. What is drawn: every splat inside that box (the far-off spray past the walls,
 // above the ceiling and below the floor is left out). What the collision is built from: those
 // of them that also pass the floater filters. It runs on an imported scan in a Web Worker
-// (clean-scan.worker.ts), and on .ply files offline (scripts/clean-scan.mjs, through Vite),
-// which keep what is drawn; a file loaded by name builds its collision from every splat in it.
+// (clean-scan.worker.ts); on a scan loaded by name, in the load worker (load-scan.worker.ts),
+// for its collision only (the file is drawn as it is); and on .ply files offline
+// (scripts/clean-scan.mjs, through Vite), which keep what is drawn: the shipped files.
 //
 // The floater filters used to choose what was drawn too. They made scans see-through (Living
 // Room 0.2% of the view raw, 25% cleaned; Counter 0.2% and 8.5%), the size filter most, since

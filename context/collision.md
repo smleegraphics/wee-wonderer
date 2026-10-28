@@ -37,29 +37,29 @@ numbers repeat exactly. `--with key=value` tries a setting without saving it (an
 Lengths and areas are in grains (see "Sizes are in grains" below), not cells of whatever
 grid is in use, so numbers compare across grid sizes.
 
-Baseline (SCHEMA g34, default settings; Playroom is built at mesh detail 2, the rest at 1):
+Baseline (SCHEMA g35, default settings, the `*-crop` files, collision floater-filtered at load; Playroom is built at mesh detail 2, the rest at 1):
 
 | | Living Room | Counter | Kitchen | Playroom | Marishka |
 |---|---|---|---|---|---|
-| Walkable area (grains²) | 9,652 | 4,643 | 4,588 | 16,655 | 11,125 |
-| Platforms (of 40 grains² or more) | 88 (21) | 71 (15) | 59 (17) | 113 (34) | 17 (7) |
-| Cells on small perches | 12.2% | 20.7% | 15.3% | 7.6% | 1.4% |
-| Cells reached from spawn by walking | 47.7% | 40.5% | 54.4% | 53.8% | 80.2% |
-| ...and jumping or dropping | 99.7% | 72.6% | 95.0% | 100.0% | 99.9% |
-| ...and climbing the mesh's faces | 99.7% | 97.3% | 95.0% | 100.0% | 99.9% |
-| ...if every meeting of surfaces had a face | 99.8% | 99.7% | 95.0% | 100.0% | 99.9% |
-| Real platforms no face could join | 0 | 0 | 0 | 0 | 0 |
-| Area a climb can start from (grains²) | 1,462 | 561 | 402 | 2,657 | 741 |
-| Holes in the spawn surface | 1.6% | 8.8% | 2.2% | 3.8% | 1.1% |
-| Spawn surface cells on an edge | 13.9% | 18.7% | 12.1% | 10.8% | 6.3% |
-| Spawn surface fills its convex outline | 66.0% | 81.8% | 83.8% | 83.5% | 87.7% |
-| Spawn surface roughness (slope) | 0.12 | 0.37 | 0.10 | 0.00 | 0.58 |
-| Triangles | 106,568 | 50,608 | 40,076 | 731,156 | 102,996 |
-| Mesh pieces | 34 | 40 | 46 | 32 | 14 |
-| Mesh bumpiness | 0.096 | 0.103 | 0.119 | 0.084 | 0.100 |
-| Mesh to nearest opaque splat, median / 90th pct (grains) | 0.58 / 0.97 | 0.56 / 0.95 | 0.54 / 1.24 | 0.41 / 0.84 | 0.53 / 0.81 |
-| Opaque splats with no mesh within 2 grains | 7.9% | 10.5% | 13.3% | 2.5% | 12.7% |
-| Sight lines that meet no collision | 31.3% | 43.6% | 42.3% | 22.2% | 43.5% |
+| Walkable area (grains²) | 9,567 | 4,421 | 4,739 | 16,655 | 11,125 |
+| Platforms (of 40 grains² or more) | 80 (20) | 66 (19) | 41 (13) | 113 (34) | 17 (7) |
+| Cells on small perches | 9.2% | 15.4% | 9.3% | 7.6% | 1.4% |
+| Cells reached from spawn by walking | 49.5% | 43.4% | 71.2% | 53.8% | 80.2% |
+| ...and jumping or dropping | 100.0% | 97.3% | 89.9% | 100.0% | 99.9% |
+| ...and climbing the mesh's faces | 100.0% | 97.8% | 89.9% | 100.0% | 99.9% |
+| ...if every meeting of surfaces had a face | 100.0% | 100.0% | 89.9% | 100.0% | 99.9% |
+| Real platforms no face could join | 0 | 0 | 4 | 0 | 0 |
+| Area a climb can start from (grains²) | 1,337 | 521 | 361 | 2,657 | 741 |
+| Holes in the spawn surface | 1.2% | 9.7% | 4.8% | 3.8% | 1.1% |
+| Spawn surface cells on an edge | 12.2% | 16.2% | 11.1% | 10.8% | 6.3% |
+| Spawn surface fills its convex outline | 67.1% | 85.4% | 81.5% | 83.5% | 87.7% |
+| Spawn surface roughness (slope) | 0.12 | 0.40 | 0.05 | 0.00 | 0.58 |
+| Triangles | 103,208 | 47,284 | 39,312 | 731,156 | 102,996 |
+| Mesh pieces | 31 | 43 | 32 | 32 | 14 |
+| Mesh bumpiness | 0.086 | 0.097 | 0.113 | 0.084 | 0.100 |
+| Mesh to nearest opaque splat, median / 90th pct (grains) | 0.52 / 0.86 | 0.51 / 0.91 | 0.42 / 0.80 | 0.41 / 0.84 | 0.53 / 0.81 |
+| Opaque splats with no mesh within 2 grains | 15.7% | 22.0% | 25.5% | 2.5% | 12.7% |
+| Sight lines that meet no collision | 32.8% | 42.8% | 43.4% | 22.2% | 43.5% |
 
 How far each number can be trusted:
 
@@ -552,7 +552,7 @@ same code through Vite):
   1st-99th percentile across (98th up), plus 8% slack, from a little below the floor.
 - **What is drawn:** every splat inside the box, solid or not. It keeps 94 to 98% of a scan.
 - **What the collision is built from, and the room levelled by:** the drawn splats that are
-  also solid: exactly what the old cleanup kept (the cozy room imported: the same start,
+  also solid: for an import, exactly what the old cleanup kept (the cozy room imported: the same start,
   52.7% walkable from it, 88% with jumps; `collisioncheck` nothing worse). `room.ts` builds
   from what an import marks (`ScanSource.collision`) and keeps it (`collisionSplats`) for a
   rebuild from a Debug slider, which otherwise rebuilt from every drawn splat. If the filters
@@ -580,12 +580,40 @@ same code through Vite):
   bought that by deleting its walls. Counter and Living Room draw at the cap either way. A
   splat budget for heavy scans is a separate step (not done).
 
-**Scans loaded by name do not have two sets yet.** The shipped scans on the scan host are the
-old cleanup's files (holes and all), and a file loaded by name builds its collision from
-every splat in it. `scripts/clean-scan.mjs` keeps a `.ply`'s drawn set, but a scan re-cleaned
-with it and shipped would build
-its collision from the crop alone: worse, as above (Kitchen). Shipping crop-only files waits
-on the collision filters running at load (and measuring what that costs).
+**Scans loaded by name get the two sets too.** The shipped files are the raw scans cropped to
+the room (`*-crop.spz`, made with `scripts/clean-scan.mjs`), so every splat in them is drawn;
+the load worker (`load-scan.worker.ts`) marks the floater-filtered ones with `cleanMasks`, and
+the collision is built from those, as for an import. A scan's `floaterFilter: false` in `SCANS`
+builds its collision from every splat instead:
+
+- **Playroom:** its walls, cabinets and floor are a few large faint splats each, which the
+  filters take for floaters (see "Playroom cannot be cleaned by the floater cleaner"). Its
+  collision is unchanged.
+- **Curled Up Dog:** its file is the old floater-stripped one, and filtering again is not a
+  no-op: the size cap is a multiple of the median size, which the first pass lowered. Filtered
+  again, holes in its spawn surface went from 1.1% to 5.8%.
+
+Measured, the new files against the old floater-stripped ones (`*-clean.spz`):
+
+| | Living Room | Counter | Kitchen |
+|---|---|---|---|
+| See-through, share of the view (`holes.mjs`) | 25.1% → 2.3% | 8.5% → 2.0% | 25.6% → 12.1% (raw 15.1%) |
+| Walkable from spawn | 47.7% → 49.5% | 40.5% → 43.4% | 54.4% → 71.2% |
+| ...and by jumping or dropping | 99.7% → 100% | 72.6% → 97.3% | 95.0% → 89.9% |
+| Holes in the spawn surface | 1.6% → 1.2% | 8.8% → 9.7% | 2.2% → 4.8% |
+| Real platforms nothing reaches | 0 → 0 | 0 → 0 | 0 → 4 |
+
+The collision is not the old one exactly: the filters now run on the cropped file, not the raw
+one, so the median size and the density grid they measure against shift. Mostly better; Kitchen
+is mixed. "Opaque splats with no mesh near" rises on every scan (Living Room 7.9% to 15.7%):
+it is measured against what is drawn, which now includes the big and faint splats the
+collision leaves out, so it no longer compares with the old figure.
+
+**Costs:** loading (to the room arriving, headless): Kitchen 1.5-1.7 s → 1.8 s, Record Player
+Table 8.5 s → 9.5 s. Files: about twice the size (Kitchen 3.1 → 5.6 MB; Record Player Table
+39.4 → 63.9 MB). Drawing: Record Player Table 16.6 ms → 31.7 ms a frame (4.25 million splats
+against 2.66); the others draw at the 60 fps cap either way. A splat budget for heavy scans is
+a separate step (not done).
 
 Notes:
 

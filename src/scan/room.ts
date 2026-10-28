@@ -15,7 +15,7 @@ import { scanBuffers, type ParsedScan } from './parse-scan';
 import { updateReveal, HANDOVER, startReveal, startLeave, installReveal } from '../loading/room-reveal';
 import { type LoadingScene, createLoadingScene } from '../loading/loading-scene';
 import { type PaperFigurine, createPaperFigurine } from '../loading/paper-figurine';
-import { scanURL } from './scans';
+import { SCANS, scanURL } from './scans';
 import { DEFAULT_SCAN, hud, MESHONLY, player, renderer, room, scene, surround, SURROUND, TARGET_RADIUS, TEL, VOXEL_SIZE } from '../app';
 import { buildCollision, collisionKey, disposeCollision, navVersion, rebuildCollision, useScanSettings, VOXEL_OPTS } from '../collision/room-collision';
 import { charH, charLoaded, play, resetToSpawn } from '../figurine/character';
@@ -113,7 +113,8 @@ export let currentScan: { scan: ParsedScan; own: number; cellsUsed: number } | n
 
 /** Load an example scan from the scan host (scans.ts). */
 export function loadScan(file: string): void {
-  loadRoom({ url: new URL(scanURL(file), location.href).href }, file); // absolute: a worker resolves URLs against its own script
+  const floaterFilter = SCANS.find((s) => s.file === file)?.floaterFilter ?? true;
+  loadRoom({ url: new URL(scanURL(file), location.href).href, floaterFilter }, file); // absolute: a worker resolves URLs against its own script
 }
 
 /** Load a scan that is already in memory: an imported one, read and cleaned (import.ts). */
@@ -130,11 +131,11 @@ export const isImported = (id: string) => id.startsWith(IMPORTED);
 /** Where a room's scan comes from: an address to fetch and parse it from, or its splats. */
 /** A scan to fetch, or one already in memory; `collision` marks the splats its collision is
  *  built from (clean-scan-core.ts), all of them without it. */
-type ScanSource = { url: string } | { scan: ParsedScan; collision?: Uint8Array };
+type ScanSource = { url: string; floaterFilter: boolean } | { scan: ParsedScan; collision?: Uint8Array };
 
 // The scan is fetched and parsed in a worker (load-scan.worker.ts): on the main
 // thread a large scan froze the page for seconds.
-const parseScan = workerCaller<{ url: string }, ParsedScan, ScanLoadProgress>(
+const parseScan = workerCaller<{ url: string; floaterFilter: boolean }, { scan: ParsedScan; collision?: Uint8Array }, ScanLoadProgress>(
   new Worker(new URL('./load-scan.worker.ts', import.meta.url), { type: 'module' }), 'scan load');
 
 // The steps of a load, in order: what the loading note says during each, and its share
@@ -219,17 +220,18 @@ function subsetOf(marked: Uint8Array, all: { centers: Float32Array; opacity: Flo
 /** Fetch and parse the scan (unless its splats are already here), put it in the room
  *  levelled and scaled, and build its collision. */
 async function showScan(source: ScanSource, id: string, token: number, cancelled: AbortSignal): Promise<void> {
-  const parsed = 'scan' in source ? source.scan
-    : await parseScan({ url: source.url }, [], { signal: cancelled, onProgress: (p) => loadStep(token, p.step, p.step === 'fetch' ? p.fetched : 0) });
+  const loaded = 'scan' in source ? source
+    : await parseScan({ url: source.url, floaterFilter: source.floaterFilter }, [], { signal: cancelled, onProgress: (p) => loadStep(token, p.step, p.step === 'fetch' ? p.fetched : 0) });
+  const parsed = loaded.scan;
   await roomGone; // the old room has to be out of the way first; it usually is long before this
   if (token !== loadToken) return; // superseded while loading
   loadStep(token, 'build');
   const own = parsed.centers.length / 3;
   const opacity = new Float32Array(own);
   for (let i = 0; i < own; i++) opacity[i] = parsed.colors[i * 4 + 3] / 255;
-  // The splats the collision is built from, and the room levelled by: all of them, or those an
-  // import's cleanup marked (it draws more than it builds collision from: clean-scan-core.ts).
-  const marked = 'collision' in source ? source.collision : undefined;
+  // The splats the collision is built from, and the room levelled by: those the floater filters
+  // keep (marked by an import's cleanup, or by the load worker), or all of them (clean-scan-core.ts).
+  const marked = loaded.collision;
   const all = { centers: parsed.centers, opacity, covariances: parsed.covariances };
   const picked = marked && subsetOf(marked, all);
   const solid = picked && picked.opacity.length ? picked : all; // (none marked: every splat drawn)

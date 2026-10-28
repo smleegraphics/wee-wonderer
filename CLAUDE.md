@@ -33,13 +33,14 @@ answers 504 "Outdated Optimize Dep" for three.js and the app does not start.
 Scans are not in the repo: they live in the gitignored `scans/` folder, which the dev and
 preview servers serve at `/scans/` (never `public/`: Vite copies it into every build).
 `?scan=<file>` picks one;
-the default is `kitchen-clean.spz` (Kitchen). Cleaned demo scans are `*-clean.ply`; the shipped
-ones are those converted to SPZ (`*-clean.spz`, `context/deploy.md`, "Scan files").
+the default is `kitchen-crop.spz` (Kitchen). The shipped scans are the raw `.ply` cropped to the
+room (`*-crop.ply`) and converted to SPZ (`*-crop.spz`, `context/deploy.md`, "Scan files"); the
+older `*-clean` files were floater-stripped too, which put holes in them.
 
 **Which scans ship.** `SCANS` in `src/scan/scan-list.ts` lists every known scan; only the
 `listed: true` ones appear in the Scans card, and the first of those is the default.
 The shipped scans are Kitchen, Living Room and Counter (Mip-NeRF 360, CC BY 4.0, which
-needs credit) and Record Player Table (`record-player-table-clean.spz`, our own capture, made
+needs credit) and Record Player Table (`record-player-table-crop.spz`, our own capture, made
 with SpAItial). Curled Up Dog (`Marishka-clean.spz`, also our own) is no longer listed but stays
 in `SCANS` for the checks. **Playroom
 (`room2.ply`) is a local test scan only:** it comes from the Deep Blending dataset, whose licence is unstated, so it
