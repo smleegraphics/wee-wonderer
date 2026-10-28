@@ -235,14 +235,15 @@ export function setCleanupOverlay(on: boolean): void {
   else if (on && collision) buildGridOverlays();
 }
 
-/** Voxelize the current scan again for its voxel grids, with the settings the collision
- *  was built with, and make both overlays from them. */
+/** Voxelize the current scan again for its voxel grids, from the splats and with the settings
+ *  the collision was built with (collisionSplats: not every splat drawn), and make both overlays
+ *  from them. */
 function buildGridOverlays(): void {
-  if (!lastCenters || !lastOpacity || gridsPending) return;
+  if (!collisionSplats || gridsPending) return;
   disposeGridOverlays();
   const build = gridsBuild;
   gridsPending = true;
-  voxelizeInWorker(lastCenters, lastOpacity, lastCov, lastMatrix, { ...VOXEL_OPTS }, true).then((res) => {
+  voxelizeInWorker(collisionSplats.centers, collisionSplats.opacity, collisionSplats.covariances, lastMatrix, { ...VOXEL_OPTS }, true).then((res) => {
     if (build !== gridsBuild) return; // the room or its collision changed meanwhile
     gridsPending = false;
     grids = res as VoxelGrids;
