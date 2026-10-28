@@ -56,8 +56,8 @@ export const CHARACTERS: CharacterEntry[] = [
   {
     // Skeleton_Minion from "KayKit: Skeletons Character Pack" 1.0 by Kay Lousberg, CC0 1.0
     // (CREDITS.md), cut down to the clips below (context/movement.md, "Adding a character").
-    // Its take-off, in-air and landing clips stay in place. No climb clip: the climb holds its
-    // Cheer with both arms raised.
+    // Its take-off, in-air and landing clips stay in place. Its climb is our own, keyed in Blender
+    // (art/characters/skeleton/).
     id: 'skeleton',
     label: 'Skeleton',
     model: 'characters/skeleton.glb',
@@ -65,8 +65,7 @@ export const CHARACTERS: CharacterEntry[] = [
     height: 0.45,
     radius: 0.14, // body width at mid height 0.36 of its height, against the chibi's 0.58 at radius 0.22
     clips: {
-      idle: 'Idle', walk: 'Walking_A', sprint: 'Running_A', jumpStart: 'Jump_Start', fall: 'Jump_Idle', land: 'Jump_Land',
-      climb: { clip: 'Cheer', hold: 0.67 },
+      idle: 'Idle', walk: 'Walking_A', sprint: 'Running_A', jumpStart: 'Jump_Start', fall: 'Jump_Idle', land: 'Jump_Land', climb: 'climb',
     },
     climbs: true,
     abilities: ['doubleJump'],
