@@ -85,7 +85,7 @@ enough to find one.
 | `movement.ts`, `abilities.ts` | The movement settings (`MOVE`, the Movement section of the Debug card) and the abilities a loadout is made of (the double jump) |
 | `climb.ts` | The climb state machine (`climbUpdate`, `climbWall`, `fitClimbBody`), context/climb.md |
 | `camera.ts` | The follow camera (`updateCamera`, its zoom limits `setFollowDistance`), the free camera (`setGodCam`, the Debug card's Free camera), the opening shot, the fixed debug camera |
-| **`src/lighting/`** | `scan-light.ts` (the light probe and its debug view) and `contact-shadow.ts`, context/lighting.md |
+| **`src/lighting/`** | `scan-light.ts` (the light probe, the room key light that shades the figurine from the way the room's light leans, and the probe's debug view) and `contact-shadow.ts`, context/lighting.md |
 | **`src/ui/`** | The on-screen UI: `hud.ts` (tiles, cards, screens), `debug-panel.ts`, `paper.ts` (building blocks), `ui.css` (all styles and tokens) |
 | **`src/dev-pages/`** | Pages not part of the app: `inspect-room.ts`, the scan inspector (`inspect.html`); `character-thumbs.ts` (`thumbs.html`), which renders the Characters card's pictures for `scripts/character-thumbs.mjs` |
 | `deploy/scans-worker/`, `scripts/upload-scans.mjs` | The scan host (a Worker over R2, with its own `package.json` for wrangler) and the upload of the listed scans to it |

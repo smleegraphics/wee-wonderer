@@ -6,7 +6,7 @@ import { GOD_CAM, setGodCam } from './figurine/camera';
 import { CLIMB_TILT } from './figurine/climb';
 import { MOVE, moveSet, type MoveSettings, moveSliders } from './figurine/movement';
 import { CONTACT_SHADOW } from './lighting/contact-shadow';
-import { applyScanLight, requestScanLight, SCAN_LIGHT } from './lighting/scan-light';
+import { applyScanLight, requestScanLight, ROOM_KEY, SCAN_LIGHT } from './lighting/scan-light';
 import { CLEAN_OPTS, recleanUpload } from './scan/import';
 import { applyFillView, FILL_VIEW, refillWalkable, WALK_FILL } from './scan/walk-fill';
 
@@ -80,6 +80,10 @@ export function setupDebugMenu(): void {
     'How strongly the scan lights the figurine.');
   light.addSlider('Light blend (s)', SCAN_LIGHT.blend, 0, 2, 0.1, (v) => { SCAN_LIGHT.blend = v; },
     'Seconds to cross-fade from one light capture to the next in follow mode. 0 = swap instantly.');
+  light.addToggle('Room key light', ROOM_KEY.on, (on) => { ROOM_KEY.on = on; },
+    "Shine a light from the side the room's light comes from, so the figurine has a lit side and a shadow side. Its light is taken from the scan lighting, so the figurine is no brighter overall.");
+  light.addSlider('Key strength', ROOM_KEY.strength, 0, 6, 0.25, (v) => { ROOM_KEY.strength = v; },
+    "How much brighter the key light makes the figurine's lit side than its shadow side: 1 = as much as the room itself leans one way, more exaggerates it, 0 = no key.");
 
   const fill = hud.debug.section('Patch splat holes');
   fill.addToggle('Patch holes', WALK_FILL.on, (on) => { WALK_FILL.on = on; applyFillView(); },

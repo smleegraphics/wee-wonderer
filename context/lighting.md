@@ -67,6 +67,55 @@ rebuilds a shader. Every capture, whether requested or from follow mode, waits
 until the current fade has finished: mid-fade both captures are on screen, so there
 is nowhere to render a new one without a pop.
 
+## Room key light
+
+The probe alone lights the figurine softly from all round: its lit side is only a little
+brighter than its dark side, the change between them is gradual, and nothing on it casts
+a shadow, so it looks flat and pasted on. The room key light (`ROOM_KEY` in
+`scan-light.ts`) gives it a lit side and a shadow side without changing how bright it is.
+
+- **Where the light comes from.** Each capture also renders a 32 px cube from the probe's
+  point, inside the same set-up (figurine hidden, gaps filled), and reads it back
+  (`fitRoomKey`, asynchronously; until the read lands a capture keeps the fit already
+  showing). `measureRoomKey` splits the light into an even part and a one-sided part (the
+  first two spherical-harmonic terms, the standard way to pull a dominant light out of an
+  environment): `mean` luminance, the direction it leans (`dir`) and how far (`lean`, 0 =
+  even all round). The colour is the light from that side, at unit luminance.
+- **How strong.** The light moves out of the probe and into a directional light; it is
+  never added on top. A directional light of strength K gives a surface K/4 + (K/2)(n·dir)
+  to first order, so a key of 4π·E·mean·lean carries the probe's one-sided part and the
+  probe keeps (1 - lean) of its strength (`updateRoomKey`). Averaged over every way a
+  surface can face, the figurine gets what the probe alone gave it. `strength` (default 1,
+  "Key strength" in the Debug card) exaggerates the lean: 1 is the room as captured. It was
+  3, picked while the scan's colours were turned into sRGB twice (above): that flattened the
+  room's light, and the leans measured smaller (Living Room 0.15 then, 0.26 now). With the
+  colours right, 3 put Living Room, Counter and Record Player Table at 0.72 to 0.82: a bright
+  side, a hard line down the face and a dark side. 1 gives a soft lit side (Sam, from a
+  sheet of every room at 0, 0.5, 1, 1.5, 2 and 3). However it is exaggerated, the lean the
+  key carries stops at `leanMax` (0.4): a matte surface facing away from the light gets
+  (1 - 2·lean) of the mean, so past 0.5 the dark side would get nothing.
+- **Shadow.** Only the figurine casts and receives (`character.ts` sets it on load), into a
+  1024 px map whose camera spans one body height around it. The light sits 4 body heights
+  from the figurine, follows it every frame, and fades between captures with `scanLightMix`.
+- **What the rooms give.** With the colours right: Living Room 0.26, Counter 0.24, Record
+  Player Table 0.27 (from the window side), Kitchen 0.06, nearly even, so it barely changes:
+  it is a tabletop scan with no window or lamp in it. (Before the colour fix: Living Room,
+  Counter and Playroom from above at 0.15, 0.10, 0.10, Kitchen from the side at 0.04. Then,
+  at strength 3, from a front three-quarter view, the figurine stayed within about 6% of its
+  brightness without the key, and was about 12% darker in Living Room. Not measured again
+  since.)
+
+**Tried and rejected: the brightest patch.** The first version shone the key from the
+brightest 3% of the view, against its average for the strength. It found bright surfaces,
+not lights: the yellow bulldozer in Kitchen, the countertop under the figurine on Counter
+(a key from below). Its prototype also left the gap fill out of its capture, so unscanned
+directions were black and every room looked 3 to 10 times more contrasty than it is.
+
+**Cube read-back layout.** `cubeTexelDir` maps a read-back texel to its direction. three.js's
+cube camera is mirrored in x against the obvious layout; the mapping was checked with a
+bright ball on each of the six sides (all within 0.12). Check it again after a three.js
+upgrade.
+
 ## What is known
 
 - **A scan's colours are sRGB; the scene is lit and blended in linear light.** The splat
@@ -177,8 +226,9 @@ need lighting, or if probes can be computed from splat colours without rendering
   is. A brighter estimate would help gap-heavy scans such as Living Room.
 - **The fill is one colour per scan.** A per-capture fill, from what each probe
   actually sees around the gap, would adapt to bright and dark parts of a room.
-- **No directional key light.** The environment gives soft light only, so the
-  figurine has less shape than it did under the sun.
+- **The room key light's direction is fixed per capture.** Without "Follow figurine" it is
+  worked out once where the figurine stands at load. Its frame cost was not measurable
+  against Playroom's run-to-run spread in one sitting.
 - No contact shadow. The collision mesh could act as a shadow receiver.
 
 ## Contact shadow
