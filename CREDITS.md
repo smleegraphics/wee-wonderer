@@ -44,7 +44,8 @@ own: it says each scene "retains the license/terms of its original source". For 
 they were then cleaned of floaters, levelled, cropped and converted to SPZ
 (`scripts/clean-scan.mjs`, `context/deploy.md`).
 
-**Curled Up Dog** (`Marishka-clean.spz`) was captured by Samantha Lee.
+**Record Player Table** (`record-player-table-clean.spz`) was captured by Samantha Lee, with
+SpAItial.
 
 ## Type
 
