@@ -4,6 +4,7 @@
 // (context/ui.md).
 
 import * as THREE from 'three';
+import { Fn, sRGBTransferEOTF, vec4 } from 'three/tsl';
 import { GaussianSplat } from 'three/addons/objects/GaussianSplat.js';
 import { createGaussianSplatGeometry } from 'three/addons/utils/GaussianSplatUtils.js';
 import { orientScan } from './orient-scan';
@@ -241,6 +242,25 @@ async function showScan(source: ScanSource, id: string, token: number, cancelled
   if (charLoaded) requestScanLight(); // (needs the splat in place)
 }
 
+/** A scan's colours are stored as they look on screen (sRGB), like the photos it was made from.
+ *  The renderer works in linear light and turns everything it draws into sRGB at the end, and
+ *  GaussianSplat hands its colours on as they are stored, so they were turned into sRGB twice: a
+ *  0.5 showed at 0.74, every scan greyed and lightened. Turned into linear light here, so the end
+ *  shows each splat as stored, and what is mixed with it (the paper of the arrival, the fill's
+ *  tint, the contact shadow) and lit from it (the scan light) is in linear light like the rest of
+ *  the scene. Splats overlapping now blend in linear light, not as they were made to: a difference
+ *  at soft edges only. */
+function colourFromSRGB(splat: GaussianSplat): void {
+  const material = splat.material as unknown as { colorNode: any; needsUpdate: boolean }; // (three's types don't describe the material's colour hook)
+  const base = material.colorNode; // vec4: the splat's colour and coverage
+  material.colorNode = Fn(() => {
+    const c = vec4(base).toVar();
+    c.rgb.assign(sRGBTransferEOTF(c.rgb));
+    return c;
+  })();
+  material.needsUpdate = true;
+}
+
 /** Put a scan and its fill in the room as the splat object, at `position` in the room.
  *  `opacity` is each of the scan's own splats' (it does not change with the fill), and
  *  `cellsUsed` the navVersion of the walkable cells the fill was worked out from.
@@ -252,6 +272,7 @@ export function showSplat({ scan, own }: FilledScan, position: THREE.Vector3, op
   // their real ellipsoid footprint). The worldspace transform is applied in the core.
   const cov = scan.covariances.subarray(0, own * 6);
   const splat = new GaussianSplat(createGaussianSplatGeometry(scan.centers, scan.covariances, scan.colors, scan.sphericalHarmonics));
+  colourFromSRGB(splat); // (first: what wraps the colour after it works in linear light)
   if (!MESHONLY) installFillView(splat, own);
   installReveal(splat, scan.centers.length / 3);
   installContactShadow(splat);
