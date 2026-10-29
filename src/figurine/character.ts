@@ -2,10 +2,10 @@
 
 import * as THREE from 'three';
 import { type GLTF, GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { BODY, camera, figurine, hud, move, orbit, player, q, TEL } from '../app';
+import { BODY, camera, figurine, hud, move, player, q, TEL } from '../app';
 import { collision, groundY, navGrid, PLATFORM_OPTS, rebuildPlatformOverlay, setPlatformOverlay, setVoxelOverlay, showPlatforms, showVoxels } from '../collision/room-collision';
 import { loadout } from './abilities';
-import { CAM_START_HEIGHT, camLatch, frameOpeningShot } from './camera';
+import { CAM_START_HEIGHT, camLatch, frameOpeningShot, setFollowDistance } from './camera';
 import { type CharacterEntry, CHARACTERS, type ClipUse, clipOf, type Move, MOVE_FALLBACK, MOVE_PLAYS } from './characters';
 import { clipPace } from './clip-pace';
 import { jumpKey, jumpRelease, lastGood, refitBody, resetMotion, setLoadout } from './controller';
@@ -85,8 +85,7 @@ function useCharacter(entry: CharacterEntry, gltf: GLTF): void {
   camera.near = charH * 0.02;
   camera.far = charH * 400;
   camera.updateProjectionMatrix();
-  orbit.minDistance = charH * 2.5;
-  orbit.maxDistance = charH * 14;
+  setFollowDistance(charH * 2.5, charH * 14);
 
   charLoaded = true;
   setUpLoadingView(model);

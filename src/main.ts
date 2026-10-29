@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 import { camera, DEFAULT_SCAN, FREECAM, hud, hudActions, move, renderer, scene, TEL } from './app';
 import { setupDebugMenu } from './debug-menu';
-import { camLatch, updateCamera, updateFreeCam } from './figurine/camera';
+import { camLatch, GOD_CAM, updateCamera, updateFreeCam, updateGodCam } from './figurine/camera';
 import { character, charLoaded, loadCharacter, mixer, resetToSpawn } from './figurine/character';
 import { jumpKey, updateController } from './figurine/controller';
 import { updateContactShadow } from './lighting/contact-shadow';
@@ -59,7 +59,7 @@ let frames = 0;
  *  A dt of 0 holds everything still (a __step script between calls). */
 function simulate(dt: number, publish = true): void {
   const waiting = loadingViewOn();
-  if (charLoaded && dt > 0) { if (!waiting) updateController(dt); if (FREECAM) updateFreeCam(); else updateCamera(dt); }
+  if (charLoaded && dt > 0) { if (!waiting) updateController(dt); if (FREECAM) updateFreeCam(); else if (GOD_CAM.on) updateGodCam(); else updateCamera(dt); }
   mixer?.update(dt);
   if (charLoaded) { updateContactShadow(dt); updateScanLight(dt); updateScanDebug(); }
   updateArrival(dt);

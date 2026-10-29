@@ -127,6 +127,33 @@ function clearStartTurn(pivot: THREE.Vector3): number {
   return best;
 }
 
+/** The camera let off the figurine (the Debug card's "Free camera"): drag to orbit, right-drag
+ *  to pan, scroll to zoom, as near or far as you like, for looking round a scan. The follow
+ *  camera's limits are kept (setFollowDistance) and put back when it is turned off. */
+export const GOD_CAM = { on: false };
+const followLimits = { min: 0, max: Infinity, pan: false, polar: Math.PI };
+/** How near and far the follow camera may be (the character's size sets it, character.ts): kept
+ *  here, and applied unless the free camera is on, which would otherwise have them reset under it. */
+export function setFollowDistance(min: number, max: number): void {
+  followLimits.min = min; followLimits.max = max;
+  if (!GOD_CAM.on) { orbit.minDistance = min; orbit.maxDistance = max; }
+}
+export function setGodCam(on: boolean): void {
+  if (on === GOD_CAM.on) return;
+  GOD_CAM.on = on;
+  if (on) {
+    followLimits.pan = orbit.enablePan; followLimits.polar = orbit.maxPolarAngle;
+    orbit.minDistance = 0; orbit.maxDistance = Infinity; orbit.enablePan = true; orbit.maxPolarAngle = Math.PI;
+  } else {
+    orbit.minDistance = followLimits.min; orbit.maxDistance = followLimits.max; orbit.enablePan = followLimits.pan; orbit.maxPolarAngle = followLimits.polar;
+  }
+}
+export function updateGodCam(): void {
+  orbit.update();
+  camera.position.copy(orbitCamera.position);
+  camera.quaternion.copy(orbitCamera.quaternion);
+}
+
 /** Debug free-camera: park at a fixed spherical orbit around the look-at point
  *  (see FREECAM_OPTS). Deterministic — lets a headless screenshot frame any region. */
 const freeCenter = new THREE.Vector3();

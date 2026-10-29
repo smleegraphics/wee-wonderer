@@ -143,6 +143,13 @@ These were each found by a bug. Breaking one brings the bug back.
 
 A spring arm from the figurine to the camera (`updateCamera`).
 
+**The free camera** (Debug card → Overlays → Free camera, `setGodCam`) lets the camera off the
+figurine for looking round a scan: drag to orbit, right-drag to pan, scroll as near or far as
+you like, nothing in the way pulls it in. The figurine still walks, steered by where the
+camera faces. The follow camera's zoom limits are set through `setFollowDistance` (the
+character's size sets them, `character.ts`) and kept while the free camera is on, so a
+character switched meanwhile does not clamp it; turning it off puts them back.
+
 - **Two cameras: what the player asked for, and what is shown.** OrbitControls drives
   its own camera (`orbitCamera`, `app.ts`), which nothing else moves: its distance
   from the pivot is the user's zoom (`camWant`). The camera that is drawn (`camera`)

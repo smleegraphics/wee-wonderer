@@ -84,7 +84,7 @@ enough to find one.
 | `controller.ts` | Per-frame movement (`updateController`): momentum, the jump and its grace, walking off edges, the fall, wall push-out (`bodyOverlap`) |
 | `movement.ts`, `abilities.ts` | The movement settings (`MOVE`, the Movement section of the Debug card) and the abilities a loadout is made of (the double jump) |
 | `climb.ts` | The climb state machine (`climbUpdate`, `climbWall`, `fitClimbBody`), context/climb.md |
-| `camera.ts` | The follow camera (`updateCamera`), the opening shot, the fixed debug camera |
+| `camera.ts` | The follow camera (`updateCamera`, its zoom limits `setFollowDistance`), the free camera (`setGodCam`, the Debug card's Free camera), the opening shot, the fixed debug camera |
 | **`src/lighting/`** | `scan-light.ts` (the light probe and its debug view) and `contact-shadow.ts`, context/lighting.md |
 | **`src/ui/`** | The on-screen UI: `hud.ts` (tiles, cards, screens), `debug-panel.ts`, `paper.ts` (building blocks), `ui.css` (all styles and tokens) |
 | **`src/dev-pages/`** | Pages not part of the app: `inspect-room.ts`, the scan inspector (`inspect.html`); `character-thumbs.ts` (`thumbs.html`), which renders the Characters card's pictures for `scripts/character-thumbs.mjs` |
@@ -109,7 +109,8 @@ from a second checkout, start its own server on another port and pass its addres
   lowest density drawn, and cleanup from before (0) to after (2). A script can move them
   frame by frame for an animation.
 - **Frame a region:** `?az=&el=&dist=&cx=&cy=&cz=` parks a fixed orbit camera
-  (`dist` in `TARGET_RADIUS` units). Without it the camera follows the figurine.
+  (`dist` in `TARGET_RADIUS` units). Without it the camera follows the figurine. To look
+  round by hand, the Debug card's Free camera lets it off the figurine (`context/climb.md`).
 - **Telemetry and internal state:** `?tel=1` logs `CLIMB-*` events to the console
   and publishes `window.__dbg` every frame (state, position, climb facing, camera
   distances, `probe`, `reveal`: how much of the room is in place, 0 while
