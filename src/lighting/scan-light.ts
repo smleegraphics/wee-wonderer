@@ -25,7 +25,7 @@ scene.add(sun);
 // moves, which is the cheapest possible "dynamic" probe.
 //   There are two captures, not one: a new capture goes into whichever isn't showing,
 // and the light cross-fades over to it, so a re-capture never swaps in a single frame.
-export const SCAN_LIGHT = { on: true, intensity: 1.5, follow: false, blend: 0.4, fill: true, debug: false }; // blend: seconds to cross-fade to a new capture; fill: see scanFill
+export const SCAN_LIGHT = { on: true, intensity: 2, follow: false, blend: 0.4, fill: true, debug: false }; // blend: seconds to cross-fade to a new capture; fill: see scanFill
 // (intensity 1.5: at 1 the figurine is lit like its surroundings, which reads as dull on a
 // dark-green character; 2 washes it out in a bright scan like Playroom — context/lighting.md.)
 // The probe: where it sits, what it renders, and how often follow mode moves it.
@@ -142,12 +142,15 @@ function captureScanLight(): void {
   applyScanLight();
 }
 
+const linear = new THREE.Color(); // (estimateScanFill's scratch)
+
 /** Estimate the colour of what the scan is missing overhead: the average colour of its
  *  upper half — the splats above the scan's median height, where "median" and
  *  "average" are both weighted by how much each splat shows (opacity × size). In a
  *  room that is the upper walls, which a ceiling usually resembles; in a tabletop scan
- *  it is the upper part of whatever was captured. Colours are averaged as stored,
- *  which is also how the probe's own blur averages them. */
+ *  it is the upper part of whatever was captured. Colours are averaged in linear light, as
+ *  the splats are drawn (the scan stores sRGB: room.ts, colourFromSRGB), which is also how
+ *  the probe's own blur averages them. */
 export function estimateScanFill(centers: THREE.BufferAttribute, color: THREE.BufferAttribute, cov: Float32Array | null, world: THREE.Matrix4, out: THREE.Color): void {
   const n = centers.count, e = world.elements, BINS = 256;
   // one walk over the splats for each one's height and how much it shows — its opacity
@@ -168,7 +171,8 @@ export function estimateScanFill(centers: THREE.BufferAttribute, color: THREE.Bu
   for (let i = 0; i < n; i++) {
     if (height[i] < median) continue;
     const w = weight[i];
-    r += color.getX(i) * w; g += color.getY(i) * w; b += color.getZ(i) * w; sum += w;
+    const c = linear.setRGB(color.getX(i), color.getY(i), color.getZ(i), THREE.SRGBColorSpace); // (to the working space: linear)
+    r += c.r * w; g += c.g * w; b += c.b * w; sum += w;
   }
   if (sum > 0) out.setRGB(r / sum, g / sum, b / sum); else out.copy(SURROUND.beyond);
   if (TEL) console.log(`SCANFILL rgb=${out.r.toFixed(2)},${out.g.toFixed(2)},${out.b.toFixed(2)} from splats above y=${median.toFixed(2)} (scan spans ${y0.toFixed(2)}..${y1.toFixed(2)})`);

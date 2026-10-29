@@ -220,6 +220,10 @@ Things that cost time:
   loadout's abilities: nothing branches on which character is in play (context/movement.md).
 - **The movement model matches the game.** What `collision-health.ts` says a jump reaches
   is checked against real jumps by `scripts/jumpcheck.mjs`; change one, run the other.
+- **Splat colours are sRGB; everything else is linear.** A scan stores its colours as they
+  look on screen. The splat converts them as it draws them (`colourFromSRGB` in room.ts); code
+  that reads a scan's colours on the CPU must convert them too (`estimateScanFill`), and a
+  new wrap of the splat's colour goes after that conversion (context/lighting.md).
 - **A scan's splat arrays hold more than the scan.** Fill splats follow the scan's
   own. Collision, orientation and anything else that reasons about the room use the
   first `own` only (see `showSplat`).
