@@ -2,7 +2,7 @@
 // cross-fade between captures, and the probe's debug view (context/lighting.md).
 
 import * as THREE from 'three';
-import { MeshBasicNodeMaterial } from 'three/webgpu';
+import { CubeRenderTarget, MeshBasicNodeMaterial } from 'three/webgpu';
 import { splatInternals } from '../three-internals';
 import { revealPaused } from '../loading/room-reveal';
 import { uniform, mix, pmremTexture, uv, PI, vec3, cos, sin, float } from 'three/tsl';
@@ -57,6 +57,37 @@ scanFillDome.visible = false;
 scene.add(scanFillDome);
 let scanLightPmrem: THREE.PMREMGenerator | null = null;
 const scanLightEnv: Array<THREE.WebGLRenderTarget | null> = [null, null];
+// The room's key light. The probe alone lights the figurine softly from all round: its
+// lit side is only a little brighter than its dark side, the change between them is
+// gradual, and nothing on it casts a shadow, so it looks flat. Each capture also finds
+// which way the room's light leans (measureRoomKey) and a directional light shines from
+// there, in that side's colour, the figurine shading itself. The light moves out of the
+// probe and into the key, never added on top: averaged over every way a surface can face,
+// the figurine gets the same light as from the probe alone, so it is no brighter or darker
+// than before, only shaped (context/lighting.md, "Room key light").
+export const ROOM_KEY = { on: true, strength: 3 }; // strength: the room's lean, exaggerated this many times (1 = as captured; see updateRoomKey)
+const ROOM_KEY_FIT = {
+  size: 32,          // px per cube face: the light's overall direction and colour, not detail
+  distance: 4,       // body heights from the figurine to the light: past it, for the shadow camera
+  shadowMap: 1024,   // px: its shadow falls on the figurine alone, so the map spans just it
+  normalBias: 0.01,  // body heights: keeps a surface from shadowing itself (acne)
+};
+const roomKey = new THREE.DirectionalLight(0xffffff, 0);
+roomKey.visible = false;
+roomKey.castShadow = true; // only the figurine casts or receives (character.ts), so only it is drawn into the map
+roomKey.shadow.mapSize.setScalar(ROOM_KEY_FIT.shadowMap);
+roomKey.shadow.bias = -0.0005;
+roomKey.target = player;
+scene.add(roomKey);
+renderer.shadowMap.enabled = true;
+let roomKeyShadowH = 0; // the body height the shadow camera was last fitted to
+/** What one capture says about the room's light. Before its read-back lands it holds the
+ *  other capture's fit (or, for the first, none: lean 0, so the probe keeps it all). */
+interface KeyFit { dir: THREE.Vector3; color: THREE.Color; mean: number; lean: number; gen: number }
+const keyFits: KeyFit[] = [0, 1].map(() => ({ dir: new THREE.Vector3(0, 1, 0), color: new THREE.Color(1, 1, 1), mean: 0, lean: 0, gen: 0 }));
+let keyCube: THREE.CubeCamera | null = null;
+const keyDir = new THREE.Vector3(), keyColor = new THREE.Color();
+
 const scanLightMix = uniform(0);           // which capture is lighting the scene: 0 = the first, 1 = the second, between = mid-fade
 let scanLightShown = 0;                    // the capture being shown, or faded toward
 let scanLightNode: unknown = null;         // the environment: the two captures mixed by scanLightMix
@@ -112,12 +143,14 @@ function captureScanLight(): void {
     if (!scanLightNode) {
       // first time: fill both, so the mix has two valid captures to read from
       shoot(0); shoot(1);
+      fitRoomKey([0, 1]);
       scanLightNode = mix(pmremTexture(scanLightEnv[0]!.texture), pmremTexture(scanLightEnv[1]!.texture), scanLightMix);
       buildScanDebug();
       scanLightShown = 0; scanLightMix.value = 0;
     } else {
       const next = 1 - scanLightShown; // into the one that isn't showing, then fade over to it
       shoot(next);
+      fitRoomKey([next]);
       scanLightShown = next;
       // no fade when it would not be seen anyway: none asked for, or the figurine is all paper (waiting for a room, or at the start of its arrival)
       if (SCAN_LIGHT.blend <= 0 || paperFigurine?.allPaper()) scanLightMix.value = next;
@@ -140,6 +173,114 @@ function captureScanLight(): void {
     scanLightLast = performance.now();
   }
   applyScanLight();
+}
+
+/** Render the scan into a small cube from the probe's point, within the capture's set-up
+ *  (figurine hidden, gaps filled), and once its pixels are back, fit the key light to it
+ *  for these captures. Until then they keep the fit already showing, so the key holds
+ *  steady rather than dropping out for the few frames the read takes. */
+function fitRoomKey(slots: number[]): void {
+  const N = ROOM_KEY_FIT.size;
+  const cube = (keyCube ??= new THREE.CubeCamera(1, 2, new CubeRenderTarget(N, { type: THREE.HalfFloatType })));
+  for (const c of cube.children as THREE.PerspectiveCamera[]) {
+    c.near = charH * SCAN_PROBE.near; c.far = SCAN_PROBE.far; c.updateProjectionMatrix();
+  }
+  cube.position.copy(scanLightAt);
+  cube.updateMatrixWorld(true);
+  cube.update(renderer as unknown as THREE.WebGLRenderer, scene);
+  for (const i of slots) {
+    const fit = keyFits[i], shown = keyFits[1 - i];
+    if (slots.length === 1) { fit.dir.copy(shown.dir); fit.color.copy(shown.color); fit.mean = shown.mean; fit.lean = shown.lean; }
+    fit.gen++;
+  }
+  const gens = slots.map((i) => keyFits[i].gen);
+  Promise.all([0, 1, 2, 3, 4, 5].map((face) => renderer.readRenderTargetPixelsAsync(cube.renderTarget, 0, 0, N, N, 0, face)))
+    .then((faces) => {
+      const found = measureRoomKey(faces as ArrayLike<number>[]);
+      slots.forEach((i, k) => {
+        if (keyFits[i].gen !== gens[k]) return; // captured over again since: that read is the one to keep
+        Object.assign(keyFits[i], found, { dir: keyFits[i].dir.copy(found.dir), color: keyFits[i].color.copy(found.color) });
+      });
+      if (TEL) console.log(`ROOMKEY from ${found.dir.toArray().map((v) => v.toFixed(2))} colour ${found.color.toArray().map((v) => v.toFixed(2))} lean ${found.lean.toFixed(3)} mean ${found.mean.toFixed(3)}`);
+    })
+    .catch((err) => console.error('room key light: reading the capture back failed', err));
+}
+
+/** The direction each texel of a cube face looks along (three.js's cube camera layout, in
+ *  the order its read-back gives the rows), for face coordinates u, v in -1..1. */
+function cubeTexelDir(face: number, u: number, v: number, out: THREE.Vector3): THREE.Vector3 {
+  switch (face) {
+    case 0: return out.set(-1, -v, -u);
+    case 1: return out.set(1, -v, u);
+    case 2: return out.set(-u, 1, v);
+    case 3: return out.set(-u, -1, -v);
+    case 4: return out.set(-u, -v, 1);
+    default: return out.set(u, -v, -1);
+  }
+}
+
+/** The room's light, from a cube capture, as an even part and a one-sided part (the
+ *  first two terms of its spherical harmonics, the standard way to pull a dominant light
+ *  out of an environment). `mean` is the view's average luminance; the one-sided part is
+ *  the luminance-weighted average of the directions, `dir` its direction and `lean` its
+ *  size against `mean` (0 = even all round, 1 = all from one point). A matte ball in the
+ *  room is lit (1 + 2·lean)/(1 - 2·lean) times more on its bright side than its dark one.
+ *  `color` is the light from the bright side (each direction by how squarely it faces
+ *  `dir`), scaled to unit luminance. All in the capture's linear values. */
+function measureRoomKey(faces: ArrayLike<number>[]): Omit<KeyFit, 'gen'> {
+  const N = ROOM_KEY_FIT.size, half = faces[0] instanceof Uint16Array;
+  const value = (a: ArrayLike<number>, i: number) => (half ? THREE.DataUtils.fromHalfFloat(a[i]) : a[i]);
+  const d = new THREE.Vector3(), dir = new THREE.Vector3(), color = new THREE.Color(0, 0, 0);
+  // two passes over the texels: the direction first, then the colour from that side
+  const pass = (each: (r: number, g: number, b: number, lum: number, area: number) => void) => faces.forEach((px, face) => {
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      const i = (y * N + x) * 4, u = (2 * (x + 0.5)) / N - 1, v = (2 * (y + 0.5)) / N - 1;
+      const r = value(px, i), g = value(px, i + 1), b = value(px, i + 2);
+      cubeTexelDir(face, u, v, d).normalize();
+      each(r, g, b, 0.2126 * r + 0.7152 * g + 0.0722 * b, (1 + u * u + v * v) ** -1.5); // the texel's solid angle, up to a constant
+    }
+  });
+  let total = 0, lumSum = 0;
+  pass((_r, _g, _b, lum, area) => { dir.addScaledVector(d, lum * area); lumSum += lum * area; total += area; });
+  const mean = lumSum / total, lean = dir.length() / total / Math.max(mean, 1e-9);
+  if (!(lean > 0)) return { dir: dir.set(0, 1, 0), color: color.setRGB(1, 1, 1), mean, lean: 0 }; // dark or even all round: no key
+  dir.normalize();
+  let lum = 0;
+  pass((r, g, b, l, area) => {
+    const w = Math.max(0, d.dot(dir)) * area;
+    color.r += r * w; color.g += g * w; color.b += b * w; lum += l * w;
+  });
+  return { dir, color: lum > 0 ? color.multiplyScalar(1 / lum) : color.setRGB(1, 1, 1), mean, lean };
+}
+
+/** Per frame: share the light between the probe and the key by the captures' fits (mixed
+ *  as the captures are), and keep the key on the figurine. */
+function updateRoomKey(): void {
+  const E = SCAN_LIGHT.intensity, on = SCAN_LIGHT.on && ROOM_KEY.on && !!scanLightNode;
+  roomKey.visible = on;
+  if (!on) { scene.environmentIntensity = E; return; }
+  // A directional light of strength K gives a surface, to first order, K/4 + (K/2)(n·dir):
+  // an even part and a one-sided part. The probe's own one-sided part is 2π·E·mean·lean
+  // (n·dir), so a key of K = 4π·E·mean·lean carries it, and the probe keeps what is left of
+  // its even part, π·E·mean minus the key's K/4: (1 - lean) of it. Averaged over every way
+  // a surface can face, the figurine gets just what the probe alone gave it. `strength`
+  // scales the one-sided part: 1 is the room as captured, more exaggerates it.
+  const t = scanLightMix.value, a = keyFits[0], b = keyFits[1];
+  const leanA = Math.min(1, a.lean * ROOM_KEY.strength), leanB = Math.min(1, b.lean * ROOM_KEY.strength);
+  scene.environmentIntensity = E * THREE.MathUtils.lerp(1 - leanA, 1 - leanB, t);
+  roomKey.intensity = 4 * Math.PI * E * THREE.MathUtils.lerp(a.mean * leanA, b.mean * leanB, t);
+  roomKey.color.copy(keyColor.copy(a.color).lerp(b.color, t));
+  keyDir.copy(a.dir).lerp(b.dir, t);
+  if (keyDir.lengthSq() < 1e-6) keyDir.copy(t < 0.5 ? a.dir : b.dir); // opposite directions, mid-fade
+  roomKey.position.copy(player.position).addScaledVector(keyDir.normalize(), charH * ROOM_KEY_FIT.distance);
+  if (charH !== roomKeyShadowH) { // a new character: the shadow camera spans it, and no more
+    const cam = roomKey.shadow.camera;
+    cam.left = cam.bottom = -charH; cam.right = cam.top = charH;
+    cam.near = charH * (ROOM_KEY_FIT.distance - 2); cam.far = charH * (ROOM_KEY_FIT.distance + 2);
+    cam.updateProjectionMatrix();
+    roomKey.shadow.normalBias = charH * ROOM_KEY_FIT.normalBias;
+    roomKeyShadowH = charH;
+  }
 }
 
 /** Estimate the colour of what the scan is missing overhead: the average colour of its
@@ -180,7 +321,7 @@ export function estimateScanFill(centers: THREE.BufferAttribute, color: THREE.Bu
 export function applyScanLight(): void {
   const on = SCAN_LIGHT.on && !!scanLightNode;
   (scene as unknown as { environmentNode: unknown }).environmentNode = on ? scanLightNode : null;
-  scene.environmentIntensity = SCAN_LIGHT.intensity;
+  updateRoomKey();
   hemi.visible = sun.visible = !on;
   const dbg = on && SCAN_LIGHT.debug;
   if (scanDebugBalls) scanDebugBalls.visible = dbg;
@@ -252,6 +393,7 @@ export function scanDebugThumbRect(): { x: number; y: number; w: number; h: numb
 /** Per frame: advance the cross-fade, then take a capture if one is due — because it
  *  was asked for, or because follow mode is on and the figurine has moved on. */
 export function updateScanLight(dt: number): void {
+  updateRoomKey();
   if (scanLightNode && scanLightMix.value !== scanLightShown) {
     const step = SCAN_LIGHT.blend > 0 ? dt / SCAN_LIGHT.blend : 1;
     scanLightMix.value = scanLightShown ? Math.min(1, scanLightMix.value + step) : Math.max(0, scanLightMix.value - step);

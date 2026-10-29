@@ -64,6 +64,7 @@ function useCharacter(entry: CharacterEntry, gltf: GLTF): void {
   BODY.radius = entry.radius;
 
   model = gltf.scene;
+  model.traverse((o) => { if ((o as THREE.Mesh).isMesh) o.castShadow = o.receiveShadow = true; }); // it shades itself under the room's key light (scan-light.ts)
   setupMixer(gltf, model);
   play('idle', 0);
   mixer!.update(0);
