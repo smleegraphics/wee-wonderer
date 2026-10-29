@@ -65,12 +65,13 @@ const scanLightEnv: Array<THREE.WebGLRenderTarget | null> = [null, null];
 // probe and into the key, never added on top: averaged over every way a surface can face,
 // the figurine gets the same light as from the probe alone, so it is no brighter or darker
 // than before, only shaped (context/lighting.md, "Room key light").
-export const ROOM_KEY = { on: true, strength: 3 }; // strength: the room's lean, exaggerated this many times (1 = as captured; see updateRoomKey)
+export const ROOM_KEY = { on: true, strength: 1 }; // strength: the room's lean, exaggerated this many times (1 = as captured; see updateRoomKey)
 const ROOM_KEY_FIT = {
   size: 32,          // px per cube face: the light's overall direction and colour, not detail
   distance: 4,       // body heights from the figurine to the light: past it, for the shadow camera
   shadowMap: 1024,   // px: its shadow falls on the figurine alone, so the map spans just it
   normalBias: 0.01,  // body heights: keeps a surface from shadowing itself (acne)
+  leanMax: 0.4,      // the most lean the key may carry, however `strength` exaggerates it: a matte surface facing away gets (1 - 2·lean) of the mean, none past 0.5; at 0.4 it keeps a fifth
 };
 const roomKey = new THREE.DirectionalLight(0xffffff, 0);
 roomKey.visible = false;
@@ -266,7 +267,7 @@ function updateRoomKey(): void {
   // a surface can face, the figurine gets just what the probe alone gave it. `strength`
   // scales the one-sided part: 1 is the room as captured, more exaggerates it.
   const t = scanLightMix.value, a = keyFits[0], b = keyFits[1];
-  const leanA = Math.min(1, a.lean * ROOM_KEY.strength), leanB = Math.min(1, b.lean * ROOM_KEY.strength);
+  const leanA = Math.min(ROOM_KEY_FIT.leanMax, a.lean * ROOM_KEY.strength), leanB = Math.min(ROOM_KEY_FIT.leanMax, b.lean * ROOM_KEY.strength);
   scene.environmentIntensity = E * THREE.MathUtils.lerp(1 - leanA, 1 - leanB, t);
   roomKey.intensity = 4 * Math.PI * E * THREE.MathUtils.lerp(a.mean * leanA, b.mean * leanB, t);
   roomKey.color.copy(keyColor.copy(a.color).lerp(b.color, t));

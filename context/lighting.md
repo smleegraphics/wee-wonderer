@@ -85,17 +85,25 @@ a shadow, so it looks flat and pasted on. The room key light (`ROOM_KEY` in
   never added on top. A directional light of strength K gives a surface K/4 + (K/2)(n·dir)
   to first order, so a key of 4π·E·mean·lean carries the probe's one-sided part and the
   probe keeps (1 - lean) of its strength (`updateRoomKey`). Averaged over every way a
-  surface can face, the figurine gets what the probe alone gave it. `strength` (default 3,
-  "Key strength" in the Debug card) exaggerates the lean: 1 is the room as captured and
-  barely shows; 5 throws hard head shadows across faces in Living Room.
+  surface can face, the figurine gets what the probe alone gave it. `strength` (default 1,
+  "Key strength" in the Debug card) exaggerates the lean: 1 is the room as captured. It was
+  3, picked while the scan's colours were turned into sRGB twice (above): that flattened the
+  room's light, and the leans measured smaller (Living Room 0.15 then, 0.26 now). With the
+  colours right, 3 put Living Room, Counter and Record Player Table at 0.72 to 0.82: a bright
+  side, a hard line down the face and a dark side. 1 gives a soft lit side (Sam, from a
+  sheet of every room at 0, 0.5, 1, 1.5, 2 and 3). However it is exaggerated, the lean the
+  key carries stops at `leanMax` (0.4): a matte surface facing away from the light gets
+  (1 - 2·lean) of the mean, so past 0.5 the dark side would get nothing.
 - **Shadow.** Only the figurine casts and receives (`character.ts` sets it on load), into a
   1024 px map whose camera spans one body height around it. The light sits 4 body heights
   from the figurine, follows it every frame, and fades between captures with `scanLightMix`.
-- **What the rooms give.** Living Room, Counter and Playroom: from above (lean 0.15, 0.10,
-  0.10). Kitchen: from the side and nearly even (lean 0.04), so it barely changes. It is a
-  tabletop scan with no window or lamp in it. On screen, from a front three-quarter view,
-  the figurine stays within about 6% of its old brightness, darker by about 12% in Living
-  Room (the light is overhead and the camera sees the front).
+- **What the rooms give.** With the colours right: Living Room 0.26, Counter 0.24, Record
+  Player Table 0.27 (from the window side), Kitchen 0.06, nearly even, so it barely changes:
+  it is a tabletop scan with no window or lamp in it. (Before the colour fix: Living Room,
+  Counter and Playroom from above at 0.15, 0.10, 0.10, Kitchen from the side at 0.04. Then,
+  at strength 3, from a front three-quarter view, the figurine stayed within about 6% of its
+  brightness without the key, and was about 12% darker in Living Room. Not measured again
+  since.)
 
 **Tried and rejected: the brightest patch.** The first version shone the key from the
 brightest 3% of the view, against its average for the strength. It found bright surfaces,
