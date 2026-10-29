@@ -2,6 +2,7 @@
 
 import { hud } from './app';
 import { applyVoxelView, overlayBoxes, PLATFORM_OPTS, rebuildCollision, rebuildPlatformOverlay, setCleanupOverlay, setDensityOverlay, setPlatformOverlay, setVoxelOverlay, showCleanup, showDensity, showPlatforms, showVoxels, VOXEL_OPTS, VOXEL_VIEW, voxelSet, type VoxelSettings, voxelSliders } from './collision/room-collision';
+import { GOD_CAM, setGodCam } from './figurine/camera';
 import { CLIMB_TILT } from './figurine/climb';
 import { MOVE, moveSet, type MoveSettings, moveSliders } from './figurine/movement';
 import { CONTACT_SHADOW } from './lighting/contact-shadow';
@@ -15,6 +16,8 @@ export function setupDebugMenu(): void {
   const overlays = hud.debug.section('Overlays', true);
   overlayBoxes.voxel = overlays.addToggle('Voxel wireframe (V)', showVoxels, setVoxelOverlay,
     'Draw the collision mesh over the scan as a wireframe.');
+  overlays.addToggle('Free camera', GOD_CAM.on, setGodCam,
+    'Let the camera off the figurine: drag to orbit, right-drag to pan, scroll to zoom, as far as you like.');
   overlayBoxes.platform = overlays.addToggle('Platforms (P)', showPlatforms, setPlatformOverlay,
     'Spike 1: color the walkable surfaces the collision decomposes into — floor, ' +
     'couch, counter. Distinct colors = distinct platforms (reached by climbing/jumping).');
