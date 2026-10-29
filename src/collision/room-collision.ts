@@ -8,7 +8,7 @@ import { CLEANUP_ADDED, CLEANUP_REMOVED, type VoxelGrids } from './voxelize-core
 import { type Collision, type NavGrid, type PlatformField, MeshCollision } from './collision';
 import { voxelCacheKey, voxelCacheGet, voxelCachePut } from './voxel-cache';
 import { workerCaller } from '../worker-call';
-import { SCANS } from '../scan/scans';
+import { SCANS, scanSize } from '../scan/scans';
 import { GRAIN, hud, MESHONLY, num, q, scene, TARGET_RADIUS, VOXEL_SIZE } from '../app';
 import { charH } from '../figurine/character';
 import { collisionSplats, isImported, currentFile, lastMatrix, loadToken, newLoadToken, scanLoading } from '../scan/room';
@@ -168,7 +168,7 @@ export async function buildCollision(file: string, token: number, centers: THREE
   // key wouldn't reflect it — always re-voxelize an import.
   const useCache = !isImported(file);
   const opts = { ...VOXEL_OPTS }; // as they are now: a slider can move while this waits, and the key must match what is built
-  const key = voxelCacheKey(file, VOXEL_SIZE, opts, TARGET_RADIUS);
+  const key = voxelCacheKey(file, VOXEL_SIZE, opts, TARGET_RADIUS * scanSize(file)); // (the room's size: scanned at another, the same file is another surface)
   let surf: VoxelSurface | null = useCache ? await voxelCacheGet(key) : null;
   const cached = surf !== null;
   if (token !== loadToken) return; // superseded while awaiting the cache

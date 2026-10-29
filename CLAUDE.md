@@ -228,8 +228,9 @@ Things that cost time:
   first `own` only (see `showSplat`).
 - **The gap fill follows the walkable cells.** It runs after collision and again
   whenever `rebuildPlatformOverlay` rebuilds them; nothing else decides where it goes.
-- Scans are scaled to `TARGET_RADIUS`, so distances are in normalized scan units,
-  not metres. Express sizes relative to `charH`. Collision's own settings are in
+- Scans are scaled to `TARGET_RADIUS` (times the scan's `size`, if it has one: rooms are
+  scaled, the figurine and anything added to a room are not; context/collision.md, "Room
+  size"), so distances are in normalized scan units, not metres. Express sizes relative to `charH`. Collision's own settings are in
   grains (`GRAIN`, the voxel size they were tuned at), never in cells of the grid in
   use: see `context/collision.md`.
 - **Bump `SCHEMA` on any change to how the collision mesh is built**, not only to its

@@ -264,9 +264,22 @@ Open:
 ## The ground: its level, flattening it, and starting on it
 
 "The ground" is the level the figurine plays on: a room's floor, a table's top. The
-voxelizer finds its row once (`groundRow`: the commonest lowest-place-with-room-to-stand
-near the scan's centre) and three things use it: the gap fill below, the flatten, and
-where the figurine starts.
+voxelizer finds its row once (`groundRow`: the height with the most room to stand in the
+whole scan, counting each column's lowest place with room to stand) and three things use
+it: the gap fill below, the flatten, and where the figurine starts.
+
+**Why the whole scan.** It used to count only within two figurine heights of the scan's
+centre, so whatever stood over the centre decided it. Record Player Table's centre is under
+its sideboard. Shrunk to its `size` (below), the gap under the sideboard was too low to
+stand in, and the hollow inside the cabinet won: the ground was its bottom shelf, the
+figurine started behind it at shelf height, and the gap fill worked at that level. Over the
+whole scan the four rooms that were right stay on the same level (Kitchen's table, Living
+Room's and Playroom's floor, Counter's worktop), and the most area still decides it on a
+tabletop scan. It is counted by height, not by connected surface, so a floor cut up by rugs
+and clutter still counts as one. Only places with room to stand count, so a wall never can,
+unlike the levelling's rejected "biggest plane is the floor", which picked a wall. Curled Up
+Dog's ground moved from 2.65 to 0.86 body heights (a soft blanket spreads over many heights)
+and it now starts down in a fold of it; nothing in its collision check got worse.
 
 **Flattening (`floorFlat`, "Floor flatten" in the Debug card).** The mesh within 1.5
 grains of the ground's splats (2 in Playroom: see below) is snapped onto their level,
@@ -309,7 +322,11 @@ which is where the scan's opacity peaks near the ground's row.
 
 **Starting (`resetToSpawn`).** The figurine starts at the spot nearest the scan's
 centre that is at the ground's height (`VoxelSurface.groundY`, within a step) and where
-its whole capsule fits: `findSpawn` with a level. Without a level, `findSpawn` takes the
+its whole capsule fits: `findSpawn` with a level. A spot in the open, with nothing over it
+up to the opening shot's camera (`CAM_START_HEIGHT`, 2.6 body heights), comes before a
+nearer one under something, so the opening shot sees the figurine: Record Player Table's
+nearest spot was under its sideboard. Where nothing at that level is in the open, the
+nearest covered spot is taken, as before; no other room's start moved. Without a level, `findSpawn` takes the
 "lowest place near the centre with room to stand"; that is the fallback, for when
 nothing at the ground's height fits. On Counter that lowest place is the inside of a
 glass bowl: it always was, and a bumpy worktop used to make a ramp out of it.
@@ -364,8 +381,8 @@ ragged edges in the one surface everything else stands on. `fillGround`
 fills them in the voxel grid before meshing. The hole patching (`splat-fill.md`) follows
 by itself, since it tracks the walkable cells.
 
-- **It works at the level the figurine starts on**: the commonest "lowest place with
-  room to stand" near the scan's centre, the voxel-grid twin of `findSpawn`. In a room
+- **It works at the ground's level** (`groundRow`, above: the height with the most room
+  to stand in the scan). In a room
   that is the floor; on Counter and Kitchen it is the worktop and the table.
 - **Holes with the surface all round them are filled at any level** (as before).
 - **On the ground only, bare stretches are filled when nothing `fillFloor` voxels wide
@@ -416,6 +433,19 @@ Known limits:
   Seed 1 has three samples with the climber's body more than half a radius into the
   mesh, which seeds 2 and 4 do not, and which Counter also shows without the fill. Not
   traced to a cause.
+
+## Room size: rooms are scaled, what is added is not
+
+Every scan is scaled at load so its spread (the 90th-percentile distance of its splats from
+the centre) is `TARGET_RADIUS`, since a scan file says nothing of how big the real room was.
+A scan's `size` in `SCANS` scales it from there: Record Player Table is 0.67, so the figurine
+is 1.5× bigger beside its sideboard, enough for a jump to catch the sideboard's front and
+climb it (at full size the front starts above where a jump reaches; at 1.3× and 1.4× no jump
+caught it). The figurine, and anything else added to a room, stays one size in every room;
+only the room changes. Everything collision does is counted in grains or body heights, so a
+room drawn smaller is built with fewer, relatively bigger voxels: detail stays the same next
+to the figurine. The size is part of the collision cache key (`TARGET_RADIUS × size`).
+An uploaded scan has no `size`; a control to set one for an import is a later idea.
 
 ## Settings for one scan
 
@@ -655,9 +685,9 @@ Notes:
   floater cleaner" (about the floater filters; the crop alone was not tried on it).
 - Kitchen and Counter are tabletop scans, not walk-around rooms. Living Room and
   Playroom are the real rooms.
-- The ground level the game guesses (`groundY`, "the commonest lowest place with room to
-  stand near the centre") is fragile: it moved 1.5 body heights with the splats it was
-  built from (above). Not fixed.
+- The ground level the game guesses (`groundY`) was fragile: counted near the scan's
+  centre, it moved 1.5 body heights with the splats it was built from (above). It is now
+  counted over the whole scan ("The ground", above).
 
 ## SPZ moves Kitchen's collision
 

@@ -16,6 +16,9 @@ const CAM_PIVOT = 0.7; // the camera looks at the figurine this far up its heigh
  *  heights. In front of the figurine (which faces +Z unturned), a little to one side,
  *  looking down at it. */
 const CAM_START = new THREE.Vector3(1.2, 2.6 - CAM_PIVOT, 4.5);
+/** How high the opening shot's camera is over the figurine's feet, in figurine heights: the
+ *  start is looked for where nothing is over it up to here (resetToSpawn), so the shot sees it. */
+export const CAM_START_HEIGHT = CAM_PIVOT + CAM_START.y;
 const CAM_START_TURNS = 16; // sides of the figurine the opening shot may be turned to: 22.5° apart
 
 // The follow camera is a spring arm from the pivot (the figurine) to the camera. The

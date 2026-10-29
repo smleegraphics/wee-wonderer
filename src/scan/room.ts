@@ -15,7 +15,7 @@ import { scanBuffers, type ParsedScan } from './parse-scan';
 import { updateReveal, HANDOVER, startReveal, startLeave, installReveal } from '../loading/room-reveal';
 import { type LoadingScene, createLoadingScene } from '../loading/loading-scene';
 import { type PaperFigurine, createPaperFigurine } from '../loading/paper-figurine';
-import { SCANS, scanURL } from './scans';
+import { SCANS, scanSize, scanURL } from './scans';
 import { DEFAULT_SCAN, hud, MESHONLY, player, renderer, room, scene, surround, SURROUND, TARGET_RADIUS, TEL, VOXEL_SIZE } from '../app';
 import { buildCollision, collisionKey, disposeCollision, navVersion, rebuildCollision, useScanSettings, VOXEL_OPTS } from '../collision/room-collision';
 import { charH, charLoaded, play, resetToSpawn } from '../figurine/character';
@@ -79,9 +79,11 @@ export function updateLoading(): void {
   loadingShown = on;
 }
 
-/** How far the room reaches from the figurine: the scan is centred on the origin and scaled to TARGET_RADIUS. */
+/** How far the room on screen reaches from its centre: TARGET_RADIUS, times its scan's `size`. */
+let roomRadius = TARGET_RADIUS;
+/** How far the room reaches from the figurine: the scan is centred on the origin and scaled to `roomRadius`. */
 function roomReach(): number {
-  return TARGET_RADIUS + Math.hypot(player.position.x, player.position.z);
+  return roomRadius + Math.hypot(player.position.x, player.position.z);
 }
 
 /** Bring the room in around the figurine, from where it stands. */
@@ -197,7 +199,7 @@ function loadRoom(source: ScanSource, id: string): void {
     scanLoading = false;
     updateLoading();
     // a collision slider moved while the room was loading (rebuildCollision waits for this): catch up
-    if (error === undefined && collisionKey !== voxelCacheKey(id, VOXEL_SIZE, VOXEL_OPTS, TARGET_RADIUS)) rebuildCollision();
+    if (error === undefined && collisionKey !== voxelCacheKey(id, VOXEL_SIZE, VOXEL_OPTS, TARGET_RADIUS * scanSize(id))) rebuildCollision();
     if (error !== undefined) hud.status(`${id}: ${error instanceof Error ? error.message : String(error)}`, 'error');
   };
   showScan(source, id, token, abort.signal).then(() => finish(), finish);
@@ -237,8 +239,10 @@ async function showScan(source: ScanSource, id: string, token: number, cancelled
   const solid = picked && picked.opacity.length ? picked : all; // (none marked: every splat drawn)
   const o = orientScan(new THREE.BufferAttribute(solid.centers, 3));
   // scans have arbitrary unit scales — normalize each to a consistent world
-  // size so the fixed-size figurine stays a sensible fraction of every room.
-  const k = TARGET_RADIUS / o.radius;
+  // size so the fixed-size figurine stays a sensible fraction of every room
+  // (times the scan's own `size`, where one is set for play: scan-list.ts).
+  roomRadius = TARGET_RADIUS * scanSize(id);
+  const k = roomRadius / o.radius;
   room.quaternion.copy(o.quaternion); // auto-leveled: floor normal → +Y
   room.scale.setScalar(k);
   room.position.y = k * o.floorOffsetY; // floor at y=0 (in scaled space)
