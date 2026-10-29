@@ -4,6 +4,7 @@
 // (context/ui.md).
 
 import * as THREE from 'three';
+import { Fn, sRGBTransferEOTF, vec4 } from 'three/tsl';
 import { GaussianSplat } from 'three/addons/objects/GaussianSplat.js';
 import { createGaussianSplatGeometry } from 'three/addons/utils/GaussianSplatUtils.js';
 import { orientScan } from './orient-scan';
@@ -15,7 +16,7 @@ import { scanBuffers, type ParsedScan } from './parse-scan';
 import { updateReveal, HANDOVER, startReveal, startLeave, installReveal } from '../loading/room-reveal';
 import { type LoadingScene, createLoadingScene } from '../loading/loading-scene';
 import { type PaperFigurine, createPaperFigurine } from '../loading/paper-figurine';
-import { scanURL } from './scans';
+import { SCANS, scanSize, scanURL } from './scans';
 import { DEFAULT_SCAN, hud, MESHONLY, player, renderer, room, scene, surround, SURROUND, TARGET_RADIUS, TEL, VOXEL_SIZE } from '../app';
 import { buildCollision, collisionKey, disposeCollision, navVersion, rebuildCollision, useScanSettings, VOXEL_OPTS } from '../collision/room-collision';
 import { charH, charLoaded, play, resetToSpawn } from '../figurine/character';
@@ -28,6 +29,9 @@ export let currentFile = DEFAULT_SCAN;
 export let lastCenters: THREE.BufferAttribute | null = null;
 export let lastOpacity: Float32Array | null = null;
 export let lastCov: Float32Array | null = null; // per-splat covariance (6/splat) for anisotropic voxelization
+/** The splats the room's collision is built from, which a rebuild builds from again: those
+ *  drawn, or the part of them an import's cleanup marked (clean-scan-core.ts). */
+export let collisionSplats: { centers: THREE.BufferAttribute; opacity: Float32Array; covariances: Float32Array } | null = null;
 export const lastMatrix = new THREE.Matrix4();
 export let loadToken = 0; // guards against a slow async collision build landing after a scan swap
 /** A new load (or collision rebuild) begins: every one still running is now superseded. */
@@ -76,9 +80,11 @@ export function updateLoading(): void {
   loadingShown = on;
 }
 
-/** How far the room reaches from the figurine: the scan is centred on the origin and scaled to TARGET_RADIUS. */
+/** How far the room on screen reaches from its centre: TARGET_RADIUS, times its scan's `size`. */
+let roomRadius = TARGET_RADIUS;
+/** How far the room reaches from the figurine: the scan is centred on the origin and scaled to `roomRadius`. */
 function roomReach(): number {
-  return TARGET_RADIUS + Math.hypot(player.position.x, player.position.z);
+  return roomRadius + Math.hypot(player.position.x, player.position.z);
 }
 
 /** Bring the room in around the figurine, from where it stands. */
@@ -110,12 +116,13 @@ export let currentScan: { scan: ParsedScan; own: number; cellsUsed: number } | n
 
 /** Load an example scan from the scan host (scans.ts). */
 export function loadScan(file: string): void {
-  loadRoom({ url: new URL(scanURL(file), location.href).href }, file); // absolute: a worker resolves URLs against its own script
+  const floaterFilter = SCANS.find((s) => s.file === file)?.floaterFilter ?? true;
+  loadRoom({ url: new URL(scanURL(file), location.href).href, floaterFilter }, file); // absolute: a worker resolves URLs against its own script
 }
 
 /** Load a scan that is already in memory: an imported one, read and cleaned (import.ts). */
-export function loadScanData(scan: ParsedScan, id: string): void {
-  loadRoom({ scan }, id);
+export function loadScanData(scan: ParsedScan, id: string, collision?: Uint8Array): void {
+  loadRoom({ scan, collision }, id);
 }
 
 /** An imported scan's room id: its file name, marked so it is never taken for an example
@@ -125,11 +132,13 @@ export const importedId = (name: string) => `${IMPORTED}${name}`;
 export const isImported = (id: string) => id.startsWith(IMPORTED);
 
 /** Where a room's scan comes from: an address to fetch and parse it from, or its splats. */
-type ScanSource = { url: string } | { scan: ParsedScan };
+/** A scan to fetch, or one already in memory; `collision` marks the splats its collision is
+ *  built from (clean-scan-core.ts), all of them without it. */
+type ScanSource = { url: string; floaterFilter: boolean } | { scan: ParsedScan; collision?: Uint8Array };
 
 // The scan is fetched and parsed in a worker (load-scan.worker.ts): on the main
 // thread a large scan froze the page for seconds.
-const parseScan = workerCaller<{ url: string }, ParsedScan, ScanLoadProgress>(
+const parseScan = workerCaller<{ url: string; floaterFilter: boolean }, { scan: ParsedScan; collision?: Uint8Array }, ScanLoadProgress>(
   new Worker(new URL('./load-scan.worker.ts', import.meta.url), { type: 'module' }), 'scan load');
 
 // The steps of a load, in order: what the loading note says during each, and its share
@@ -191,36 +200,59 @@ function loadRoom(source: ScanSource, id: string): void {
     scanLoading = false;
     updateLoading();
     // a collision slider moved while the room was loading (rebuildCollision waits for this): catch up
-    if (error === undefined && collisionKey !== voxelCacheKey(id, VOXEL_SIZE, VOXEL_OPTS, TARGET_RADIUS)) rebuildCollision();
+    if (error === undefined && collisionKey !== voxelCacheKey(id, VOXEL_SIZE, VOXEL_OPTS, TARGET_RADIUS * scanSize(id))) rebuildCollision();
     if (error !== undefined) hud.status(`${id}: ${error instanceof Error ? error.message : String(error)}`, 'error');
   };
   showScan(source, id, token, abort.signal).then(() => finish(), finish);
 }
 
+/** The splats `marked` picks out of a scan's centres, opacities and covariances, in order. */
+function subsetOf(marked: Uint8Array, all: { centers: Float32Array; opacity: Float32Array; covariances: Float32Array }): { centers: Float32Array; opacity: Float32Array; covariances: Float32Array } {
+  let n = 0;
+  for (const m of marked) n += m;
+  const centers = new Float32Array(n * 3), opacity = new Float32Array(n), covariances = new Float32Array(n * 6);
+  for (let i = 0, k = 0; i < marked.length; i++) {
+    if (!marked[i]) continue;
+    centers.set(all.centers.subarray(i * 3, i * 3 + 3), k * 3);
+    covariances.set(all.covariances.subarray(i * 6, i * 6 + 6), k * 6);
+    opacity[k++] = all.opacity[i];
+  }
+  return { centers, opacity, covariances };
+}
+
 /** Fetch and parse the scan (unless its splats are already here), put it in the room
  *  levelled and scaled, and build its collision. */
 async function showScan(source: ScanSource, id: string, token: number, cancelled: AbortSignal): Promise<void> {
-  const parsed = 'scan' in source ? source.scan
-    : await parseScan({ url: source.url }, [], { signal: cancelled, onProgress: (p) => loadStep(token, p.step, p.step === 'fetch' ? p.fetched : 0) });
+  const loaded = 'scan' in source ? source
+    : await parseScan({ url: source.url, floaterFilter: source.floaterFilter }, [], { signal: cancelled, onProgress: (p) => loadStep(token, p.step, p.step === 'fetch' ? p.fetched : 0) });
+  const parsed = loaded.scan;
   await roomGone; // the old room has to be out of the way first; it usually is long before this
   if (token !== loadToken) return; // superseded while loading
   loadStep(token, 'build');
-  const ownCenters = new THREE.BufferAttribute(parsed.centers, 3);
-  const o = orientScan(ownCenters);
+  const own = parsed.centers.length / 3;
+  const opacity = new Float32Array(own);
+  for (let i = 0; i < own; i++) opacity[i] = parsed.colors[i * 4 + 3] / 255;
+  // The splats the collision is built from, and the room levelled by: those the floater filters
+  // keep (marked by an import's cleanup, or by the load worker), or all of them (clean-scan-core.ts).
+  const marked = loaded.collision;
+  const all = { centers: parsed.centers, opacity, covariances: parsed.covariances };
+  const picked = marked && subsetOf(marked, all);
+  const solid = picked && picked.opacity.length ? picked : all; // (none marked: every splat drawn)
+  const o = orientScan(new THREE.BufferAttribute(solid.centers, 3));
   // scans have arbitrary unit scales — normalize each to a consistent world
-  // size so the fixed-size figurine stays a sensible fraction of every room.
-  const k = TARGET_RADIUS / o.radius;
+  // size so the fixed-size figurine stays a sensible fraction of every room
+  // (times the scan's own `size`, where one is set for play: scan-list.ts).
+  roomRadius = TARGET_RADIUS * scanSize(id);
+  const k = roomRadius / o.radius;
   room.quaternion.copy(o.quaternion); // auto-leveled: floor normal → +Y
   room.scale.setScalar(k);
   room.position.y = k * o.floorOffsetY; // floor at y=0 (in scaled space)
   room.updateMatrixWorld(true);
   const toWorld = new THREE.Matrix4().makeTranslation(-o.center.x, -o.center.y, -o.center.z).premultiply(room.matrixWorld); // the scan recentred on the origin, then the room's transform
-  // Collision first, from the scan as it was captured: where the figurine can stand
-  // decides where splats are added (context/splat-fill.md).
-  const own = parsed.centers.length / 3;
-  const opacity = new Float32Array(own);
-  for (let i = 0; i < own; i++) opacity[i] = parsed.colors[i * 4 + 3] / 255;
-  await buildCollision(id, token, ownCenters, opacity, parsed.covariances, toWorld);
+  // Collision first, from the scan's own splats (an import: those its cleanup marked), before any
+  // are added: where the figurine can stand decides where splats are added (context/splat-fill.md).
+  collisionSplats = null; // (set once the room is in place, below)
+  await buildCollision(id, token, new THREE.BufferAttribute(solid.centers, 3), solid.opacity, solid.covariances, toWorld);
   if (token !== loadToken) return; // superseded while building
   // The spawn needs only the collision, and must be decided now, before the next frame:
   // from here the camera tests the new room's mesh, and a figurine still at its old spot
@@ -233,12 +265,34 @@ async function showScan(source: ScanSource, id: string, token: number, cancelled
   if (token !== loadToken) return; // superseded while filling
   if (walk) reportWalkFill(id, filled, tFill);
   const shown = showSplat(filled, o.center.multiplyScalar(-1), opacity, cellsUsed); // recentred on the origin
+  // What a rebuild builds from: the marked splats, or every splat drawn. (Not `parsed`'s arrays:
+  // the fill above took those over to its worker, and they are empty here now.)
+  collisionSplats = picked && picked.opacity.length ? { centers: new THREE.BufferAttribute(picked.centers, 3), opacity: picked.opacity, covariances: picked.covariances } : { centers: shown.centers, opacity, covariances: shown.cov };
   // The walkable cells may have been rebuilt while the fill was being worked out (the
   // figurine arriving gives them its real height), when there was no splat to refill.
   void refillWalkable();
   estimateScanFill(shown.centers, new THREE.BufferAttribute(filled.scan.colors.subarray(0, own * 4), 4, true), shown.cov, lastMatrix, scanFill);
   console.log(`loaded ${id}: radius ${o.radius.toFixed(2)} → scaled ${k.toFixed(2)}x`);
   if (charLoaded) requestScanLight(); // (needs the splat in place)
+}
+
+/** A scan's colours are stored as they look on screen (sRGB), like the photos it was made from.
+ *  The renderer works in linear light and turns everything it draws into sRGB at the end, and
+ *  GaussianSplat hands its colours on as they are stored, so they were turned into sRGB twice: a
+ *  0.5 showed at 0.74, every scan greyed and lightened. Turned into linear light here, so the end
+ *  shows each splat as stored, and what is mixed with it (the paper of the arrival, the fill's
+ *  tint, the contact shadow) and lit from it (the scan light) is in linear light like the rest of
+ *  the scene. Splats overlapping now blend in linear light, not as they were made to: a difference
+ *  at soft edges only. */
+function colourFromSRGB(splat: GaussianSplat): void {
+  const material = splat.material as unknown as { colorNode: any; needsUpdate: boolean }; // (three's types don't describe the material's colour hook)
+  const base = material.colorNode; // vec4: the splat's colour and coverage
+  material.colorNode = Fn(() => {
+    const c = vec4(base).toVar();
+    c.rgb.assign(sRGBTransferEOTF(c.rgb));
+    return c;
+  })();
+  material.needsUpdate = true;
 }
 
 /** Put a scan and its fill in the room as the splat object, at `position` in the room.
@@ -252,6 +306,7 @@ export function showSplat({ scan, own }: FilledScan, position: THREE.Vector3, op
   // their real ellipsoid footprint). The worldspace transform is applied in the core.
   const cov = scan.covariances.subarray(0, own * 6);
   const splat = new GaussianSplat(createGaussianSplatGeometry(scan.centers, scan.covariances, scan.colors, scan.sphericalHarmonics));
+  colourFromSRGB(splat); // (first: what wraps the colour after it works in linear light)
   if (!MESHONLY) installFillView(splat, own);
   installReveal(splat, scan.centers.length / 3);
   installContactShadow(splat);

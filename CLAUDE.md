@@ -33,13 +33,16 @@ answers 504 "Outdated Optimize Dep" for three.js and the app does not start.
 Scans are not in the repo: they live in the gitignored `scans/` folder, which the dev and
 preview servers serve at `/scans/` (never `public/`: Vite copies it into every build).
 `?scan=<file>` picks one;
-the default is `kitchen-clean.spz` (Kitchen). Cleaned demo scans are `*-clean.ply`; the shipped
-ones are those converted to SPZ (`*-clean.spz`, `context/deploy.md`, "Scan files").
+the default is `kitchen-crop.spz` (Kitchen). The shipped scans are the raw `.ply` cropped to the
+room (`*-crop.ply`) and converted to SPZ (`*-crop.spz`, `context/deploy.md`, "Scan files"); the
+older `*-clean` files were floater-stripped too, which put holes in them.
 
 **Which scans ship.** `SCANS` in `src/scan/scan-list.ts` lists every known scan; only the
 `listed: true` ones appear in the Scans card, and the first of those is the default.
 The shipped scans are Kitchen, Living Room and Counter (Mip-NeRF 360, CC BY 4.0, which
-needs credit) and Curled Up Dog (`Marishka-clean.spz`, our own capture). **Playroom
+needs credit) and Record Player Table (`record-player-table-crop.spz`, our own capture, made
+with SpAItial). Curled Up Dog (`Marishka-clean.spz`, also our own) is no longer listed but stays
+in `SCANS` for the checks. **Playroom
 (`room2.ply`) is a local test scan only:** it comes from the Deep Blending dataset, whose licence is unstated, so it
 is unlisted and must not be uploaded or listed. It stays in `SCANS` because the checks
 below measure on it by file name and it has its own collision setting. Before listing a
@@ -65,7 +68,7 @@ enough to find one.
 | `scan-list.ts`, `scans.ts` | The example scans (`SCANS`, which are listed, `SCAN_DIR`) as plain data the Vite config and scripts also read; and `scanURL`, the one place a scan's address is decided (`VITE_SCAN_BASE`) |
 | `load-scan.worker.ts`, `parse-scan.ts` | Fetches and parses a scan off the main thread; `parseScan` picks PLY or SPZ by the file's bytes, and every scan becomes one form, `ParsedScan` |
 | `orient-scan.ts` | Levels the floor and yaw-aligns walls to X/Z (seeded, deterministic) |
-| `clean-scan-core.ts` (+ worker), `scripts/clean-scan.mjs` | Floater removal, in-browser and offline |
+| `clean-scan-core.ts` (+ worker), `scripts/clean-scan.mjs` | Cleanup of an import (`cleanMasks`): what is drawn (levelled, cropped to the room) and, from the same pass, what the collision is built from (also floater-filtered); the script keeps a `.ply`'s drawn set offline with the same code. Two sets, and why: context/collision.md, "Scan cleanup" |
 | `fill-scan-core.ts` (+ worker) | Walkable gap fill: flat splats added where the ground the figurine can stand on lets the backdrop through |
 | **`src/collision/`** | **Collision from the splats:** |
 | `collision.ts` | `MeshCollision` (three-mesh-bvh over the collision mesh) and `NavGrid` (walkable cells) |
@@ -81,7 +84,7 @@ enough to find one.
 | `controller.ts` | Per-frame movement (`updateController`): momentum, the jump and its grace, walking off edges, the fall, wall push-out (`bodyOverlap`) |
 | `movement.ts`, `abilities.ts` | The movement settings (`MOVE`, the Movement section of the Debug card) and the abilities a loadout is made of (the double jump) |
 | `climb.ts` | The climb state machine (`climbUpdate`, `climbWall`, `fitClimbBody`), context/climb.md |
-| `camera.ts` | The follow camera (`updateCamera`), the opening shot, the fixed debug camera |
+| `camera.ts` | The follow camera (`updateCamera`, its zoom limits `setFollowDistance`), the free camera (`setGodCam`, the Debug card's Free camera), the opening shot, the fixed debug camera |
 | **`src/lighting/`** | `scan-light.ts` (the light probe, the room key light that shades the figurine from the way the room's light leans, and the probe's debug view) and `contact-shadow.ts`, context/lighting.md |
 | **`src/ui/`** | The on-screen UI: `hud.ts` (tiles, cards, screens), `debug-panel.ts`, `paper.ts` (building blocks), `ui.css` (all styles and tokens) |
 | **`src/dev-pages/`** | Pages not part of the app: `inspect-room.ts`, the scan inspector (`inspect.html`); `character-thumbs.ts` (`thumbs.html`), which renders the Characters card's pictures for `scripts/character-thumbs.mjs` |
@@ -106,7 +109,8 @@ from a second checkout, start its own server on another port and pass its addres
   lowest density drawn, and cleanup from before (0) to after (2). A script can move them
   frame by frame for an animation.
 - **Frame a region:** `?az=&el=&dist=&cx=&cy=&cz=` parks a fixed orbit camera
-  (`dist` in `TARGET_RADIUS` units). Without it the camera follows the figurine.
+  (`dist` in `TARGET_RADIUS` units). Without it the camera follows the figurine. To look
+  round by hand, the Debug card's Free camera lets it off the figurine (`context/climb.md`).
 - **Telemetry and internal state:** `?tel=1` logs `CLIMB-*` events to the console
   and publishes `window.__dbg` every frame (state, position, climb facing, camera
   distances, `probe`, `reveal`: how much of the room is in place, 0 while
@@ -220,13 +224,18 @@ Things that cost time:
   loadout's abilities: nothing branches on which character is in play (context/movement.md).
 - **The movement model matches the game.** What `collision-health.ts` says a jump reaches
   is checked against real jumps by `scripts/jumpcheck.mjs`; change one, run the other.
+- **Splat colours are sRGB; everything else is linear.** A scan stores its colours as they
+  look on screen. The splat converts them as it draws them (`colourFromSRGB` in room.ts); code
+  that reads a scan's colours on the CPU must convert them too (`estimateScanFill`), and a
+  new wrap of the splat's colour goes after that conversion (context/lighting.md).
 - **A scan's splat arrays hold more than the scan.** Fill splats follow the scan's
   own. Collision, orientation and anything else that reasons about the room use the
   first `own` only (see `showSplat`).
 - **The gap fill follows the walkable cells.** It runs after collision and again
   whenever `rebuildPlatformOverlay` rebuilds them; nothing else decides where it goes.
-- Scans are scaled to `TARGET_RADIUS`, so distances are in normalized scan units,
-  not metres. Express sizes relative to `charH`. Collision's own settings are in
+- Scans are scaled to `TARGET_RADIUS` (times the scan's `size`, if it has one: rooms are
+  scaled, the figurine and anything added to a room are not; context/collision.md, "Room
+  size"), so distances are in normalized scan units, not metres. Express sizes relative to `charH`. Collision's own settings are in
   grains (`GRAIN`, the voxel size they were tuned at), never in cells of the grid in
   use: see `context/collision.md`.
 - **Bump `SCHEMA` on any change to how the collision mesh is built**, not only to its

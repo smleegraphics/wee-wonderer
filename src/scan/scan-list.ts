@@ -11,6 +11,13 @@ export interface ScanEntry {
   listed: boolean;
   /** The scan's own collision settings, set by hand where the defaults do not suit it (useScanSettings in collision/room-collision.ts). */
   collision?: VoxelOptions;
+  /** false: its collision is built from every splat, not only those the floater filters keep
+   *  (clean-scan-core.ts). For a scan whose room is what those filters take for floaters. */
+  floaterFilter?: boolean;
+  /** How big the room is drawn, as a share of the usual size (every scan is scaled to the same
+   *  size at load: room.ts). Below 1, the figurine is bigger beside what is in it. Scans come in
+   *  any units, so how big a room should be next to the figurine is set by hand, for play. */
+  size?: number;
 }
 
 /** The scan files the app reads, by name: what an import offers and accepts. (Which format a
@@ -24,12 +31,18 @@ export const SCAN_DIR = 'scans';
 // scans in the switcher, and the first of them opens by default; an unlisted scan is a
 // local test scan, loaded only by `?scan=` (CLAUDE.md, "Which scans ship").
 export const SCANS: ScanEntry[] = [
-  // Shipped as SPZ, converted from the cleaned .ply (context/deploy.md, "Scan files").
-  { file: 'kitchen-clean.spz', label: 'Kitchen', listed: true }, // Mip-NeRF 360, floater-stripped (scripts/clean-scan.mjs)
-  { file: 'livingroom-clean.spz', label: 'Living Room', listed: true },
-  { file: 'counter-clean.spz', label: 'Counter', listed: true },
-  { file: 'Marishka-clean.spz', label: 'Curled Up Dog', listed: true }, // a scan of our own: a dog on a blanket, the kind of capture a visitor brings
-  { file: 'room2.ply', label: 'Playroom', listed: false, collision: { floorFlat: 2 } }, // not shipped: its licence is unclear. Kept for the checks that measure on it. Already tightly bounded — no cleanup needed. Its rug is uneven: ridges of it stand above the usual 1.5 grains and were left as bumps on the floor
+  // Shipped as SPZ, converted from the .ply cropped to the room (scripts/clean-scan.mjs; context/deploy.md,
+  // "Scan files"). Every splat in the room is kept and drawn; the collision is built from those the
+  // floater filters keep, worked out at load (context/collision.md, "Scan cleanup").
+  { file: 'kitchen-crop.spz', label: 'Kitchen', listed: true }, // Mip-NeRF 360
+  { file: 'livingroom-crop.spz', label: 'Living Room', listed: true },
+  { file: 'counter-crop.spz', label: 'Counter', listed: true },
+  { file: 'record-player-table-crop.spz', label: 'Record Player Table', listed: true, size: 0.67 }, // our own, made with SpAItial: a sideboard with a record player, plants and a guitar. size: drawn smaller, so the figurine is 1.5× bigger beside the sideboard: a jump catches its front and climbs it (at full size the front starts above where a jump reaches; at 1.3× and 1.4×, none of 48 jumps caught it, at 1.5× 15 did; context/collision.md, "Room size")
+  { file: 'Marishka-clean.spz', label: 'Curled Up Dog', listed: false, floaterFilter: false }, // our own capture: a dog on a blanket, the kind of capture a visitor brings. No longer shipped (Record Player Table took its place); kept for the checks that measure on it (a soft scan with no flat ground). Its file is the old floater-stripped one, so its collision is built from every splat in it: filtering again is not a no-op (the size cap is a multiple of the median, which the first pass lowered) and moved its collision (holes in its spawn surface 1.1% to 5.8%)
+  { file: 'room2.ply', label: 'Playroom', listed: false, collision: { floorFlat: 2 }, floaterFilter: false }, // not shipped: its licence is unclear. Kept for the checks that measure on it. Already tightly bounded — no cleanup needed. Its rug is uneven: ridges of it stand above the usual 1.5 grains and were left as bumps on the floor. Its walls, cabinets and floor are a few large faint splats each, which the floater filters take for floaters: its collision is built from every splat (context/collision.md, "Playroom cannot be cleaned by the floater cleaner")
 ];
 
 export const LISTED_SCANS = SCANS.filter((s) => s.listed);
+
+/** The scan's `size`: 1 for one with none, and for an import, which is not in the list. */
+export const scanSize = (file: string) => SCANS.find((s) => s.file === file)?.size ?? 1;

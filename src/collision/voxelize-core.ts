@@ -280,7 +280,7 @@ export function voxelizeCore(
   const closeVoxels = Math.round(closeIters * per);
   for (let i = 0; i < closeVoxels; i++) occ = dilate(occ, gx, gy, gz);
   for (let i = 0; i < closeVoxels; i++) occ = erode(occ, gx, gy, gz);
-  const ground = groundRow(occ, gx, gy, gz, -minX / vs, -minZ / vs, per); // (the scan is centred on the world's origin)
+  const ground = groundRow(occ, gx, gy, gz, per);
   if (groundFill > 0 && ground >= 0) fillGround(occ, gx, gy, gz, ground, groundFill, per);
   // ASSUMES a single, nav-confined room: this fills ANY enclosed vertical-panel hole
   // up to the area cap, so a real passage (doorway/window) of that size would be walled
@@ -800,11 +800,16 @@ const LIES_FLAT_GROUND = 0.3; // a splat lies flat when it is thinner than this,
 const GROUND_SEARCH = 2;  // units either side of the ground's row in which its splats are looked for
 const GROUND_BINS = 8;    // to a unit: the height bins the ground's splats are counted in
 const STAND_ROOM = 5;    // units of clear space over a surface for it to be somewhere to stand: about the figurine's height (a unit is a fifth of it)
-const START_NEAR = 10;   // units round the scan's centre in which the level the figurine starts on is looked for
 const RAISED = 0.05;     // a level with more than this share of the scan's solid voxels below it is raised, not the ground (rooms: none below their floor; Kitchen's table 13%, Counter's worktop 26%)
 
-/** The row of the level the figurine starts on (see fillGround), or -1 if there is nowhere to stand. `ox`, `oz`: the scan's centre, in voxels. */
-function groundRow(occ: Uint8Array, gx: number, gy: number, gz: number, ox: number, oz: number, per: number): number {
+/** The row of the ground, the level the figurine plays on (see fillGround): the height with the
+ *  most room to stand in the whole scan. Or -1 if there is nowhere to stand. Counted over the whole
+ *  scan, not near its centre: what stood over the centre decided it then, and on Record Player
+ *  Table, shrunk (its `size`), that was the hollow inside its sideboard, the floor under it too
+ *  low to stand on. By height, not by connected surface, so a floor cut up by rugs and clutter
+ *  still counts as one. Only places with room to stand count, so a wall never can (the levelling's
+ *  "biggest plane" was a wall). */
+function groundRow(occ: Uint8Array, gx: number, gy: number, gz: number, per: number): number {
   const sx = gy * gz, sy = gz, room = Math.round(STAND_ROOM * per);
   /** The lowest row in column (x, z) with something solid and room to stand on it, or -1. */
   const standRow = (x: number, z: number) => {
@@ -817,18 +822,14 @@ function groundRow(occ: Uint8Array, gx: number, gy: number, gz: number, ox: numb
     }
     return -1;
   };
-  // the commonest such row near the centre (one toy there does not decide it), or anywhere if there is none
+  // the commonest such row
   const tally = new Int32Array(gy);
   let any = false;
-  for (const near of [START_NEAR * per, Infinity]) {
-    for (let x = 0; x < gx; x++)
-      for (let z = 0; z < gz; z++) {
-        if (Math.hypot(x - ox, z - oz) > near) continue;
-        const y = standRow(x, z);
-        if (y >= 0) { tally[y]++; any = true; }
-      }
-    if (any) break;
-  }
+  for (let x = 0; x < gx; x++)
+    for (let z = 0; z < gz; z++) {
+      const y = standRow(x, z);
+      if (y >= 0) { tally[y]++; any = true; }
+    }
   if (!any) return -1;
   let top = 0;
   for (let y = 1; y < gy; y++) if (tally[y] > tally[top]) top = y;
@@ -838,8 +839,7 @@ function groundRow(occ: Uint8Array, gx: number, gy: number, gz: number, ox: numb
 /**
  * Fill the gaps in the surface the figurine plays on.
  *
- * Which surface: `top`, the level it starts on (groundRow), found the way the spawn search finds it (the
- * lowest place with room to stand, near the scan's centre: findSpawn in collision.ts).
+ * Which surface: `top`, the ground (groundRow: the height with the most room to stand in the scan).
  * In a room that is the floor; on a scan of a worktop it is the worktop, with the real
  * floor somewhere below. (It used to be "the busiest row in the lower third", which on
  * a worktop scan is that real floor, a layer the figurine never stands on.)

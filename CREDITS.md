@@ -41,10 +41,11 @@ published in the Hugging Face dataset
 [alexmkwizu/gaussian_training_datasets](https://huggingface.co/datasets/alexmkwizu/gaussian_training_datasets)
 (`tested_outputs/kitchen.ply`, `room.ply`, `counter.ply`). That dataset adds no terms of its
 own: it says each scene "retains the license/terms of its original source". For this site
-they were then cleaned of floaters, levelled, cropped and converted to SPZ
+they were then cropped to the room and converted to SPZ
 (`scripts/clean-scan.mjs`, `context/deploy.md`).
 
-**Curled Up Dog** (`Marishka-clean.spz`) was captured by Samantha Lee.
+**Record Player Table** (`record-player-table-crop.spz`) was captured by Samantha Lee, with
+SpAItial.
 
 ## Type
 

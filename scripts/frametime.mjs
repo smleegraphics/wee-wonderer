@@ -14,7 +14,7 @@ const args = process.argv.slice(2);
 const flag = (name, def) => { const i = args.indexOf(name); return i >= 0 ? Number(args[i + 1]) : def; };
 const ratio = flag('--ratio', 2), seconds = flag('--seconds', 8);
 const named = args.filter((a, i) => !a.startsWith('--') && !args[i - 1]?.startsWith('--'));
-const scans = named.length ? named : ['kitchen-clean.spz', 'room2.ply'];
+const scans = named.length ? named : ['kitchen-crop.spz', 'room2.ply'];
 
 const browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--enable-gpu', '--use-angle=metal', '--enable-unsafe-webgpu'] });
 try {

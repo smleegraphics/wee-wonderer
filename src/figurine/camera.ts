@@ -16,6 +16,9 @@ const CAM_PIVOT = 0.7; // the camera looks at the figurine this far up its heigh
  *  heights. In front of the figurine (which faces +Z unturned), a little to one side,
  *  looking down at it. */
 const CAM_START = new THREE.Vector3(1.2, 2.6 - CAM_PIVOT, 4.5);
+/** How high the opening shot's camera is over the figurine's feet, in figurine heights: the
+ *  start is looked for where nothing is over it up to here (resetToSpawn), so the shot sees it. */
+export const CAM_START_HEIGHT = CAM_PIVOT + CAM_START.y;
 const CAM_START_TURNS = 16; // sides of the figurine the opening shot may be turned to: 22.5° apart
 
 // The follow camera is a spring arm from the pivot (the figurine) to the camera. The
@@ -122,6 +125,33 @@ function clearStartTurn(pivot: THREE.Vector3): number {
     if (clear > bestClear) { best = turn; bestClear = clear; }
   }
   return best;
+}
+
+/** The camera let off the figurine (the Debug card's "Free camera"): drag to orbit, right-drag
+ *  to pan, scroll to zoom, as near or far as you like, for looking round a scan. The follow
+ *  camera's limits are kept (setFollowDistance) and put back when it is turned off. */
+export const GOD_CAM = { on: false };
+const followLimits = { min: 0, max: Infinity, pan: false, polar: Math.PI };
+/** How near and far the follow camera may be (the character's size sets it, character.ts): kept
+ *  here, and applied unless the free camera is on, which would otherwise have them reset under it. */
+export function setFollowDistance(min: number, max: number): void {
+  followLimits.min = min; followLimits.max = max;
+  if (!GOD_CAM.on) { orbit.minDistance = min; orbit.maxDistance = max; }
+}
+export function setGodCam(on: boolean): void {
+  if (on === GOD_CAM.on) return;
+  GOD_CAM.on = on;
+  if (on) {
+    followLimits.pan = orbit.enablePan; followLimits.polar = orbit.maxPolarAngle;
+    orbit.minDistance = 0; orbit.maxDistance = Infinity; orbit.enablePan = true; orbit.maxPolarAngle = Math.PI;
+  } else {
+    orbit.minDistance = followLimits.min; orbit.maxDistance = followLimits.max; orbit.enablePan = followLimits.pan; orbit.maxPolarAngle = followLimits.polar;
+  }
+}
+export function updateGodCam(): void {
+  orbit.update();
+  camera.position.copy(orbitCamera.position);
+  camera.quaternion.copy(orbitCamera.quaternion);
 }
 
 /** Debug free-camera: park at a fixed spherical orbit around the look-at point

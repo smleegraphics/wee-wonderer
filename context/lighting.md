@@ -110,6 +110,16 @@ upgrade.
 
 ## What is known
 
+- **A scan's colours are sRGB; the scene is lit and blended in linear light.** The splat
+  turns its colours into linear light as it draws them (`colourFromSRGB`, room.ts), first of
+  everything that wraps the splat's colour, and the renderer turns the frame back into sRGB at
+  the end. Before that, nothing did: three's `GaussianSplat` passes colours on as stored, so
+  they were turned into sRGB twice and every scan showed greyed and lightened (a stored 0.5 at
+  0.74). The fix darkened and saturated every room, and the figurine with it, since the probe
+  sees the room as drawn, so the strength went from 1.5 to 2 ("Strength" below).
+  `estimateScanFill` averages in linear light for the same reason.
+  Splats now blend in linear light where they were trained to blend in sRGB: a difference at
+  soft edges only.
 - **The native `GaussianSplat` renders correctly into a cube camera.** This was the
   main risk.
 - **A capture costs about 5 ms of main-thread time** on Counter (45 ms the first
@@ -158,9 +168,13 @@ upgrade.
   | Living Room | 86 | 105 | 119 | 132 | 143 | 137 |
   | Playroom | 131 | 157 | 177 | 196 | 212 | 150 |
 
-  The default is 1.5. At 2 the figurine is washed out and pale on Playroom; at 1 it
-  is dull on the other three. Living Room stays the dimmest: its scan is dim and has
-  the most gaps, so it leans hardest on the fill estimate.
+  Measured while the scan's colours were turned into sRGB twice (see above), which made
+  the light it gives about 1.9× too bright (Kitchen 1.9×, Living Room 2.0×, Counter 1.9×,
+  Record Player Table 1.5×: the average splat brightness, as stored and in linear light).
+  The default was 1.5 then. With the colours right it is 2, set by eye: the figurine a
+  little darker than it was, not all the way back. At 1 it was dull on Counter, Kitchen and
+  Living Room. Living Room stays the dimmest: its scan is dim and has the most gaps, so it
+  leans hardest on the fill estimate.
 - **Follow mode hitches on Playroom.** The 5 ms figure is only the time to submit a
   capture. On Playroom (30 ms a frame to begin with) the worst frame during a walk
   went from 60 ms to 128 ms with follow on, and the mean from 30.6 to 33.6 ms. On

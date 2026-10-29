@@ -37,29 +37,29 @@ numbers repeat exactly. `--with key=value` tries a setting without saving it (an
 Lengths and areas are in grains (see "Sizes are in grains" below), not cells of whatever
 grid is in use, so numbers compare across grid sizes.
 
-Baseline (SCHEMA g34, default settings; Playroom is built at mesh detail 2, the rest at 1):
+Baseline (SCHEMA g36, default settings, the `*-crop` files, collision floater-filtered at load; Playroom is built at mesh detail 2, the rest at 1):
 
 | | Living Room | Counter | Kitchen | Playroom | Marishka |
 |---|---|---|---|---|---|
-| Walkable area (grains²) | 9,652 | 4,643 | 4,588 | 16,655 | 11,125 |
-| Platforms (of 40 grains² or more) | 88 (21) | 71 (15) | 59 (17) | 113 (34) | 17 (7) |
-| Cells on small perches | 12.2% | 20.7% | 15.3% | 7.6% | 1.4% |
-| Cells reached from spawn by walking | 47.7% | 40.5% | 54.4% | 53.8% | 80.2% |
-| ...and jumping or dropping | 99.7% | 72.6% | 95.0% | 100.0% | 99.9% |
-| ...and climbing the mesh's faces | 99.7% | 97.3% | 95.0% | 100.0% | 99.9% |
-| ...if every meeting of surfaces had a face | 99.8% | 99.7% | 95.0% | 100.0% | 99.9% |
+| Walkable area (grains²) | 11,487 | 5,186 | 4,796 | 16,655 | 11,125 |
+| Platforms (of 40 grains² or more) | 68 (26) | 60 (20) | 64 (13) | 113 (34) | 17 (7) |
+| Cells on small perches | 4.9% | 10.5% | 15.2% | 7.6% | 1.4% |
+| Cells reached from spawn by walking | 52.5% | 33.0% | 52.8% | 53.8% | 80.2% |
+| ...and jumping or dropping | 96.9% | 96.3% | 95.1% | 100.0% | 99.9% |
+| ...and climbing the mesh's faces | 100.0% | 99.8% | 95.1% | 100.0% | 99.9% |
+| ...if every meeting of surfaces had a face | 100.0% | 99.8% | 95.1% | 100.0% | 99.9% |
 | Real platforms no face could join | 0 | 0 | 0 | 0 | 0 |
-| Area a climb can start from (grains²) | 1,462 | 561 | 402 | 2,657 | 741 |
-| Holes in the spawn surface | 1.6% | 8.8% | 2.2% | 3.8% | 1.1% |
-| Spawn surface cells on an edge | 13.9% | 18.7% | 12.1% | 10.8% | 6.3% |
-| Spawn surface fills its convex outline | 66.0% | 81.8% | 83.8% | 83.5% | 87.7% |
-| Spawn surface roughness (slope) | 0.12 | 0.37 | 0.10 | 0.00 | 0.58 |
-| Triangles | 106,568 | 50,608 | 40,076 | 731,156 | 102,996 |
-| Mesh pieces | 34 | 40 | 46 | 32 | 14 |
-| Mesh bumpiness | 0.096 | 0.103 | 0.119 | 0.084 | 0.100 |
-| Mesh to nearest opaque splat, median / 90th pct (grains) | 0.58 / 0.97 | 0.56 / 0.95 | 0.54 / 1.24 | 0.41 / 0.84 | 0.53 / 0.81 |
-| Opaque splats with no mesh within 2 grains | 7.9% | 10.5% | 13.3% | 2.5% | 12.7% |
-| Sight lines that meet no collision | 31.3% | 43.6% | 42.3% | 22.2% | 43.5% |
+| Area a climb can start from (grains²) | 1,997 | 715 | 463 | 2,657 | 741 |
+| Holes in the spawn surface | 2.5% | 10.6% | 1.4% | 3.8% | 1.1% |
+| Spawn surface cells on an edge | 12.0% | 20.1% | 12.2% | 10.8% | 6.3% |
+| Spawn surface fills its convex outline | 79.2% | 83.1% | 82.1% | 83.5% | 87.7% |
+| Spawn surface roughness (slope) | 0.09 | 0.38 | 0.19 | 0.00 | 0.58 |
+| Triangles | 123,172 | 61,296 | 185,472 | 731,156 | 102,996 |
+| Mesh pieces | 11 | 33 | 47 | 32 | 14 |
+| Mesh bumpiness | 0.084 | 0.112 | 0.135 | 0.084 | 0.100 |
+| Mesh to nearest opaque splat, median / 90th pct (grains) | 0.56 / 0.94 | 0.54 / 0.90 | 0.53 / 0.96 | 0.41 / 0.84 | 0.53 / 0.81 |
+| Opaque splats with no mesh within 2 grains | 9.8% | 14.5% | 18.5% | 2.5% | 12.7% |
+| Sight lines that meet no collision | 28.6% | 39.0% | 42.9% | 22.2% | 43.5% |
 
 How far each number can be trusted:
 
@@ -264,9 +264,22 @@ Open:
 ## The ground: its level, flattening it, and starting on it
 
 "The ground" is the level the figurine plays on: a room's floor, a table's top. The
-voxelizer finds its row once (`groundRow`: the commonest lowest-place-with-room-to-stand
-near the scan's centre) and three things use it: the gap fill below, the flatten, and
-where the figurine starts.
+voxelizer finds its row once (`groundRow`: the height with the most room to stand in the
+whole scan, counting each column's lowest place with room to stand) and three things use
+it: the gap fill below, the flatten, and where the figurine starts.
+
+**Why the whole scan.** It used to count only within two figurine heights of the scan's
+centre, so whatever stood over the centre decided it. Record Player Table's centre is under
+its sideboard. Shrunk to its `size` (below), the gap under the sideboard was too low to
+stand in, and the hollow inside the cabinet won: the ground was its bottom shelf, the
+figurine started behind it at shelf height, and the gap fill worked at that level. Over the
+whole scan the four rooms that were right stay on the same level (Kitchen's table, Living
+Room's and Playroom's floor, Counter's worktop), and the most area still decides it on a
+tabletop scan. It is counted by height, not by connected surface, so a floor cut up by rugs
+and clutter still counts as one. Only places with room to stand count, so a wall never can,
+unlike the levelling's rejected "biggest plane is the floor", which picked a wall. Curled Up
+Dog's ground moved from 2.65 to 0.86 body heights (a soft blanket spreads over many heights)
+and it now starts down in a fold of it; nothing in its collision check got worse.
 
 **Flattening (`floorFlat`, "Floor flatten" in the Debug card).** The mesh within 1.5
 grains of the ground's splats (2 in Playroom: see below) is snapped onto their level,
@@ -309,7 +322,11 @@ which is where the scan's opacity peaks near the ground's row.
 
 **Starting (`resetToSpawn`).** The figurine starts at the spot nearest the scan's
 centre that is at the ground's height (`VoxelSurface.groundY`, within a step) and where
-its whole capsule fits: `findSpawn` with a level. Without a level, `findSpawn` takes the
+its whole capsule fits: `findSpawn` with a level. A spot in the open, with nothing over it
+up to the opening shot's camera (`CAM_START_HEIGHT`, 2.6 body heights), comes before a
+nearer one under something, so the opening shot sees the figurine: Record Player Table's
+nearest spot was under its sideboard. Where nothing at that level is in the open, the
+nearest covered spot is taken, as before; no other room's start moved. Without a level, `findSpawn` takes the
 "lowest place near the centre with room to stand"; that is the fallback, for when
 nothing at the ground's height fits. On Counter that lowest place is the inside of a
 glass bowl: it always was, and a bumpy worktop used to make a ramp out of it.
@@ -364,8 +381,8 @@ ragged edges in the one surface everything else stands on. `fillGround`
 fills them in the voxel grid before meshing. The hole patching (`splat-fill.md`) follows
 by itself, since it tracks the walkable cells.
 
-- **It works at the level the figurine starts on**: the commonest "lowest place with
-  room to stand" near the scan's centre, the voxel-grid twin of `findSpawn`. In a room
+- **It works at the ground's level** (`groundRow`, above: the height with the most room
+  to stand in the scan). In a room
   that is the floor; on Counter and Kitchen it is the worktop and the table.
 - **Holes with the surface all round them are filled at any level** (as before).
 - **On the ground only, bare stretches are filled when nothing `fillFloor` voxels wide
@@ -416,6 +433,19 @@ Known limits:
   Seed 1 has three samples with the climber's body more than half a radius into the
   mesh, which seeds 2 and 4 do not, and which Counter also shows without the fill. Not
   traced to a cause.
+
+## Room size: rooms are scaled, what is added is not
+
+Every scan is scaled at load so its spread (the 90th-percentile distance of its splats from
+the centre) is `TARGET_RADIUS`, since a scan file says nothing of how big the real room was.
+A scan's `size` in `SCANS` scales it from there: Record Player Table is 0.67, so the figurine
+is 1.5× bigger beside its sideboard, enough for a jump to catch the sideboard's front and
+climb it (at full size the front starts above where a jump reaches; at 1.3× and 1.4× no jump
+caught it). The figurine, and anything else added to a room, stays one size in every room;
+only the room changes. Everything collision does is counted in grains or body heights, so a
+room drawn smaller is built with fewer, relatively bigger voxels: detail stays the same next
+to the figurine. The size is part of the collision cache key (`TARGET_RADIUS × size`).
+An uploaded scan has no `size`; a control to set one for an import is a later idea.
 
 ## Settings for one scan
 
@@ -542,30 +572,122 @@ mind (open: a bumpiness that does not depend on the grid's alignment).
 
 ## Scan cleanup
 
-Every real-capture 3DGS scan has a shell of floaters. `scripts/clean-scan.mjs`
-(offline, `.ply` files) and `src/scan/clean-scan-core.ts` (in-browser, on import) drop
-splats failing on opacity, size, or local density, then level and crop to the room.
+**Two sets of splats, from one pass** (`cleanMasks` in `src/scan/clean-scan-core.ts`, on import
+in a worker, and offline in `scripts/clean-scan.mjs`, which reads and cleans a `.ply` with the
+same code through Vite):
 
-- **The in-browser cleaner works on the parsed splats** (`ParsedScan`), so it cleans any
-  format the app reads. Opacity is each colour's alpha byte; size is the square root of
-  the covariance's largest eigenvalue, which is the splat's largest scale. It levels with
-  `orientScan`, the seeded fit the room itself is placed with, so the same file is always
-  cleaned the same way (with its own unseeded copy of the fit, the same import kept a
-  different number of splats each time). The offline cleaner had kept such a copy; it now
-  loads `orientScan` too. Measured on Counter: the `.ply` and `.spz` of
-  the same cleaned scan keep 110,823 and 111,077 (SPZ's rounding moves a few across the
-  thresholds); the raw `counter.ply` keeps 123,766 of 261,551, every time.
+- **The floater filters** pick the solid splats: opacity at least `alphaMin` (0.35), size
+  under 4x the median, and in a voxel with at least `minMass` (4) of opacity among them.
+- **The room box** is worked out once, from the solid splats' levelled positions: the
+  1st-99th percentile across (98th up), plus 8% slack, from a little below the floor.
+- **What is drawn:** every splat inside the box, solid or not. It keeps 94 to 98% of a scan.
+- **What the collision is built from, and the room levelled by:** the drawn splats less the big
+  floaters: those over the size cap, unless flat and solid (at most `FLAT_MAX` 0.1 as thick as
+  wide, at least `SOLID_MIN` 0.5 opaque: a tile of a wall or floor). Not the opacity or density
+  filters: the voxelizer already weighs each splat by its opacity and leaves thin space empty,
+  and filtering first also took the faint and sparse splats walls are made of (below, "See it
+  but cannot touch it"). `room.ts` builds from what is marked (`ScanSource.collision`, or the
+  load worker's) and keeps it (`collisionSplats`) for a rebuild from a Debug slider, which
+  otherwise rebuilt from every drawn splat. If the filters leave nothing, the box uses every
+  splat.
 
-- Production parameters: `alphaMin 0.35`, `minMass 4`, `scaleCapMul 4` (about half
-  the splats kept).
-- Playroom (`room2.ply`) is not pre-cleaned and cannot be: see "Playroom cannot be
-  cleaned by the floater cleaner".
+**Why two:** measured, one filter at a time, raw against cleaned:
+
+- **The floater filters made scans see-through** when they chose what was drawn
+  (`scripts/holes.mjs`, share of the view): Living Room 0.2% raw, 25.1% cleaned; Counter
+  0.2% and 8.5%. Each alone: size 10 to 15%, density 5 to 8%, faintness and the crop about
+  2% each; together worse, as density was counted from what the others kept. Big splats are
+  not floaters in general: in an AI-generated room 85% of those over the size cap are flat
+  and solid, the tiles its walls and floors are made of (in the Mip-NeRF captures 25%).
+- **But the collision is better built from what they keep.** From the crop alone, Kitchen
+  was 27.4% walkable from spawn (cleaned 54.7%), 8.4% holes in its spawn surface (2.2%),
+  5 surfaces nothing could reach (0); Counter 35.5% (40.9%). Living Room was as good (52.3%,
+  47.7%). And in the cozy room, crop-only collision moved the ground level the game guesses
+  (`groundY`) to 1.5 body heights above the floor, onto 30-cell patches, starting the
+  figurine on one (0.1% walkable from spawn).
+- **Without even the crop, collision fails:** raw Living Room's far-off spray stretches the
+  collision's grid; it came out with 11k triangles instead of 107k and 0.5% walkable from
+  spawn.
+- **Speed:** the cozy room (4.7M splats) draws in 43 ms raw, 33 ms cropped to a box from every
+  splat (what is drawn now crops to the solid splats' box, a little tighter), 17 ms with the old cleaning (60 fps cap; 1440 x 900 at ratio 2): the size filter
+  bought that by deleting its walls. Counter and Living Room draw at the cap either way. A
+  splat budget for heavy scans is a separate step (not done).
+
+**Scans loaded by name get the two sets too.** The shipped files are the raw scans cropped to
+the room (`*-crop.spz`, made with `scripts/clean-scan.mjs`), so every splat in them is drawn;
+the load worker (`load-scan.worker.ts`) marks the floater-filtered ones with `cleanMasks`, and
+the collision is built from those, as for an import. A scan's `floaterFilter: false` in `SCANS`
+builds its collision from every splat instead:
+
+- **Playroom:** its walls, cabinets and floor are a few large faint splats each, which the
+  filters take for floaters (see "Playroom cannot be cleaned by the floater cleaner"). Its
+  collision is unchanged.
+- **Curled Up Dog:** its file is the old floater-stripped one, and filtering again is not a
+  no-op: the size cap is a multiple of the median size, which the first pass lowered. Filtered
+  again, holes in its spawn surface went from 1.1% to 5.8%.
+
+Measured, the new files against the old floater-stripped ones (`*-clean.spz`):
+
+| | Living Room | Counter | Kitchen |
+|---|---|---|---|
+| See-through, share of the view (`holes.mjs`) | 25.1% → 2.3% | 8.5% → 2.0% | 25.6% → 12.1% (raw 15.1%) |
+| Visible splats with no collision near | 7.9% → 9.8% | 10.6% → 14.5% | 13.4% → 18.5% |
+| Walkable from spawn | 47.7% → 52.5% | 40.5% → 33.0% | 54.4% → 52.8% |
+| ...and by jumping or dropping | 99.7% → 96.9% | 72.6% → 96.3% | 95.0% → 95.1% |
+| Holes in the spawn surface | 1.6% → 2.5% | 8.8% → 10.6% | 2.2% → 1.4% |
+| Real platforms nothing reaches | 0 → 0 | 0 → 0 | 0 → 0 |
+
+"Visible splats with no collision near" counts what is drawn, which is now far more (the old
+files had dropped the faint and big splats from both), so it rises; against the same drawn
+splats, the collision built from all three floater filters left 15.7%, 21.8% and 25.6% (see
+below). Walkable from spawn falls on Counter and Kitchen because more of what is seen is solid:
+objects now split the floor the figurine starts on.
+
+**See it but cannot touch it.** With the floater filters choosing the collision, a quarter of
+Kitchen's visible splats had no collision near them, mostly on walls. Of those uncovered splats,
+left out as faint 24-28%, as sparse 25-31%, as too big 10-14%, and kept but given no surface by
+the voxelizer 33-35%. One filter off at a time (Living Room / Counter / Kitchen, visible with no
+collision near, then reach with jumps):
+
+| | Uncovered | With jumps |
+|---|---|---|
+| All three filters | 15.7 / 21.8 / 25.6% | 100 / 97.3 / 89.9% |
+| No opacity filter | 14.1 / 18.5 / 21.8% | 97.1 / 95.3 / 98.3% |
+| No size filter | 14.6 / 19.0 / 24.1% | 99.8 / 75.2 / 80.7% (Kitchen: 6 surfaces nothing reaches) |
+| No density filter | 11.0 / 17.4 / 23.2% | 98.9 / 96.6 / 98.0% |
+| Size filter alone | 9.0 / 14.3 / 17.3% | 96.7 / 96.8 / 94.1% |
+| Size filter alone, flat solid big splats kept (what is used) | 8.5 / 12.8 / 16.9% | 97.7 / 96.9 / 94.9% |
+
+(Those runs also worked the room box out from the same filters; with the box from all three,
+as used, it is 9.8 / 14.5 / 18.5%.) The size filter is what keeps the collision whole: big round
+splats in the captures make solid lumps in mid-air. What is left uncovered (8 to 18%) is now
+mostly the voxelizer's: 54 to 70% of it is splats in the collision set that made no surface (thin
+surfaces under its density threshold). Not fixed yet.
+
+In the cozy room (Record Player Table), nearly all its big splats are flat and solid, so its
+collision takes almost every splat (4,222,712 of 4,250,407): its floor gained a fifth more
+walkable cells, and the top of its ceiling, 22 body heights up, became one walkable surface of
+5,623 cells, which "with jumps" counts (87.5% → 70.3%) though nothing in the room was lost
+(climbing reaches 100%). Visible with no collision near: 7.2%.
+
+**Costs:** loading (to the room arriving, headless): Kitchen 1.5-1.7 s → 1.8 s, Record Player
+Table 8.5 s → 9.5 s. Files: about twice the size (Kitchen 3.1 → 5.6 MB; Record Player Table
+39.4 → 63.9 MB). Drawing: Record Player Table 16.6 ms → 31.7 ms a frame (4.25 million splats
+against 2.66); the others draw at the 60 fps cap either way. A splat budget for heavy scans is
+a separate step (not done).
+
+Notes:
+
+- It levels with `orientScan`, the seeded fit the room itself is placed with, so the
+  same file is always cleaned the same way (with its own unseeded copy of the fit, the
+  same import kept a different number of splats each time).
+- Playroom (`room2.ply`) is not pre-cleaned: see "Playroom cannot be cleaned by the
+  floater cleaner" (about the floater filters; the crop alone was not tried on it).
 - Kitchen and Counter are tabletop scans, not walk-around rooms. Living Room and
   Playroom are the real rooms.
-- The cleanup's occupancy grid and leveling are the same infrastructure collision
-  uses. Build on it; do not duplicate the filter pass.
-- Phone captures with bright windows, glass, or soft surfaces are heavy with
-  floaters. The pipeline copes, but capture quality is the limit.
+- The ground level the game guesses (`groundY`) was fragile: counted near the scan's
+  centre, it moved 1.5 body heights with the splats it was built from (above). It is now
+  counted over the whole scan ("The ground", above).
 
 ## SPZ moves Kitchen's collision
 

@@ -2,6 +2,7 @@
 
 import { hud } from './app';
 import { applyVoxelView, overlayBoxes, PLATFORM_OPTS, rebuildCollision, rebuildPlatformOverlay, setCleanupOverlay, setDensityOverlay, setPlatformOverlay, setVoxelOverlay, showCleanup, showDensity, showPlatforms, showVoxels, VOXEL_OPTS, VOXEL_VIEW, voxelSet, type VoxelSettings, voxelSliders } from './collision/room-collision';
+import { GOD_CAM, setGodCam } from './figurine/camera';
 import { CLIMB_TILT } from './figurine/climb';
 import { MOVE, moveSet, type MoveSettings, moveSliders } from './figurine/movement';
 import { CONTACT_SHADOW } from './lighting/contact-shadow';
@@ -15,6 +16,8 @@ export function setupDebugMenu(): void {
   const overlays = hud.debug.section('Overlays', true);
   overlayBoxes.voxel = overlays.addToggle('Voxel wireframe (V)', showVoxels, setVoxelOverlay,
     'Draw the collision mesh over the scan as a wireframe.');
+  overlays.addToggle('Free camera', GOD_CAM.on, setGodCam,
+    'Let the camera off the figurine: drag to orbit, right-drag to pan, scroll to zoom, as far as you like.');
   overlayBoxes.platform = overlays.addToggle('Platforms (P)', showPlatforms, setPlatformOverlay,
     'Spike 1: color the walkable surfaces the collision decomposes into — floor, ' +
     'couch, counter. Distinct colors = distinct platforms (reached by climbing/jumping).');
@@ -147,10 +150,10 @@ export function setupDebugMenu(): void {
 
   // cleanup tunables for imported scans (re-clean + reload the active upload)
   const cleanup = hud.debug.section('Import cleanup');
-  cleanup.addSlider('Opacity floor', CLEAN_OPTS.alphaMin ?? 0.35, 0, 0.9, 0.05, (v) => { CLEAN_OPTS.alphaMin = v; void recleanUpload(); },
-    'For imported scans: drop splats fainter than this. Higher burns off more floater haze (but can eat real surfaces).');
-  cleanup.addSlider('Density', CLEAN_OPTS.minMass ?? 4, 0, 12, 0.5, (v) => { CLEAN_OPTS.minMass = v; void recleanUpload(); },
-    'For imported scans: min opacity mass a voxel needs to be kept. Higher removes more isolated floaters.');
+  cleanup.addSlider('Opacity floor (room box)', CLEAN_OPTS.alphaMin ?? 0.35, 0, 0.9, 0.05, (v) => { CLEAN_OPTS.alphaMin = v; void recleanUpload(); },
+    'For imported scans: the box round the room (what is drawn) is worked out from splats at least this opaque, so far-off faint spray does not stretch it. Not the collision.');
+  cleanup.addSlider('Density (room box)', CLEAN_OPTS.minMass ?? 4, 0, 12, 0.5, (v) => { CLEAN_OPTS.minMass = v; void recleanUpload(); },
+    'For imported scans: the box round the room (what is drawn) is worked out from splats in voxels with at least this much opacity. Not the collision.');
   cleanup.addToggle('Crop to room', CLEAN_OPTS.crop ?? true, (on) => { CLEAN_OPTS.crop = on; void recleanUpload(); },
     'For imported scans: auto-level and crop to the room box (removes far background spray).');
 }

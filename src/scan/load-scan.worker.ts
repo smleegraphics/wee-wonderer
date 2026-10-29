@@ -1,17 +1,21 @@
-// Web Worker: fetch and parse a scan (.ply or .spz) off the main thread. Parsing a large
+// Web Worker: fetch and parse a scan (.ply or .spz) off the main thread, and mark the splats its
+// collision is built from (unless its SCANS entry says not to). Parsing a large
 // scan takes seconds (the Playroom is 453 MB), and on the main thread that froze
 // the page: no clicks, no animation. The file is fetched here too, so its bytes
 // never cross threads; only the parsed arrays are transferred back, zero-copy. A load
 // that is no longer wanted can be cancelled while it is fetching (not once unpacking
 // has begun: that is one call into three.js).
 
+import { cleanMasks } from './clean-scan-core';
 import { parseScanArrays, scanBuffers } from './parse-scan';
 
 
 /** How far the load has got: fetching (`fetched`: the part of the file received, 0..1), then unpacking it. */
 export type ScanLoadProgress = { step: 'fetch'; fetched: number } | { step: 'unpack' };
 
-interface Req { id: number; url: string }
+/** `floaterFilter`: also mark the splats the collision is built from (clean-scan-core.ts), as an
+ *  import's cleanup does; every splat in the file is drawn. */
+interface Req { id: number; url: string; floaterFilter: boolean }
 interface Cancel { id: number; cancel: true }
 
 const fetching = new Map<number, AbortController>(); // the loads that can still be cancelled, by request id
@@ -40,7 +44,7 @@ async function readBody(response: Response, onFetched: (part: number) => void): 
 
 self.onmessage = async (e: MessageEvent<Req | Cancel>) => {
   if ('cancel' in e.data) { fetching.get(e.data.id)?.abort(); return; }
-  const { id, url } = e.data;
+  const { id, url, floaterFilter } = e.data;
   const abort = new AbortController();
   fetching.set(id, abort);
   try {
@@ -51,8 +55,9 @@ self.onmessage = async (e: MessageEvent<Req | Cancel>) => {
     fetching.delete(id);
     abort.signal.throwIfAborted(); // cancelled between the last bytes and here
     say({ step: 'unpack' });
-    const result = await parseScanArrays(body);
-    (self as unknown as Worker).postMessage({ id, result }, scanBuffers(result));
+    const scan = await parseScanArrays(body);
+    const collision = floaterFilter ? cleanMasks(scan).collision : undefined;
+    (self as unknown as Worker).postMessage({ id, result: { scan, collision } }, collision ? [...scanBuffers(scan), collision.buffer] : scanBuffers(scan));
   } catch (err) {
     fetching.delete(id);
     (self as unknown as Worker).postMessage({ id, error: err instanceof Error ? err.message : String(err) }); // (a cancelled load's caller has stopped listening)

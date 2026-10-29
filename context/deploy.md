@@ -27,27 +27,32 @@ purpose:** their addresses are not allowed, and they do not need scans. Do not w
 | Scan | Source |
 |---|---|
 | Kitchen, Living Room, Counter | Mip-NeRF 360's `kitchen`, `room`, `counter` (CC BY 4.0), trained with msplat by alexmkwizu: `https://huggingface.co/datasets/alexmkwizu/gaussian_training_datasets/resolve/main/tested_outputs/{kitchen,room,counter}.ply`, downloaded 2026-09-20 |
-| Curled Up Dog | Samantha Lee's own capture |
+| Record Player Table | Samantha Lee's own capture, made with SpAItial (`Cozy_room_with_music_and_plants.spz`, exported from SpAItial on 2026-10-27) |
+| Curled Up Dog (no longer shipped) | Samantha Lee's own capture |
 | Playroom (unlisted) | Deep Blending's `playroom` from `huggingface.co/datasets/Voxel51/gaussian_splatting` (`FO_dataset/playroom/point_cloud/iteration_30000/point_cloud.ply`); licence unstated, so never shipped |
 
 The downloads were made with `curl`, which leaves no "Where from" on the file; they were
 traced from a Claude Code session transcript. Record a new scan's source here when it is
 added.
 
-The shipped scans are SPZ (`*-clean.spz`), converted from the cleaned `.ply`:
+The shipped scans are SPZ (`*-crop.spz`), from the raw `.ply` cropped to the room (every
+splat inside it kept; the collision's floater filtering happens at load, `context/collision.md`,
+"Scan cleanup"):
 
 ```bash
-npx -y @playcanvas/splat-transform@3.8.0 scans/<name>-clean.ply scans/<name>-clean.spz
+node scripts/clean-scan.mjs scans/<name>.ply scans/<name>-crop.ply
+npx -y @playcanvas/splat-transform@3.8.0 scans/<name>-crop.ply scans/<name>-crop.spz
 ```
 
 That writes SPZ version 4 (zstd). Measured file sizes, `.ply` → `.spz`:
 
 | Scan | Size |
 |---|---|
-| Kitchen | 40.3 → 3.1 MB |
-| Living Room | 33.4 → 2.2 MB |
-| Counter | 30.7 → 2.3 MB |
-| Curled Up Dog | 30.9 → 2.8 MB |
+| Kitchen | 75.5 → 5.6 MB (the floater-stripped `kitchen-clean`: 40.3 → 3.1 MB) |
+| Living Room | 68.5 → 4.5 MB (`-clean`: 33.4 → 2.2 MB) |
+| Counter | 59.1 → 4.2 MB (`-clean`: 30.7 → 2.3 MB) |
+| Record Player Table | 238.0 → 63.9 MB (4.25 million splats, about fifteen times the others; `-clean`: 39.4 MB) |
+| Curled Up Dog (no longer shipped) | 30.9 → 2.8 MB (`Marishka-clean`) |
 
 Unpacking in the worker went from about 500 ms to about 45 ms. They look the same as the `.ply` side by side. SPZ rounds positions (by at most
 1.2e-4 scan units here), which moves Kitchen's collision a little
