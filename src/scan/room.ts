@@ -17,6 +17,7 @@ import { updateReveal, HANDOVER, startReveal, startLeave, installReveal } from '
 import { type LoadingScene, createLoadingScene } from '../loading/loading-scene';
 import { type PaperFigurine, createPaperFigurine } from '../loading/paper-figurine';
 import { SCANS, scanSize, scanURL } from './scans';
+import { clearSightSplats, setSightSplats } from './splat-sight';
 import { DEFAULT_SCAN, hud, MESHONLY, player, renderer, room, scene, surround, SURROUND, TARGET_RADIUS, TEL, VOXEL_SIZE } from '../app';
 import { buildCollision, collisionKey, disposeCollision, navVersion, rebuildCollision, useScanSettings, VOXEL_OPTS } from '../collision/room-collision';
 import { charH, charLoaded, play, resetToSpawn } from '../figurine/character';
@@ -106,6 +107,7 @@ export function disposeSplat(): void {
 /** Take the room there is, and its collision, out of the scene. */
 function clearRoom(): void {
   disposeSplat();
+  clearSightSplats();
   disposeCollision();
   room.quaternion.identity();
   room.position.set(0, 0, 0);
@@ -257,6 +259,7 @@ async function showScan(source: ScanSource, id: string, token: number, cancelled
   // The spawn needs only the collision, and must be decided now, before the next frame:
   // from here the camera tests the new room's mesh, and a figurine still at its old spot
   // (the origin, or the last room's spawn) is inside it, which pulls the camera in close.
+  if (!MESHONLY) setSightSplats(parsed.centers, parsed.covariances, parsed.colors, own, toWorld); // (what the opening shot looks past: splat-sight.ts)
   if (charLoaded) resetToSpawn();
   const tFill = performance.now();
   const walk = walkableNow(), cellsUsed = navVersion;
@@ -265,6 +268,10 @@ async function showScan(source: ScanSource, id: string, token: number, cancelled
   if (token !== loadToken) return; // superseded while filling
   if (walk) reportWalkFill(id, filled, tFill);
   const shown = showSplat(filled, o.center.multiplyScalar(-1), opacity, cellsUsed); // recentred on the origin
+  // (the fill took `parsed`'s arrays: the same splats, here now.) A start chosen meanwhile (the
+  // figurine arrived during the fill) was chosen without looking past them: choose it again,
+  // before the room arrives around it.
+  if (!MESHONLY && setSightSplats(filled.scan.centers, filled.scan.covariances, filled.scan.colors, own, toWorld) && charLoaded) resetToSpawn();
   // What a rebuild builds from: the marked splats, or every splat drawn. (Not `parsed`'s arrays:
   // the fill above took those over to its worker, and they are empty here now.)
   collisionSplats = picked && picked.opacity.length ? { centers: new THREE.BufferAttribute(picked.centers, 3), opacity: picked.opacity, covariances: picked.covariances } : { centers: shown.centers, opacity, covariances: shown.cov };
