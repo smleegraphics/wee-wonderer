@@ -542,30 +542,63 @@ mind (open: a bumpiness that does not depend on the grid's alignment).
 
 ## Scan cleanup
 
-Every real-capture 3DGS scan has a shell of floaters. `scripts/clean-scan.mjs`
-(offline, `.ply` files) and `src/scan/clean-scan-core.ts` (in-browser, on import) drop
-splats failing on opacity, size, or local density, then level and crop to the room.
+**Two sets of splats, from one pass** (`cleanMasks` in `src/scan/clean-scan-core.ts`, on import
+in a worker, and offline in `scripts/clean-scan.mjs`, which reads and cleans a `.ply` with the
+same code through Vite):
 
-- **The in-browser cleaner works on the parsed splats** (`ParsedScan`), so it cleans any
-  format the app reads. Opacity is each colour's alpha byte; size is the square root of
-  the covariance's largest eigenvalue, which is the splat's largest scale. It levels with
-  `orientScan`, the seeded fit the room itself is placed with, so the same file is always
-  cleaned the same way (with its own unseeded copy of the fit, the same import kept a
-  different number of splats each time). The offline cleaner had kept such a copy; it now
-  loads `orientScan` too. Measured on Counter: the `.ply` and `.spz` of
-  the same cleaned scan keep 110,823 and 111,077 (SPZ's rounding moves a few across the
-  thresholds); the raw `counter.ply` keeps 123,766 of 261,551, every time.
+- **The floater filters** pick the solid splats: opacity at least `alphaMin` (0.35), size
+  under 4x the median, and in a voxel with at least `minMass` (4) of opacity among them.
+- **The room box** is worked out once, from the solid splats' levelled positions: the
+  1st-99th percentile across (98th up), plus 8% slack, from a little below the floor.
+- **What is drawn:** every splat inside the box, solid or not. It keeps 94 to 98% of a scan.
+- **What the collision is built from, and the room levelled by:** the drawn splats that are
+  also solid: exactly what the old cleanup kept (the cozy room imported: the same start,
+  52.7% walkable from it, 88% with jumps; `collisioncheck` nothing worse). `room.ts` builds
+  from what an import marks (`ScanSource.collision`) and keeps it (`collisionSplats`) for a
+  rebuild from a Debug slider, which otherwise rebuilt from every drawn splat. If the filters
+  leave nothing, the box and the collision use every splat.
 
-- Production parameters: `alphaMin 0.35`, `minMass 4`, `scaleCapMul 4` (about half
-  the splats kept).
-- Playroom (`room2.ply`) is not pre-cleaned and cannot be: see "Playroom cannot be
-  cleaned by the floater cleaner".
+**Why two:** measured, one filter at a time, raw against cleaned:
+
+- **The floater filters made scans see-through** when they chose what was drawn
+  (`scripts/holes.mjs`, share of the view): Living Room 0.2% raw, 25.1% cleaned; Counter
+  0.2% and 8.5%. Each alone: size 10 to 15%, density 5 to 8%, faintness and the crop about
+  2% each; together worse, as density was counted from what the others kept. Big splats are
+  not floaters in general: in an AI-generated room 85% of those over the size cap are flat
+  and solid, the tiles its walls and floors are made of (in the Mip-NeRF captures 25%).
+- **But the collision is better built from what they keep.** From the crop alone, Kitchen
+  was 27.4% walkable from spawn (cleaned 54.7%), 8.4% holes in its spawn surface (2.2%),
+  5 surfaces nothing could reach (0); Counter 35.5% (40.9%). Living Room was as good (52.3%,
+  47.7%). And in the cozy room, crop-only collision moved the ground level the game guesses
+  (`groundY`) to 1.5 body heights above the floor, onto 30-cell patches, starting the
+  figurine on one (0.1% walkable from spawn).
+- **Without even the crop, collision fails:** raw Living Room's far-off spray stretches the
+  collision's grid; it came out with 11k triangles instead of 107k and 0.5% walkable from
+  spawn.
+- **Speed:** the cozy room (4.7M splats) draws in 43 ms raw, 33 ms cropped to a box from every
+  splat (what is drawn now crops to the solid splats' box, a little tighter), 17 ms with the old cleaning (60 fps cap; 1440 x 900 at ratio 2): the size filter
+  bought that by deleting its walls. Counter and Living Room draw at the cap either way. A
+  splat budget for heavy scans is a separate step (not done).
+
+**Scans loaded by name do not have two sets yet.** The shipped scans on the scan host are the
+old cleanup's files (holes and all), and a file loaded by name builds its collision from
+every splat in it. `scripts/clean-scan.mjs` keeps a `.ply`'s drawn set, but a scan re-cleaned
+with it and shipped would build
+its collision from the crop alone: worse, as above (Kitchen). Shipping crop-only files waits
+on the collision filters running at load (and measuring what that costs).
+
+Notes:
+
+- It levels with `orientScan`, the seeded fit the room itself is placed with, so the
+  same file is always cleaned the same way (with its own unseeded copy of the fit, the
+  same import kept a different number of splats each time).
+- Playroom (`room2.ply`) is not pre-cleaned: see "Playroom cannot be cleaned by the
+  floater cleaner" (about the floater filters; the crop alone was not tried on it).
 - Kitchen and Counter are tabletop scans, not walk-around rooms. Living Room and
   Playroom are the real rooms.
-- The cleanup's occupancy grid and leveling are the same infrastructure collision
-  uses. Build on it; do not duplicate the filter pass.
-- Phone captures with bright windows, glass, or soft surfaces are heavy with
-  floaters. The pipeline copes, but capture quality is the limit.
+- The ground level the game guesses (`groundY`, "the commonest lowest place with room to
+  stand near the centre") is fragile: it moved 1.5 body heights with the splats it was
+  built from (above). Not fixed.
 
 ## SPZ moves Kitchen's collision
 

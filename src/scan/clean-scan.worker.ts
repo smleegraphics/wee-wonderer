@@ -1,7 +1,7 @@
 // Web Worker: read and clean an imported scan off the main thread, so a big file
 // doesn't freeze the UI. Receives the file's bytes (transferred in), parses them in
-// whatever format they are (parse-scan.ts), and returns the kept splats (transferred
-// back), or an error message for a file it cannot read.
+// whatever format they are (parse-scan.ts), and returns the kept splats and which of them
+// the collision is built from (transferred back), or an error message for a file it cannot read.
 
 import { cleanScan, type CleanOptions } from './clean-scan-core';
 import { parseScanArrays, scanBuffers } from './parse-scan';
@@ -15,7 +15,7 @@ self.onmessage = async (e: MessageEvent<Req>) => {
     try { scan = await parseScanArrays(buffer); }
     catch (err) { throw new Error(`not a scan this app can read (${err instanceof Error ? err.message : String(err)})`); }
     const r = cleanScan(scan, opts);
-    (self as unknown as Worker).postMessage({ id, result: r }, scanBuffers(r.scan));
+    (self as unknown as Worker).postMessage({ id, result: r }, [...scanBuffers(r.scan), r.collision.buffer]);
   } catch (err) {
     (self as unknown as Worker).postMessage({ id, error: err instanceof Error ? err.message : String(err) });
   }
