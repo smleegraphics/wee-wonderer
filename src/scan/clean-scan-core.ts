@@ -1,25 +1,26 @@
 // Scan cleanup: one pass, two sets of splats (cleanMasks). The scan is levelled once, and the
 // room box is worked out once, from the splats that pass the floater filters on opacity, size
 // and density. What is drawn: every splat inside that box (the far-off spray past the walls,
-// above the ceiling and below the floor is left out). What the collision is built from: those
-// of them that also pass the floater filters. It runs on an imported scan in a Web Worker
-// (clean-scan.worker.ts), and on .ply files offline (scripts/clean-scan.mjs, through Vite),
-// which keep what is drawn; a file loaded by name builds its collision from every splat in it.
+// above the ceiling and below the floor is left out). What the collision is built from: those of
+// them that are not big floaters (oversized, unless flat and solid: a piece of a surface). It runs
+// on an imported scan in a Web Worker (clean-scan.worker.ts); on a scan loaded by name, in the
+// load worker (load-scan.worker.ts), for its collision only (the file is drawn as it is); and on
+// .ply files offline (scripts/clean-scan.mjs, through Vite), which keep what is drawn: the
+// shipped files.
 //
-// The floater filters used to choose what was drawn too. They made scans see-through (Living
-// Room 0.2% of the view raw, 25% cleaned; Counter 0.2% and 8.5%), the size filter most, since
-// big flat splats tile walls and floors; but the collision is better built from what they keep
-// (Kitchen walkable from spawn 55% against 27% from the crop alone). context/collision.md,
-// "Scan cleanup".
+// The floater filters used to choose what was drawn, and then what the collision was built from.
+// They made scans see-through (Living Room 0.2% of the view raw, 25% cleaned; Counter 0.2% and
+// 8.5%), and the collision missed what was drawn (Kitchen: a quarter of its visible splats with no
+// collision near). context/collision.md, "Scan cleanup".
 
 import * as THREE from 'three';
 import { orientScan } from './orient-scan';
 import type { ParsedScan } from './parse-scan';
 
 export interface CleanOptions {
-  alphaMin?: number;    // floater filter: splats fainter than this (default 0.35)
-  scaleCapMul?: number; // floater filter: splats larger than this x the median size (default 4)
-  minMass?: number;     // floater filter: splats in a voxel with less opacity than this in it (default 4)
+  alphaMin?: number;    // room box only: it is worked out from splats at least this opaque (default 0.35)
+  scaleCapMul?: number; // a splat larger than this x the median size is a floater (default 4): left out of the room box, and of the collision unless it is a piece of a surface
+  minMass?: number;     // room box only: from splats in a voxel with at least this much opacity in it (default 4)
   grid?: number;        // the density grid's cells across 2 x radius (default 160)
   ceil?: number;        // room box: the ceiling, this percentile of levelled height (default 0.98)
   wall?: number;        // room box: across, this percentile of levelled x and z (default 0.99)
@@ -39,17 +40,27 @@ export interface CleanResult {
 const median = (a: number[]) => { a.sort((p, q) => p - q); return a[a.length >> 1]; };
 const pct = (sorted: Float32Array, p: number) => sorted[Math.min(sorted.length - 1, Math.max(0, Math.floor(sorted.length * p)))];
 
-/** The largest eigenvalue of the symmetric 3x3 matrix (xx, xy, xz, yy, yz, zz), in closed
- *  form. A splat's covariance is R·S²·Rᵀ, so this is its largest scale, squared. */
-function largestEigenvalue(xx: number, xy: number, xz: number, yy: number, yz: number, zz: number): number {
+/** The largest and smallest eigenvalues of the symmetric 3x3 matrix (xx, xy, xz, yy, yz, zz),
+ *  in closed form. A splat's covariance is R·S²·Rᵀ, so these are its widest and thinnest
+ *  scales, squared. */
+function eigenExtremes(xx: number, xy: number, xz: number, yy: number, yz: number, zz: number): { largest: number; smallest: number } {
   const off = xy * xy + xz * xz + yz * yz;
   const q = (xx + yy + zz) / 3;
   const p = Math.sqrt(((xx - q) ** 2 + (yy - q) ** 2 + (zz - q) ** 2 + 2 * off) / 6);
-  if (p < 1e-30) return q; // a sphere: all three the same
+  if (p < 1e-30) return { largest: q, smallest: q }; // a sphere: all three the same
   const a = (xx - q) / p, d = (yy - q) / p, f = (zz - q) / p, b = xy / p, c = xz / p, e = yz / p;
   const r = Math.max(-1, Math.min(1, (a * (d * f - e * e) - b * (b * f - e * c) + c * (b * e - d * c)) / 2));
-  return q + 2 * p * Math.cos(Math.acos(r) / 3);
+  const phi = Math.acos(r) / 3;
+  return { largest: q + 2 * p * Math.cos(phi), smallest: q + 2 * p * Math.cos(phi + (2 * Math.PI) / 3) };
 }
+
+// A big splat is left out of the collision as a floater only if it is not a piece of a surface:
+// one at most FLAT_MAX as thick as it is wide, and at least SOLID_MIN opaque, is the tile of a wall
+// or floor it looks like (85% of an AI-generated room's big splats are; 25% of the Mip-NeRF
+// captures'). Big round or see-through ones stay out: they are what made solid lumps in mid-air
+// (Kitchen, without the size filter: 6 surfaces nothing reaches).
+const FLAT_MAX = 0.1;
+const SOLID_MIN = 0.5;
 
 /** Which splats are drawn, and which of those the collision is built from (see the top of the
  *  file). `tiltDeg` is how far the levelling turned the floor. */
@@ -69,11 +80,12 @@ export function cleanMasks(scan: ParsedScan, opts: CleanOptions = {}): { drawn: 
   const cx = o.center.x, cy = o.center.y, cz = o.center.z, radius = o.radius;
 
   // the floater filters: opacity and size, then the opacity in each voxel of what passes those
-  const alpha = new Float32Array(count), sizeOf = new Float32Array(count);
+  const alpha = new Float32Array(count), sizeOf = new Float32Array(count), surface = new Uint8Array(count);
   for (let i = 0; i < count; i++) {
     alpha[i] = colors[i * 4 + 3] / 255;
-    const c = i * 6;
-    sizeOf[i] = Math.sqrt(Math.max(0, largestEigenvalue(covariances[c], covariances[c + 1], covariances[c + 2], covariances[c + 3], covariances[c + 4], covariances[c + 5])));
+    const c = i * 6, e = eigenExtremes(covariances[c], covariances[c + 1], covariances[c + 2], covariances[c + 3], covariances[c + 4], covariances[c + 5]);
+    sizeOf[i] = Math.sqrt(Math.max(0, e.largest));
+    surface[i] = Math.sqrt(Math.max(0, e.smallest)) <= FLAT_MAX * sizeOf[i] && alpha[i] >= SOLID_MIN ? 1 : 0;
   }
   const sampleStride = Math.max(1, Math.floor(count / 40000));
   const sizeSample: number[] = [];
@@ -93,7 +105,7 @@ export function cleanMasks(scan: ParsedScan, opts: CleanOptions = {}): { drawn: 
   }
   let solidCount = 0;
   for (let i = 0; i < count; i++) if (solid[i] && (mass.get(key(i)) ?? 0) < MIN_MASS) solid[i] = 0; else if (solid[i]) solidCount++;
-  // (filters that leave nothing are not floater filters for this scan: the box and the collision fall back to every splat)
+  // (filters that leave nothing are not floater filters for this scan: the box falls back to every splat)
   const boxFrom = solidCount ? solid : new Uint8Array(count).fill(1);
 
   // the room box: every splat levelled, and the robust extent of those that pass the filters
@@ -113,8 +125,13 @@ export function cleanMasks(scan: ParsedScan, opts: CleanOptions = {}): { drawn: 
     const minY = -FLOOR_MARGIN * radius, maxY = ceil + MARGIN * ceil;
     for (let i = 0; i < count; i++) drawn[i] = lx[i] >= minX && lx[i] <= maxX && ly[i] >= minY && ly[i] <= maxY && lz[i] >= minZ && lz[i] <= maxZ ? 1 : 0;
   }
+  // The collision: what is drawn, less the big splats that are not pieces of a surface. Not the
+  // opacity or density filters: the voxelizer already weighs each splat by its opacity and leaves
+  // thin space empty, and filtering first took the faint and sparse splats walls are made of too.
+  // Dropping both, Living Room's visible splats with no collision near went 15.7% -> 8.5%,
+  // Counter's 21.8% -> 12.8%, Kitchen's 25.6% -> 16.9%, and Kitchen's reach rose 89.9% -> 94.9%.
   const collision = new Uint8Array(count);
-  for (let i = 0; i < count; i++) collision[i] = drawn[i] & boxFrom[i];
+  for (let i = 0; i < count; i++) collision[i] = drawn[i] && (sizeOf[i] <= scaleCap || surface[i]) ? 1 : 0;
   return { drawn, collision, tiltDeg: o.tiltDeg };
 }
 

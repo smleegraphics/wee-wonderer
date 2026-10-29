@@ -9,11 +9,8 @@
 // same splats. The levelling only decides which splats are inside the room: the output keeps
 // the records, and their coordinates, as they were (the app levels at load).
 //
-// It keeps what is drawn: an import builds its collision from the splats the floater filters
-// also keep, but a file loaded by name builds its collision from every splat in it. So a scan
-// cleaned here and shipped would have worse collision (Kitchen's walkable-from-spawn 55% -> 27%):
-// don't re-clean the shipped scans with it until the filters run at load
-// (context/collision.md, "Scan cleanup").
+// It keeps what is drawn, which is how the shipped scans are made (`*-crop`, context/deploy.md):
+// the collision's floater filtering is not baked in, but done again at load (load-scan.worker.ts).
 //
 // Options (the app's defaults unless given; clean-scan-core.ts says what each is):
 //   --alphaMin= --scaleCapMul= --minMass= --grid=   the floater filters, which set the room box

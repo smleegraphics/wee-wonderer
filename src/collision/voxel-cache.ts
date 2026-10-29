@@ -8,7 +8,7 @@ import type { VoxelSurface } from './voxelize';
 
 const DB_NAME = 'wee-wonderer';
 const STORE = 'voxel-surface';
-const SCHEMA = 'g34'; // bump when the surface-generation algorithm changes (invalidates old entries); g33-g34: the levelling's floor search (orient-scan.ts) moves every room by up to a few degrees
+const SCHEMA = 'g36'; // bump when the surface-generation algorithm changes (invalidates old entries); g33-g34: the levelling's floor search (orient-scan.ts) moves every room by up to a few degrees; g35: a scan loaded by name builds its collision from the floater-filtered splats; g36: the collision leaves out only big splats that are not pieces of a surface
 
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {

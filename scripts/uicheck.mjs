@@ -11,7 +11,7 @@ import { chromium } from 'playwright';
 import { APP_URL } from './app-url.mjs';
 
 const base = process.argv[2] ?? `${APP_URL}/`;
-const FIRST = { file: 'kitchen-clean.spz', label: 'Kitchen' }, SECOND = { file: 'counter-clean.spz', label: 'Counter' };
+const FIRST = { file: 'kitchen-crop.spz', label: 'Kitchen' }, SECOND = { file: 'counter-crop.spz', label: 'Counter' };
 const LOAD_MS = 90000, SOON_MS = 5000;
 
 // A panorama of the fill alone is one colour: spread 0.0, measured with the bug back in.

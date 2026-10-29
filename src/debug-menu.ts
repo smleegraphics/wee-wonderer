@@ -143,10 +143,10 @@ export function setupDebugMenu(): void {
 
   // cleanup tunables for imported scans (re-clean + reload the active upload)
   const cleanup = hud.debug.section('Import cleanup');
-  cleanup.addSlider('Opacity floor (collision)', CLEAN_OPTS.alphaMin ?? 0.35, 0, 0.9, 0.05, (v) => { CLEAN_OPTS.alphaMin = v; void recleanUpload(); },
-    'For imported scans: the collision is built without splats fainter than this (all of them are still drawn). Higher burns off more floater haze, but can eat real surfaces.');
-  cleanup.addSlider('Density (collision)', CLEAN_OPTS.minMass ?? 4, 0, 12, 0.5, (v) => { CLEAN_OPTS.minMass = v; void recleanUpload(); },
-    'For imported scans: the collision is built only from splats in voxels with at least this much opacity (all of them are still drawn). Higher removes more isolated floaters.');
+  cleanup.addSlider('Opacity floor (room box)', CLEAN_OPTS.alphaMin ?? 0.35, 0, 0.9, 0.05, (v) => { CLEAN_OPTS.alphaMin = v; void recleanUpload(); },
+    'For imported scans: the box round the room (what is drawn) is worked out from splats at least this opaque, so far-off faint spray does not stretch it. Not the collision.');
+  cleanup.addSlider('Density (room box)', CLEAN_OPTS.minMass ?? 4, 0, 12, 0.5, (v) => { CLEAN_OPTS.minMass = v; void recleanUpload(); },
+    'For imported scans: the box round the room (what is drawn) is worked out from splats in voxels with at least this much opacity. Not the collision.');
   cleanup.addToggle('Crop to room', CLEAN_OPTS.crop ?? true, (on) => { CLEAN_OPTS.crop = on; void recleanUpload(); },
     'For imported scans: auto-level and crop to the room box (removes far background spray).');
 }
