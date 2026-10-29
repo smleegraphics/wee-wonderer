@@ -195,9 +195,8 @@ export function setMovePace(speed: number): void {
   if (pace) activeAction.timeScale = THREE.MathUtils.clamp(speed / pace, PACE_RANGE[0], PACE_RANGE[1]);
 }
 
-/** Put the figurine on the floor at the spawn point and re-frame the camera behind it. */
-const SPAWN_LOOKS = 24; // spots in the open the spawn search asks the opening shot about (resetToSpawn): each new spot gathers the splats round it again (about 0.25 s on Record Player Table, 0.02 s on Living Room), so the search gives up looking after this many
 const spawnFeet = new THREE.Vector3();
+/** Put the figurine on the floor at the spawn point and re-frame the camera behind it. */
 export function resetToSpawn(): void {
   // Start on the ground (unless placed with ?fx=&fz=): the spot nearest the scan's centre,
   // at the level the scan's ground is (a room's floor, a table's top), where the figurine
@@ -210,16 +209,14 @@ export function resetToSpawn(): void {
   // opening shot's camera, comes before a nearer one under something: Record Player Table's
   // centre is under its sideboard, which the figurine fits beneath. And a spot the opening
   // shot can see the figurine at, from some side, past the splats, comes before one it cannot:
-  // Living Room's centre is behind floaters the collision leaves out. Each look goes over the
-  // splats once, so only the first SPAWN_LOOKS spots in the open are looked at; then the
-  // nearest of them is taken, as before.
+  // Living Room's centre is behind floaters the collision leaves out. Where the shot sees none
+  // of the spots in the open, the nearest of them is taken, as before.
   if (q.has('fx') || q.has('fz')) {
     player.position.set(Number(q.get('fx') ?? 0), 0, Number(q.get('fz') ?? 0));
   } else if (collision && charH > 0) {
     const radius = BODY.radius * charH, segLen = Math.max(0.02, charH - 2 * radius);
     const open = charH * CAM_START_HEIGHT;
-    let looks = SPAWN_LOOKS;
-    const seen = (x: number, y: number, z: number) => looks-- > 0 && openingSees(spawnFeet.set(x, y, z));
+    const seen = (x: number, y: number, z: number) => openingSees(spawnFeet.set(x, y, z));
     if (groundY === null || !collision.findSpawn(radius, segLen, player.position, groundY, charH * PLATFORM_OPTS.stepFactor, open, seen))
       collision.findSpawn(radius, segLen, player.position, NaN, Infinity, open, seen);
   } else {

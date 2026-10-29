@@ -18,7 +18,7 @@ import { type LoadingScene, createLoadingScene } from '../loading/loading-scene'
 import { type PaperFigurine, createPaperFigurine } from '../loading/paper-figurine';
 import { SCANS, scanSize, scanURL } from './scans';
 import { clearSightSplats, setSightSplats } from './splat-sight';
-import { DEFAULT_SCAN, hud, MESHONLY, player, renderer, room, scene, surround, SURROUND, TARGET_RADIUS, TEL, VOXEL_SIZE } from '../app';
+import { DEFAULT_SCAN, GRAIN, hud, MESHONLY, player, renderer, room, scene, surround, SURROUND, TARGET_RADIUS, TEL, VOXEL_SIZE } from '../app';
 import { buildCollision, collisionKey, disposeCollision, navVersion, rebuildCollision, useScanSettings, VOXEL_OPTS } from '../collision/room-collision';
 import { charH, charLoaded, play, resetToSpawn } from '../figurine/character';
 import { installContactShadow } from '../lighting/contact-shadow';
@@ -83,6 +83,10 @@ export function updateLoading(): void {
 
 /** How far the room on screen reaches from its centre: TARGET_RADIUS, times its scan's `size`. */
 let roomRadius = TARGET_RADIUS;
+/** The cells the opening shot's sight test sorts the room's splats into (splat-sight.ts): about a
+ *  figurine high (4 grains), so a sight line, a few figurine heights long, crosses a handful. It
+ *  covers twice the room's radius either side of the centre, which takes in every start spot. */
+const SIGHT_CELL = 4 * GRAIN;
 /** How far the room reaches from the figurine: the scan is centred on the origin and scaled to `roomRadius`. */
 function roomReach(): number {
   return roomRadius + Math.hypot(player.position.x, player.position.z);
@@ -259,7 +263,7 @@ async function showScan(source: ScanSource, id: string, token: number, cancelled
   // The spawn needs only the collision, and must be decided now, before the next frame:
   // from here the camera tests the new room's mesh, and a figurine still at its old spot
   // (the origin, or the last room's spawn) is inside it, which pulls the camera in close.
-  if (!MESHONLY) setSightSplats(parsed.centers, parsed.covariances, parsed.colors, own, toWorld); // (what the opening shot looks past: splat-sight.ts)
+  if (!MESHONLY) setSightSplats(parsed.centers, parsed.covariances, parsed.colors, own, toWorld, SIGHT_CELL, 2 * roomRadius); // (what the opening shot looks past: splat-sight.ts)
   if (charLoaded) resetToSpawn();
   const tFill = performance.now();
   const walk = walkableNow(), cellsUsed = navVersion;
@@ -270,8 +274,9 @@ async function showScan(source: ScanSource, id: string, token: number, cancelled
   const shown = showSplat(filled, o.center.multiplyScalar(-1), opacity, cellsUsed); // recentred on the origin
   // (the fill took `parsed`'s arrays: the same splats, here now.) A start chosen meanwhile (the
   // figurine arrived during the fill) was chosen without looking past them: choose it again,
-  // before the room arrives around it.
-  if (!MESHONLY && setSightSplats(filled.scan.centers, filled.scan.covariances, filled.scan.colors, own, toWorld) && charLoaded) resetToSpawn();
+  // before the room arrives around it. (The sight keeps no copies of its own: on Record Player
+  // Table they would be about 150 MB.)
+  if (!MESHONLY && setSightSplats(filled.scan.centers, filled.scan.covariances, filled.scan.colors, own, toWorld, SIGHT_CELL, 2 * roomRadius) && charLoaded) resetToSpawn();
   // What a rebuild builds from: the marked splats, or every splat drawn. (Not `parsed`'s arrays:
   // the fill above took those over to its worker, and they are empty here now.)
   collisionSplats = picked && picked.opacity.length ? { centers: new THREE.BufferAttribute(picked.centers, 3), opacity: picked.opacity, covariances: picked.covariances } : { centers: shown.centers, opacity, covariances: shown.cov };

@@ -174,14 +174,19 @@ character switched meanwhile does not clamp it; turning it off puts them back.
   opened pulled in as close as the camera goes, on the figurine's face. Testing the
   collision alone, it then opened behind 56 floaters on a side the collision called clear:
   the mesh leaves floaters out (context/collision.md, "See it but cannot touch it").
-- **What the camera sees is worked out from the splats** (`scan/splat-sight.ts`): the
-  splats round the figurine (above its legs, where no sight line goes lower) are gathered
-  once and sorted into cells; each sight line, to the figurine's legs, body and head, takes
-  away each splat's opacity where it passes nearest the splat, measured in the splat's own
-  shape, so a flat splat seen edge-on hides little. Gathering costs about 0.25 s on Record
-  Player Table (4.25 million splats) and 0.02 s on Living Room, once per spot; the lines
-  cost almost nothing. A rough version that treated every splat as a ball the size of its
-  widest axis said Living Room's new view was blocked; the picture says it is not.
+- **What the camera sees is worked out from the splats** (`scan/splat-sight.ts`). When a
+  room loads, its splats are sorted once into a grid of cells about a figurine high
+  (`setSightSplats`). Each sight line, to the figurine's legs, body and head, walks exactly
+  the cells it crosses and takes away each splat's opacity where it passes nearest the splat,
+  measured in the splat's own shape, so a flat splat seen edge-on hides little; a splat the
+  line passes further from than its widest reach is skipped before its shape is worked out.
+  Median of five, on Sam's machine: the sort 35 ms (Living Room) to 0.9 s (Record Player
+  Table, 4.25 million splats, on the main thread while the loading view is up); choosing the
+  start, or Reset, 3 to 68 ms. An earlier version gathered the splats round each spot it
+  looked at (0.25 s a spot on Record Player Table), so it had to cap how many spots it looked
+  at; one sort removed the cap. Single timings here swing up to fivefold with whatever else
+  the machine is doing: time several runs. A rough version that treated every splat as a ball
+  the size of its widest axis said Living Room's new view was blocked; the picture says not.
 - The follow camera still tests only the collision, so floaters can block it in play.
   Fading the splats between the camera and the figurine would cover that (not built).
 - While climbing, if the wall blocks the view and the view from behind the figurine

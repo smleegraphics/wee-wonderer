@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 import { BODY, camera, figurine, FREECAM_OPTS, move, orbit, orbitCamera, player, TARGET_RADIUS, TUNE, WORLD_UP } from '../app';
 import { collision } from '../collision/room-collision';
-import { gatherSight, seeThrough } from '../scan/splat-sight';
+import { seeThrough, sightReady } from '../scan/splat-sight';
 import { charH } from './character';
 import { climbDir } from './climb';
 import { lerpAngle } from './controller';
@@ -127,8 +127,7 @@ const sightCam = new THREE.Vector3(), sightTo = new THREE.Vector3(), sightBack =
 export function openingView(pivot: THREE.Vector3): { turn: number; sees: number } {
   if (!collision) return { turn: 0, sees: 1 };
   const len = CAM_START.length() * charH, step = (Math.PI * 2) / CAM_START_TURNS;
-  const feetY = pivot.y - charH * CAM_PIVOT, body = BODY.radius * charH;
-  const splats = gatherSight(pivot, len + charH, feetY + charH * SIGHT_AT[0]); // (no sight line goes lower than its end on the legs)
+  const splats = sightReady(), feetY = pivot.y - charH * CAM_PIVOT, body = BODY.radius * charH;
   let best = 0, bestSees = 0, bestRank = -1;
   for (let i = 0; i < CAM_START_TURNS; i++) {
     const turn = (i % 2 ? 1 : -1) * Math.ceil(i / 2) * step; // 0, +1, -1, +2, -2 … steps: nearest the unturned shot first

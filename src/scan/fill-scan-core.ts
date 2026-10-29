@@ -12,6 +12,7 @@
 // scaled world (+Y up); `m` maps the scan's own coordinates into it.
 
 import type { ParsedScan } from './parse-scan';
+import { worldCovariance } from './splat-covariance';
 
 /** The walkable cells (NavGrid.toField): one per place the figurine can stand. */
 export interface Walkable {
@@ -112,12 +113,7 @@ export function fillWalkable(
   const through = new Float32Array(cells * spots).fill(1);
   const R = new Float32Array(cells * spots), G = new Float32Array(cells * spots), B = new Float32Array(cells * spots), W = new Float32Array(cells * spots);
   const heightSum = new Float64Array(cells), drawn = new Float64Array(cells);
-  // the world covariance of splat i along world axes a and b (rows of the matrix's linear part)
-  const wcov = (i: number, a: number, b: number) => {
-    const a0 = m[a], a1 = m[4 + a], a2 = m[8 + a], b0 = m[b], b1 = m[4 + b], b2 = m[8 + b], c = i * 6;
-    return covariances[c] * a0 * b0 + covariances[c + 3] * a1 * b1 + covariances[c + 5] * a2 * b2
-      + covariances[c + 1] * (a0 * b1 + a1 * b0) + covariances[c + 2] * (a0 * b2 + a2 * b0) + covariances[c + 4] * (a1 * b2 + a2 * b1);
-  };
+  const wcov = new Float64Array(6); // a splat's covariance in world space (splat-covariance.ts): xx, xy, xz, yy, yz, zz
   const inv2 = 1 / (spot * spot), MIN_VAR = 0.05; // (spots²) keeps a splat seen edge-on from having no footprint
   // Most of a scan is nowhere near the ground (walls, ceiling, furniture), so each splat is
   // first tried against the heights of the cells its footprint could reach at all.
@@ -131,7 +127,8 @@ export function fillWalkable(
     const near = Math.min(nx - 1, Math.max(0, Math.floor(fx / sub))) * nz + Math.min(nz - 1, Math.max(0, Math.floor(fz / sub)));
     if (y < lowest[near] - opts.band || y > highest[near] + opts.band) continue;
     const op = colors[i * 4 + 3] / 255;
-    const vxx = wcov(i, 0, 0), vzz = wcov(i, 2, 2), vxz = wcov(i, 0, 2);
+    worldCovariance(covariances, i, m, wcov);
+    const vxx = wcov[0], vzz = wcov[5], vxz = wcov[2], vyy = wcov[3];
     const sxx = vxx * inv2 + MIN_VAR, szz = vzz * inv2 + MIN_VAR, sxz = vxz * inv2;
     const det = sxx * szz - sxz * sxz;
     if (!(det > 1e-9)) continue;
@@ -149,7 +146,7 @@ export function fillWalkable(
           // Any splat at the cell's height hides the backdrop, but only one lying flat is
           // the ground: the side of a box standing on the floor is at the floor's height
           // too, and must not lend the fill beside it its colour or lift it off the floor.
-          if (ground < 0) ground = Math.sqrt(wcov(i, 1, 1)) < LIES_FLAT * Math.sqrt(Math.sqrt(Math.max(0, vxx * vzz - vxz * vxz))) ? 1 : NOT_FLAT;
+          if (ground < 0) ground = Math.sqrt(vyy) < LIES_FLAT * Math.sqrt(Math.sqrt(Math.max(0, vxx * vzz - vxz * vxz))) ? 1 : NOT_FLAT;
           for (let X = Math.max(X0, ix * sub); X <= Math.min(X1, ix * sub + sub - 1); X++) {
             const dx = X + 0.5 - fx;
             for (let Z = Math.max(Z0, iz * sub); Z <= Math.min(Z1, iz * sub + sub - 1); Z++) {

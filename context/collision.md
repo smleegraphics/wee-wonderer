@@ -327,8 +327,7 @@ up to the opening shot's camera (`CAM_START_HEIGHT`, 2.6 body heights), comes be
 nearer one under something, so the opening shot sees the figurine: Record Player Table's
 nearest spot was under its sideboard. Of the spots in the open, one the opening shot can
 see the figurine at past the splats (`openingSees`, context/climb.md, "Follow camera")
-comes before one it cannot; only the first 24 are looked at (`SPAWN_LOOKS`: each look
-gathers the splats round that spot). Where nothing at that level is in the open, the
+comes before one it cannot. Where nothing at that level is in the open, the
 nearest covered spot is taken, as before; no other room's start moved. A start chosen
 while the gap fill has the splat arrays (the figurine arrived during it) is chosen again
 once they are back, before the room arrives (room.ts). Without a level, `findSpawn` takes the
