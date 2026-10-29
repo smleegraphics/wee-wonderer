@@ -3,7 +3,7 @@
 // (vite.config.ts); a public build sets VITE_SCAN_BASE to the scan host (context/deploy.md).
 import { SCAN_DIR } from './scan-list';
 
-export { SCANS, LISTED_SCANS, SCAN_FILE_TYPES, type ScanEntry } from './scan-list';
+export { SCANS, LISTED_SCANS, SCAN_FILE_TYPES, scanSize, type ScanEntry } from './scan-list';
 
 const base = import.meta.env.VITE_SCAN_BASE || `${import.meta.env.BASE_URL}${SCAN_DIR}/`;
 const SCAN_BASE = base.endsWith('/') ? base : `${base}/`;

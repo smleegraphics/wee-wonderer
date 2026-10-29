@@ -248,6 +248,13 @@ character only.
   (a can) falls through or is pushed out.
 - **No ceiling collision in the air.** The airborne push-out is horizontal only, on
   purpose, to avoid wedging.
+- **A climb can start with no room above it, and then hangs.** Starting a climb asks for
+  a face at chest and head height, not for room to climb. Under an overhang at head height
+  (Record Player Table's sideboard, from below, at its `size`), a jump grabs the overhang's
+  slanted edge with the underside just over the head; the climb's moves are then all
+  refused (the body would go into the underside) and it hangs until let go. A fix would ask
+  for room for one climbing step up before starting, and let go when a climb can go neither
+  up nor over. Left as minor.
 - **No wrapping around outside corners.**
 - **Steering on small round objects swings a lot.** The rate is `TUNE.climbTurn`.
 - **The walkable grid assumes the floor is at y=0.** `buildNavGrid` is passed

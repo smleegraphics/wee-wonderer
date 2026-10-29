@@ -5,7 +5,7 @@ import { type GLTF, GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { BODY, camera, figurine, hud, move, orbit, player, q, TEL } from '../app';
 import { collision, groundY, navGrid, PLATFORM_OPTS, rebuildPlatformOverlay, setPlatformOverlay, setVoxelOverlay, showPlatforms, showVoxels } from '../collision/room-collision';
 import { loadout } from './abilities';
-import { camLatch, frameOpeningShot } from './camera';
+import { CAM_START_HEIGHT, camLatch, frameOpeningShot } from './camera';
 import { type CharacterEntry, CHARACTERS, type ClipUse, clipOf, type Move, MOVE_FALLBACK, MOVE_PLAYS } from './characters';
 import { clipPace } from './clip-pace';
 import { jumpKey, jumpRelease, lastGood, refitBody, resetMotion, setLoadout } from './controller';
@@ -204,13 +204,16 @@ export function resetToSpawn(): void {
   // step up from the worktop. That is kept for when nothing at the ground's level fits.
   // (The walkable cell nearest the centre is not enough: a cell only has room overhead at
   // one point, and Kitchen's nearest is the table under the Lego bulldozer, between its
-  // tracks, where the figurine is boxed in.)
+  // tracks, where the figurine is boxed in.) A spot in the open, with nothing over it up to the
+  // opening shot's camera, comes before a nearer one under something: Record Player Table's
+  // centre is under its sideboard, which the figurine fits beneath.
   if (q.has('fx') || q.has('fz')) {
     player.position.set(Number(q.get('fx') ?? 0), 0, Number(q.get('fz') ?? 0));
   } else if (collision && charH > 0) {
     const radius = BODY.radius * charH, segLen = Math.max(0.02, charH - 2 * radius);
-    if (groundY === null || !collision.findSpawn(radius, segLen, player.position, groundY, charH * PLATFORM_OPTS.stepFactor))
-      collision.findSpawn(radius, segLen, player.position);
+    const open = charH * CAM_START_HEIGHT;
+    if (groundY === null || !collision.findSpawn(radius, segLen, player.position, groundY, charH * PLATFORM_OPTS.stepFactor, open))
+      collision.findSpawn(radius, segLen, player.position, NaN, Infinity, open);
   } else {
     player.position.set(0, 0, 0);
   }
