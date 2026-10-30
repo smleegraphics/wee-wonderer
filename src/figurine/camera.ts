@@ -3,8 +3,9 @@
 // "Follow camera"). Also the fixed debug camera (?az, ?el, ?dist, ?cx, ?cy, ?cz).
 
 import * as THREE from 'three';
-import { camera, figurine, FREECAM_OPTS, move, orbit, orbitCamera, player, TARGET_RADIUS, TUNE, WORLD_UP } from '../app';
+import { BODY, camera, figurine, FREECAM_OPTS, move, orbit, orbitCamera, player, TARGET_RADIUS, TUNE, WORLD_UP } from '../app';
 import { collision } from '../collision/room-collision';
+import { seeThrough, sightReady } from '../scan/splat-sight';
 import { charH } from './character';
 import { climbDir } from './climb';
 import { lerpAngle } from './controller';
@@ -103,28 +104,59 @@ export function frameOpeningShot(): void {
   // fixed side, a room with something solid there (Living Room) opened with the camera
   // pulled in as close as it goes, filling the screen with the figurine's face. The
   // figurine turns with the shot, so every room opens on the same framing.
-  const turn = clearStartTurn(orbit.target);
+  const { turn } = openingView(orbit.target);
   player.rotation.y = turn;
   orbitCamera.position.copy(CAM_START).applyAxisAngle(WORLD_UP, turn).multiplyScalar(charH).add(orbit.target);
   orbit.update();
   showView();
 }
 
-/** How far to turn the opening shot about the figurine, pivot at `pivot`: the side
- *  nearest the unturned one whose arm meets nothing; failing that, the one that sees
+/** The opening shot sees the figurine when this much of it shows past the splats (seeThrough,
+ *  averaged over its sight lines): three quarters, so a wisp across it passes and a wall of
+ *  floaters does not. Living Room opened behind 56 floaters that let none of it through,
+ *  on a side the collision called clear: the mesh leaves floaters out. */
+const OPENING_SEES = 0.75;
+const SIGHT_AT = [0.25, 0.55, 0.85]; // where the shot's sight lines end on the figurine, as shares of its height: legs, body, head
+const sightCam = new THREE.Vector3(), sightTo = new THREE.Vector3(), sightBack = new THREE.Vector3(), sightPivot = new THREE.Vector3();
+
+/** How far to turn the opening shot about the figurine, pivot at `pivot`, and how much of the
+ *  figurine it then sees (0 to 1). The side nearest the unturned one whose arm meets no
+ *  collision and sees enough of the figurine past the splats; failing that, of the sides
+ *  clear of the collision the one that sees the most; failing that, the one that sees
  *  furthest. Unturned when there is no collision yet to test against. */
-function clearStartTurn(pivot: THREE.Vector3): number {
-  if (!collision) return 0;
+export function openingView(pivot: THREE.Vector3): { turn: number; sees: number } {
+  if (!collision) return { turn: 0, sees: 1 };
   const len = CAM_START.length() * charH, step = (Math.PI * 2) / CAM_START_TURNS;
-  let best = 0, bestClear = -1;
+  const splats = sightReady(), feetY = pivot.y - charH * CAM_PIVOT, body = BODY.radius * charH;
+  let best = 0, bestSees = 0, bestRank = -1;
   for (let i = 0; i < CAM_START_TURNS; i++) {
     const turn = (i % 2 ? 1 : -1) * Math.ceil(i / 2) * step; // 0, +1, -1, +2, -2 … steps: nearest the unturned shot first
     camDir.copy(CAM_START).applyAxisAngle(WORLD_UP, turn).normalize();
     const clear = collision.rayDistance(pivot, camDir, len);
-    if (clear >= len) return turn;
-    if (clear > bestClear) { best = turn; bestClear = clear; }
+    let sees = 0;
+    if (clear >= len) {
+      sightCam.copy(pivot).addScaledVector(camDir, len);
+      sees = 1;
+      if (splats) {
+        sees = 0;
+        for (const at of SIGHT_AT) {
+          sightTo.set(pivot.x, feetY + charH * at, pivot.z);
+          sightTo.addScaledVector(sightBack.subVectors(sightTo, sightCam).normalize(), -body); // (to the near side of the body: splats inside it are hidden by it)
+          sees += seeThrough(sightCam, sightTo) / SIGHT_AT.length;
+        }
+      }
+      if (sees >= OPENING_SEES) return { turn, sees };
+    }
+    const rank = clear >= len ? 1 + sees : clear / len; // clear of the collision first, then by what it sees
+    if (rank > bestRank) { best = turn; bestSees = sees; bestRank = rank; }
   }
-  return best;
+  return { turn: best, sees: bestSees };
+}
+
+/** Would the opening shot see the figurine standing at `feet` (resetToSpawn: a start it
+ *  cannot see looks broken)? */
+export function openingSees(feet: THREE.Vector3): boolean {
+  return openingView(sightPivot.set(feet.x, feet.y + charH * CAM_PIVOT, feet.z)).sees >= OPENING_SEES;
 }
 
 /** The camera let off the figurine (the Debug card's "Free camera"): drag to orbit, right-drag

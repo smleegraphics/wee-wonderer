@@ -325,8 +325,12 @@ centre that is at the ground's height (`VoxelSurface.groundY`, within a step) an
 its whole capsule fits: `findSpawn` with a level. A spot in the open, with nothing over it
 up to the opening shot's camera (`CAM_START_HEIGHT`, 2.6 body heights), comes before a
 nearer one under something, so the opening shot sees the figurine: Record Player Table's
-nearest spot was under its sideboard. Where nothing at that level is in the open, the
-nearest covered spot is taken, as before; no other room's start moved. Without a level, `findSpawn` takes the
+nearest spot was under its sideboard. Of the spots in the open, one the opening shot can
+see the figurine at past the splats (`openingSees`, context/climb.md, "Follow camera")
+comes before one it cannot. Where nothing at that level is in the open, the
+nearest covered spot is taken, as before; no other room's start moved. A start chosen
+while the gap fill has the splat arrays (the figurine arrived during it) is chosen again
+once they are back, before the room arrives (room.ts). Without a level, `findSpawn` takes the
 "lowest place near the centre with room to stand"; that is the fallback, for when
 nothing at the ground's height fits. On Counter that lowest place is the inside of a
 glass bowl: it always was, and a bumpy worktop used to make a ramp out of it.

@@ -69,6 +69,8 @@ enough to find one.
 | `load-scan.worker.ts`, `parse-scan.ts` | Fetches and parses a scan off the main thread; `parseScan` picks PLY or SPZ by the file's bytes, and every scan becomes one form, `ParsedScan` |
 | `orient-scan.ts` | Levels the floor and yaw-aligns walls to X/Z (seeded, deterministic) |
 | `clean-scan-core.ts` (+ worker), `scripts/clean-scan.mjs` | Cleanup of an import (`cleanMasks`): what is drawn (levelled, cropped to the room) and, from the same pass, what the collision is built from (also floater-filtered); the script keeps a `.ply`'s drawn set offline with the same code. Two sets, and why: context/collision.md, "Scan cleanup" |
+| `splat-covariance.ts` | A splat's shape in world space and its inverse (`worldCovariance`, `invertSymmetric`): the one copy of that maths, for the voxelizer, the gap fill and the sight test |
+| `splat-sight.ts` | How much of something a camera sees past the scan's splats (`setSightSplats`, `seeThrough`): the opening shot's test, since the collision leaves floaters out |
 | `fill-scan-core.ts` (+ worker) | Walkable gap fill: flat splats added where the ground the figurine can stand on lets the backdrop through |
 | **`src/collision/`** | **Collision from the splats:** |
 | `collision.ts` | `MeshCollision` (three-mesh-bvh over the collision mesh) and `NavGrid` (walkable cells) |

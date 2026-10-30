@@ -165,11 +165,30 @@ character switched meanwhile does not clamp it; turning it off puts them back.
   zoom unchanged before; every scroll counted after.
 - It shortens fast and lengthens slowly, so a flickering blocker holds it still.
 - It never comes closer than the distance at which the figurine fits in frame.
-- **The opening shot is turned to a clear side** (`resetToSpawn`, `clearStartTurn`):
-  the same framing (`CAM_START`) at every spawn and Reset, with the figurine turned
-  along, tried at 16 sides nearest the unturned one first, taking the first whose arm
-  meets nothing (else the one that sees furthest). From one fixed side, Living Room
-  opened pulled in as close as the camera goes, on the figurine's face.
+- **The opening shot is turned to a side that sees the figurine** (`frameOpeningShot`,
+  `openingView`): the same framing (`CAM_START`) at every spawn and Reset, with the
+  figurine turned along, tried at 16 sides nearest the unturned one first, taking the
+  first whose arm meets no collision **and** sees at least three quarters of the figurine
+  past the splats (`OPENING_SEES`; else, of the sides clear of the collision, the one that
+  sees the most; else the one that sees furthest). From one fixed side, Living Room
+  opened pulled in as close as the camera goes, on the figurine's face. Testing the
+  collision alone, it then opened behind 56 floaters on a side the collision called clear:
+  the mesh leaves floaters out (context/collision.md, "See it but cannot touch it").
+- **What the camera sees is worked out from the splats** (`scan/splat-sight.ts`). When a
+  room loads, its splats are sorted once into a grid of cells about a figurine high
+  (`setSightSplats`). Each sight line, to the figurine's legs, body and head, walks exactly
+  the cells it crosses and takes away each splat's opacity where it passes nearest the splat,
+  measured in the splat's own shape, so a flat splat seen edge-on hides little; a splat the
+  line passes further from than its widest reach is skipped before its shape is worked out.
+  Median of five, on Sam's machine: the sort 35 ms (Living Room) to 0.9 s (Record Player
+  Table, 4.25 million splats, on the main thread while the loading view is up); choosing the
+  start, or Reset, 3 to 68 ms. An earlier version gathered the splats round each spot it
+  looked at (0.25 s a spot on Record Player Table), so it had to cap how many spots it looked
+  at; one sort removed the cap. Single timings here swing up to fivefold with whatever else
+  the machine is doing: time several runs. A rough version that treated every splat as a ball
+  the size of its widest axis said Living Room's new view was blocked; the picture says not.
+- The follow camera still tests only the collision, so floaters can block it in play.
+  Fading the splats between the camera and the figurine would cover that (not built).
 - While climbing, if the wall blocks the view and the view from behind the figurine
   is clearer, it swings round. Any user drag or zoom cancels that for the rest of
   the climb (`camHandsOff`).

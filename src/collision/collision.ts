@@ -161,8 +161,9 @@ export interface Collision {
    *  With `level`, only surfaces within `band` of that height count, and nothing is
    *  written unless such a spot is found. Writes {x,y,z} to `out`; true if it found a
    *  spot on real geometry where the capsule fits. A spot with `open` clear above its feet
-   *  (in the open, not under a table) is taken before a nearer one under something. */
-  findSpawn(radius: number, segLength: number, out: THREE.Vector3, level?: number, band?: number, open?: number): boolean;
+   *  (in the open, not under a table) is taken before a nearer one under something, and of
+   *  those one `seen` accepts (the opening shot can see it) before one it does not. */
+  findSpawn(radius: number, segLength: number, out: THREE.Vector3, level?: number, band?: number, open?: number, seen?: (x: number, y: number, z: number) => boolean): boolean;
   /** Build the walkable NavGrid — the reliable, hole-filled ground the controller
    *  stands on and is confined to. */
   buildNavGrid(sampleStep: number, headroom: number, stepThreshold: number, minCells: number, slopeMin?: number, minY?: number, bridge?: number, fillIters?: number): NavGrid;
@@ -305,7 +306,7 @@ export class MeshCollision implements Collision {
     outCorrection.set(feet.x - ax, feet.y - ay, feet.z - az);
   }
 
-  findSpawn(radius: number, segLength: number, out: THREE.Vector3, level = NaN, band = Infinity, open = 0): boolean {
+  findSpawn(radius: number, segLength: number, out: THREE.Vector3, level = NaN, band = Infinity, open = 0, seen?: (x: number, y: number, z: number) => boolean): boolean {
     // Spiral (x,z) outward from the ORIGIN — the scan's recentered content centre
     // (splat median), which sits inside the real content — and stand on the lowest
     // real surface there.
@@ -318,6 +319,7 @@ export class MeshCollision implements Collision {
     // the phantom backstop plane below the content. Fall back, in order, to: any
     // real-geometry spot (even if cramped), then a clear plane spot, then origin.
     let realFallbackY = NaN, realX = 0, realZ = 0;
+    let unseenY = NaN, unseenX = 0, unseenZ = 0;    // the nearest clear spot in the open that `seen` turned down
     let coveredY = NaN, coveredX = 0, coveredZ = 0; // the nearest clear spot with something over it (under a table)
     let planeFallbackY = NaN, planeX = 0, planeZ = 0;
     for (let ring = 0; ring * step <= maxR + step; ring++) {
@@ -331,12 +333,16 @@ export class MeshCollision implements Collision {
         const sy = s.y, onPlane = !s.real;
         const clear = this.isClearSpawn(x, sy, z, radius, segLength, capH);
         if (!onPlane) {
-          if (clear && this.hasHeadroom(x, sy, z, open)) { out.set(x, sy, z); return true; } // ideal: clear spot on real geometry, in the open
+          if (clear && this.hasHeadroom(x, sy, z, open)) { // clear spot on real geometry, in the open
+            if (!seen || seen(x, sy, z)) { out.set(x, sy, z); return true; } // ideal: and the opening shot sees it
+            if (Number.isNaN(unseenY)) { unseenY = sy; unseenX = x; unseenZ = z; }
+          }
           if (clear && Number.isNaN(coveredY)) { coveredY = sy; coveredX = x; coveredZ = z; }
           if (Number.isNaN(realFallbackY)) { realFallbackY = sy; realX = x; realZ = z; }
         } else if (clear && Number.isNaN(planeFallbackY)) { planeFallbackY = sy; planeX = x; planeZ = z; }
       }
     }
+    if (!Number.isNaN(unseenY)) { out.set(unseenX, unseenY, unseenZ); return true; }     // in the open, but nowhere the shot sees
     if (!Number.isNaN(coveredY)) { out.set(coveredX, coveredY, coveredZ); return true; } // clear, but nowhere in the open
     if (!Number.isNaN(level)) return false;                                        // nowhere at that level: the caller decides
     if (!Number.isNaN(realFallbackY)) out.set(realX, realFallbackY, realZ);       // on the content, cramped

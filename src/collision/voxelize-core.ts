@@ -16,6 +16,8 @@
 //   fillFloor — fill the gaps in the surface the figurine plays on (fillGround)
 // then Taubin smoothing relaxes the mesh (no occupancy drift).
 
+import { invertSymmetric, worldCovariance } from '../scan/splat-covariance';
+
 export interface VoxelOptions {
   iso?: number;        // isovalue as a fraction of the median surface density (default 0.35)
   despeckle?: number;  // remove solid components smaller than this many voxels of the unit grain (default 20; 0 = off)
@@ -199,9 +201,8 @@ export function voxelizeCore(
       const vx = Math.floor(cx), vy = Math.floor(cy), vz = Math.floor(cz);
       if (vx >= 0 && vx < gx && vy >= 0 && vy < gy && vz >= 0 && vz < gz) dens[(vx * gy + vy) * gz + vz] += op;
     };
-    // linear (rotation × uniform-scale) part of the world matrix, row-major 3×3
-    const L0 = m[0], L1 = m[4], L2 = m[8], L3 = m[1], L4 = m[5], L5 = m[9], L6 = m[2], L7 = m[6], L8 = m[10];
     const inv2 = 1 / (vs * vs); // world → voxel² scale for the covariance
+    const W = new Float64Array(6), I = new Float64Array(6); // a splat's covariance in voxel units, and its inverse
     // Floor each world-axis variance to a small epsilon (voxel²). This keeps the
     // covariance invertible for razor-flat splats WITHOUT inflating the surface
     // perpendicular: at 0.05 a flat splat spreads ~1 voxel thick (√0.05·σ), not the
@@ -213,20 +214,13 @@ export function voxelizeCore(
       const cx = (wx(i) - minX) / vs, cy = (wy(i) - minY) / vs, cz = (wz(i) - minZ) / vs;
       const op = opacity[i];
       if (!cov) { centerBin(cx, cy, cz, op); continue; }
-      const a = cov[i * 6], b = cov[i * 6 + 1], c = cov[i * 6 + 2], d = cov[i * 6 + 3], e = cov[i * 6 + 4], f = cov[i * 6 + 5];
-      // world covariance in voxel units = (L·Σ·Lᵀ)/vs², inlined (hot loop). Each Wab is
-      // rowA(L)ᵀ · Σ · rowB(L) for the symmetric local Σ [a,b,c; b,d,e; c,e,f].
-      const W00 = (a * L0 * L0 + d * L1 * L1 + f * L2 * L2 + 2 * (b * L0 * L1 + c * L0 * L2 + e * L1 * L2)) * inv2 + MIN_VAR;
-      const W11 = (a * L3 * L3 + d * L4 * L4 + f * L5 * L5 + 2 * (b * L3 * L4 + c * L3 * L5 + e * L4 * L5)) * inv2 + MIN_VAR;
-      const W22 = (a * L6 * L6 + d * L7 * L7 + f * L8 * L8 + 2 * (b * L6 * L7 + c * L6 * L8 + e * L7 * L8)) * inv2 + MIN_VAR;
-      const W01 = (a * L0 * L3 + d * L1 * L4 + f * L2 * L5 + b * (L0 * L4 + L1 * L3) + c * (L0 * L5 + L2 * L3) + e * (L1 * L5 + L2 * L4)) * inv2;
-      const W02 = (a * L0 * L6 + d * L1 * L7 + f * L2 * L8 + b * (L0 * L7 + L1 * L6) + c * (L0 * L8 + L2 * L6) + e * (L1 * L8 + L2 * L7)) * inv2;
-      const W12 = (a * L3 * L6 + d * L4 * L7 + f * L5 * L8 + b * (L3 * L7 + L4 * L6) + c * (L3 * L8 + L5 * L6) + e * (L4 * L8 + L5 * L7)) * inv2;
-      const det = W00 * (W11 * W22 - W12 * W12) - W01 * (W01 * W22 - W12 * W02) + W02 * (W01 * W12 - W11 * W02);
-      if (!(det > 1e-9)) { centerBin(cx, cy, cz, op); continue; }
-      const idet = 1 / det; // inverse covariance (symmetric) → the anisotropic distance metric
-      const I00 = (W11 * W22 - W12 * W12) * idet, I11 = (W00 * W22 - W02 * W02) * idet, I22 = (W00 * W11 - W01 * W01) * idet;
-      const I01 = (W02 * W12 - W01 * W22) * idet, I02 = (W01 * W12 - W02 * W11) * idet, I12 = (W01 * W02 - W00 * W12) * idet;
+      // world covariance in voxel units = (L·Σ·Lᵀ)/vs² (splat-covariance.ts), its variances floored
+      worldCovariance(cov, i, m, W);
+      for (let k = 0; k < 6; k++) W[k] *= inv2;
+      W[0] += MIN_VAR; W[3] += MIN_VAR; W[5] += MIN_VAR;
+      if (!(invertSymmetric(W, I) > 1e-9)) { centerBin(cx, cy, cz, op); continue; }
+      const W00 = W[0], W11 = W[3], W22 = W[5]; // inverse covariance (symmetric) → the anisotropic distance metric
+      const I00 = I[0], I01 = I[1], I02 = I[2], I11 = I[3], I12 = I[4], I22 = I[5];
       const rx = Math.min(MAX_R, Math.ceil(SIGMA * Math.sqrt(W00))), ry = Math.min(MAX_R, Math.ceil(SIGMA * Math.sqrt(W11))), rz = Math.min(MAX_R, Math.ceil(SIGMA * Math.sqrt(W22)));
       const vxc = Math.floor(cx), vyc = Math.floor(cy), vzc = Math.floor(cz);
       // pass A: Gaussian weight at each footprint voxel → wbuf; sum for mass normalisation
