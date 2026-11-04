@@ -76,8 +76,8 @@ button.ww-piece[aria-expanded='true'] > .ww-face, .ww-primary > .ww-face { backg
 .ww-info { width: min(340px, calc(100vw - 2 * var(--edge) - var(--tile) - var(--gap))); max-height: calc(100vh - 2 * var(--edge)); overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
 .ww-info .ww-heading { margin: 0; }
 .ww-controls + .ww-heading { padding-top: 10px; border-top: 2px dashed var(--rule); }
-.ww-credits { margin: 0; }
-.ww-credits dt { margin-top: 10px; font: 700 0.85em var(--font-display); letter-spacing: 0.04em; color: var(--ink-soft); }
+.ww-credits { margin: 0; font-size: 0.9em; text-transform: none; } /* read rarely and at length: in sentence case, not the HUD's capitals */
+.ww-credits dt { margin-top: 10px; font-weight: 600; color: var(--ink-soft); }
 .ww-credits dt:first-child { margin-top: 0; }
 .ww-credits dd, .ww-credits p { margin: 0; }
 .ww-credits a { color: inherit; text-decoration: underline; text-decoration-color: var(--ink-soft); text-underline-offset: 2px; }
@@ -130,13 +130,14 @@ button.ww-piece[aria-expanded='true'] > .ww-face, .ww-primary > .ww-face { backg
 
 /* ---- debug card: heading and help stay put, only the sections scroll -------- */
 .ww-debug { width: 300px; max-width: calc(100% - 2 * var(--edge) - var(--tile) - var(--gap)); max-height: calc(100% - 2 * var(--edge)); display: flex; flex-direction: column; }
-.ww-debug-sections { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding-right: 6px; }
+.ww-debug-sections, .ww-debug-help { text-transform: none; } /* as the credits */
+.ww-debug-sections { font-size: 0.9em; flex: 1 1 auto; min-height: 0; overflow-y: auto; padding-right: 6px; }
 .ww-debug details { border-top: 2px solid var(--rule); padding: 6px 0; }
-.ww-debug summary { display: flex; align-items: center; justify-content: space-between; padding: 2px 0; cursor: pointer; list-style: none; font-family: var(--font-display); letter-spacing: 0.04em; }
+.ww-debug summary { display: flex; align-items: center; justify-content: space-between; padding: 2px 0; cursor: pointer; list-style: none; font-weight: 600; }
 .ww-debug summary::-webkit-details-marker { display: none; }
 .ww-debug summary::after { content: '+'; font-size: 1.2em; color: var(--ink-soft); }
 .ww-debug details[open] > summary::after { content: '–'; }
-.ww-debug-count { margin: 0 auto 0 8px; color: var(--ink-soft); font-family: var(--font-body); font-variant-numeric: tabular-nums; }
+.ww-debug-count { margin: 0 auto 0 8px; color: var(--ink-soft); font-weight: 400; font-variant-numeric: tabular-nums; }
 .ww-debug-rows { display: flex; flex-direction: column; gap: 8px; padding: 8px 0 2px; }
 .ww-debug-row { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; align-items: center; cursor: pointer; }
 .ww-debug-row output { color: var(--ink-soft); font-variant-numeric: tabular-nums; }
