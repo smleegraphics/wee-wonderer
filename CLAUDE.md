@@ -88,7 +88,8 @@ enough to find one.
 | `climb.ts` | The climb state machine (`climbUpdate`, `climbWall`, `fitClimbBody`), context/climb.md |
 | `camera.ts` | The follow camera (`updateCamera`, its zoom limits `setFollowDistance`), the free camera (`setGodCam`, the Debug card's Free camera), the opening shot, the fixed debug camera |
 | **`src/lighting/`** | `scan-light.ts` (the light probe, the room key light that shades the figurine from the way the room's light leans, and the probe's debug view) and `contact-shadow.ts`, context/lighting.md |
-| **`src/ui/`** | The on-screen UI: `hud.ts` (tiles, cards, screens), `debug-panel.ts`, `paper.ts` (building blocks), `ui.css` (all styles and tokens) |
+| **`src/ui/`** | The on-screen UI: `hud.ts` (tiles, cards, screens), `journal.ts` (the room's page and its games, filled through `hud.setJournal`), `credits.ts`, `debug-panel.ts`, `paper.ts` (building blocks, icons), `ui.css` (all styles and tokens) |
+| **`src/game/`** | `journal-sample.ts`: sample pages for the journal until the game fills it from the room's shape (context/ui.md, "The journal") |
 | **`src/dev-pages/`** | Pages not part of the app: `inspect-room.ts`, the scan inspector (`inspect.html`); `character-thumbs.ts` (`thumbs.html`), which renders the Characters card's pictures for `scripts/character-thumbs.mjs` |
 | `deploy/scans-worker/`, `scripts/upload-scans.mjs` | The scan host (a Worker over R2, with its own `package.json` for wrangler) and the upload of the listed scans to it |
 
@@ -119,8 +120,8 @@ from a second checkout, start its own server on another port and pass its addres
   waiting and 1 once it has arrived, and `lightView`: where the scan light's debug
   panorama is on screen while that view is on). Without `?tel=1` there is no `__dbg`. `window.__wwReady` is
   always set once the first frames have rendered.
-- **UI regression check:** `node scripts/uicheck.mjs` runs 32 checks of the title,
-  keys, tiles, Credits and Controls cards, Debug card, loading view, the scan light's capture at load, room switch,
+- **UI regression check:** `node scripts/uicheck.mjs` runs 36 checks of the title,
+  keys, tiles, the More information card, the journal, Debug card, loading view, the scan light's capture at load, room switch,
   importing a scan and a failed load, and exits non-zero on a failure. Run it after any change under
   `src/ui/`, to loading, or to the scan light.
 - **Gap measurement:** `node scripts/holes.mjs <scan> [outDir]` counts the pixels the

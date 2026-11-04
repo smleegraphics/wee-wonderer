@@ -40,7 +40,7 @@ export const BODY = { radius: 0.22 };
 const app = document.getElementById('app')!;
 // The on-screen UI (context/ui.md). What its controls do is filled in where the app is
 // put together (hudActions), since the code that does it is built on this.
-export const hudActions = { pickRoom: (_id: string): void => {}, pickCharacter: (_id: string): void => {}, importScan: (_file: File): void => {}, reset: (): void => {} };
+export const hudActions = { pickRoom: (_id: string): void => {}, pickCharacter: (_id: string): void => {}, importScan: (_file: File): void => {}, reset: (): void => {}, playGame: (_id: string): void => {} };
 export const hud = createHud({
   rooms: LISTED_SCANS.map((s) => ({ id: s.file, label: s.label })),
   importTypes: SCAN_FILE_TYPES,
@@ -49,6 +49,7 @@ export const hud = createHud({
   onPickCharacter: (id) => hudActions.pickCharacter(id),
   onImport: (file) => hudActions.importScan(file),
   onReset: () => hudActions.reset(),
+  onPlayGame: (id) => hudActions.playGame(id),
 });
 
 export const renderer = new WebGPURenderer({ antialias: false }); // no MSAA: every splat would be blended at several samples a pixel, which a soft splat gains nothing from (context/frame-time.md)

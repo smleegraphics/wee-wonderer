@@ -8,6 +8,7 @@ import { setupDebugMenu } from './debug-menu';
 import { camLatch, GOD_CAM, updateCamera, updateFreeCam, updateGodCam } from './figurine/camera';
 import { character, charLoaded, loadCharacter, mixer, resetToSpawn } from './figurine/character';
 import { jumpKey, updateController } from './figurine/controller';
+import { playSampleGame, updateJournalSample } from './game/journal-sample';
 import { updateContactShadow } from './lighting/contact-shadow';
 import { updateScanDebug, updateScanLight } from './lighting/scan-light';
 import { importScan, pickUpload } from './scan/import';
@@ -50,6 +51,7 @@ Object.assign(hudActions, {
   pickCharacter: (id: string) => loadCharacter(id),
   importScan: (file: File) => void importScan(file),
   reset: () => { if (charLoaded) resetToSpawn(); }, // the way out of any spot the figurine gets stuck in
+  playGame: (id: string) => playSampleGame(id),
 });
 
 const clock = new THREE.Clock();
@@ -63,6 +65,7 @@ function simulate(dt: number, publish = true): void {
   mixer?.update(dt);
   if (charLoaded) { updateContactShadow(dt); updateScanLight(dt); updateScanDebug(); }
   updateArrival(dt);
+  updateJournalSample();
   if (TEL && publish) publishDebugState();
   if (TEL && publish) applyMatteView();
 }
