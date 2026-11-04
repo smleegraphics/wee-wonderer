@@ -29,7 +29,7 @@ const CREDITS: Credit[] = [
     note: ['Trained into splats with msplat by ', { text: 'alexmkwizu', href: 'https://huggingface.co/datasets/alexmkwizu/gaussian_training_datasets' }, ', then cleaned and converted for this site'],
   },
   { what: 'Record Player Table', who: ['Captured by Samantha Lee, with SpAItial'] },
-  { what: 'Type', who: ['Baloo 2 and Patrick Hand SC, ', { text: 'SIL Open Font License', href: 'https://openfontlicense.org' }] },
+  { what: 'Type', who: ['Special Elite and Courier Prime, ', { text: 'SIL Open Font License', href: 'https://openfontlicense.org' }] },
   { what: 'Built with', who: [{ text: 'three.js', href: 'https://threejs.org' }] },
 ];
 

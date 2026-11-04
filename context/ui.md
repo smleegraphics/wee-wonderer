@@ -1,8 +1,10 @@
 # UI
 
 The on-screen UI is cut paper laid over the scan: off-white pieces with lopsided
-hand-cut edges and a hard slate shadow, rounded lettering (Baloo 2) for labels and printed
-capitals for text. The reference is the HUD of Messenger (messenger.abeto.co):
+hand-cut edges and a hard slate shadow, typewriter lettering for headings (Special Elite) and
+typed capitals for text (Courier Prime), like a field notebook. (Tried and passed over, by
+Sam from screenshots in the real HUD: Pixelify Sans and Baloo 2 for headings, and handwriting
+for the journal's writing: neat hands read as a children's book, loose ones fought the headings.) The reference is the HUD of Messenger (messenger.abeto.co):
 almost nothing on screen, a few small icon tiles at the window's edge, and cards
 that unfold from them.
 

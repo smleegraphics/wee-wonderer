@@ -10,8 +10,8 @@
   --accent: #f1c84c;        /* the one loud colour: Begin, and whichever tile is open */
   --accent-ink: #5a4310;
   --danger: #b8434e;
-  --font-display: 'Baloo 2', ui-rounded, system-ui, sans-serif;
-  --font-body: 'Patrick Hand SC', 'Comic Sans MS', cursive;
+  --font-display: 'Special Elite', 'Courier New', monospace; /* one weight: the browser bolds it where a heading asks for 700 */
+  --font-body: 'Courier Prime', 'Courier New', monospace;
   --text: 17px;
   --tile: 58px;             /* side of a square icon tile */
   --wonk: 0.8;              /* how lopsided the cuts are: 0 = perfect rectangles */
@@ -104,7 +104,7 @@ button.ww-piece[aria-expanded='true'] > .ww-face, .ww-primary > .ww-face { backg
 .ww-page { display: flex; flex-direction: column; gap: 10px; padding: 18px 20px; background-image: repeating-linear-gradient(to bottom, transparent 0 calc(var(--ruled) - 2px), var(--rule) calc(var(--ruled) - 2px) var(--ruled)); background-origin: content-box; background-position: 0 var(--ruled-drop); }
 /* The written page: every line of it, wrapped ones too, is one ruled line (--ruled) tall, and what
    is between them whole lines, so the writing sits on the rules; --ruled-drop moves the rules down
-   onto the writing's baseline (set by eye for Patrick Hand SC and Baloo 2). */
+   onto the writing's baseline (set by eye for Courier Prime and Special Elite). */
 .ww-page-written { gap: 0; }
 .ww-journal .ww-page-written > * { margin: 0; line-height: var(--ruled); } /* (.ww-journal: over the headings' own font shorthand, which sets a line height) */
 .ww-page + .ww-page { border-left: 3px solid var(--rule); }
@@ -112,12 +112,12 @@ button.ww-piece[aria-expanded='true'] > .ww-face, .ww-primary > .ww-face { backg
 .ww-page .ww-heading { margin: 0; }
 .ww-journal-room { margin: 0; font: 700 0.85em var(--font-display); letter-spacing: 0.04em; color: var(--ink-soft); }
 .ww-journal-game { font-size: 1.5em; }
-.ww-journal-notes { list-style: none; padding: 0; text-transform: none; font-size: 1.1em; }
+.ww-journal-notes { list-style: none; padding: 0; text-transform: none; }
 /* how the picked game fits this room, at the foot of the page */
 .ww-page-written > .ww-journal-here { margin-top: var(--ruled); text-transform: none; } /* a blank line below the notes */
 .ww-journal-here[data-state='notHere'], .ww-journal-here[data-state='later'] { color: var(--ink-soft); }
 .ww-stamps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--gap); }
-.ww-stamp { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; aspect-ratio: 9 / 8; padding: 6px; border: 3px solid currentColor; background: none; font: 700 0.8em/1.15 var(--font-display); letter-spacing: 0.03em; text-align: center; rotate: calc(-1.5deg * var(--wonk)); }
+.ww-stamp { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; aspect-ratio: 9 / 8; padding: 6px; border: 3px solid currentColor; background: none; font: 700 0.8em/1.15 var(--font-body); text-align: center; rotate: calc(-1.5deg * var(--wonk)); }
 .ww-stamp:nth-child(2n) { rotate: calc(1.2deg * var(--wonk)); }
 .ww-stamp:nth-child(3n) { rotate: calc(-0.6deg * var(--wonk)); }
 .ww-stamp svg { width: 30px; height: 30px; fill: currentColor; }

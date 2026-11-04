@@ -3,9 +3,9 @@
 // DOM and what is open; the app tells it what happened and is called back with
 // what the player asked for. See context/ui.md.
 
-import '@fontsource/baloo-2/500.css';
-import '@fontsource/baloo-2/700.css';
-import '@fontsource/patrick-hand-sc/400.css';
+import '@fontsource/special-elite/400.css';
+import '@fontsource/courier-prime/400.css';
+import '@fontsource/courier-prime/700.css';
 import './ui.css';
 import { el, piece, tile } from './paper';
 import { createDebugPanel, type DebugPanel } from './debug-panel';
