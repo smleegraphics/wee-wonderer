@@ -60,20 +60,23 @@ button.ww-piece[aria-expanded='true'] > .ww-face, .ww-primary > .ww-face { backg
 .ww-card { box-sizing: border-box; padding: var(--card-pad) calc(var(--card-pad) + 2px); background: var(--paper); filter: var(--drop); transform: rotate(calc(0.5deg * var(--wonk))); }
 .ww-heading { margin: 0 0 8px; font: 700 1.15em/1.2 var(--font-display); letter-spacing: 0.04em; }
 
-/* ---- HUD: rooms top-right, reset + debug stacked bottom-right --------------- */
+/* ---- HUD: Scans, Journal, Characters top-right; Back to the start bottom-right; More information and Debug bottom-left */
 .ww-corner { position: absolute; right: var(--edge); display: flex; flex-direction: column; gap: var(--gap); }
 .ww-corner-top { top: var(--edge); }
 .ww-corner-bottom { bottom: var(--edge); }
 .ww-corner-left { left: var(--edge); right: auto; bottom: var(--edge); }
-/* cards unfold beside the tile column */
-.ww-rooms, .ww-characters, .ww-controls, .ww-debug { position: absolute; right: calc(var(--edge) + var(--tile) + var(--gap)); }
+/* cards unfold beside their tile column, never taller than the window (they scroll instead) */
+.ww-rooms, .ww-journal, .ww-characters { position: absolute; right: calc(var(--edge) + var(--tile) + var(--gap)); }
+.ww-info, .ww-debug { position: absolute; left: calc(var(--edge) + var(--tile) + var(--gap)); bottom: var(--edge); }
 
 .ww-rooms { top: var(--edge); width: 230px; }
-/* beside its tile, the second in the top corner */
-.ww-characters { top: calc(var(--edge) + var(--tile) + var(--gap)); width: 230px; }
-/* Beside its tile in the bottom-left corner, and never taller or wider than the window: it scrolls instead. */
-.ww-credits { position: absolute; left: calc(var(--edge) + var(--tile) + var(--gap)); bottom: var(--edge); width: min(320px, calc(100vw - 2 * var(--edge) - var(--tile) - var(--gap))); max-height: calc(100vh - 2 * var(--edge)); overflow-y: auto; }
-.ww-credits dl { margin: 0; }
+/* beside its tile, the third in the top corner */
+.ww-characters { top: calc(var(--edge) + 2 * (var(--tile) + var(--gap))); width: 230px; }
+/* More information: the controls, then the credits */
+.ww-info { width: min(340px, calc(100vw - 2 * var(--edge) - var(--tile) - var(--gap))); max-height: calc(100vh - 2 * var(--edge)); overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.ww-info .ww-heading { margin: 0; }
+.ww-controls + .ww-heading { padding-top: 10px; border-top: 2px dashed var(--rule); }
+.ww-credits { margin: 0; }
 .ww-credits dt { margin-top: 10px; font: 700 0.85em var(--font-display); letter-spacing: 0.04em; color: var(--ink-soft); }
 .ww-credits dt:first-child { margin-top: 0; }
 .ww-credits dd, .ww-credits p { margin: 0; }
@@ -82,8 +85,7 @@ button.ww-piece[aria-expanded='true'] > .ww-face, .ww-primary > .ww-face { backg
 .ww-credit-note { color: var(--ink-soft); }
 /* A key line: key caps, then what they do (the Controls card, and the title's reminder). */
 .ww-keys { display: inline-flex; align-items: center; gap: 5px; }
-.ww-controls { bottom: var(--edge); display: flex; flex-direction: column; gap: 8px; }
-.ww-controls .ww-heading { margin: 0; }
+.ww-controls { display: flex; flex-direction: column; gap: 8px; }
 .ww-picks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .ww-picks button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: 0; background: none; text-align: left; overflow-wrap: anywhere; } /* an imported scan's file name can have no spaces to break at */
 .ww-picks button:hover { background: color-mix(in srgb, var(--mark) 22%, transparent); }
@@ -97,8 +99,32 @@ button.ww-piece[aria-expanded='true'] > .ww-face, .ww-primary > .ww-face { backg
 .ww-thumbs img { display: block; width: 100%; aspect-ratio: 1; }
 .ww-rooms .ww-import { margin-top: 6px; padding-top: 10px; border-top: 2px dashed var(--ink-soft); color: var(--ink-soft); }
 
+/* ---- journal: two pages, the room on the left and its games as stamps on the right; one above the other in a narrow window */
+.ww-journal { top: var(--edge); width: min(860px, calc(100% - 2 * var(--edge) - var(--tile) - var(--gap))); max-height: calc(100% - 2 * var(--edge)); overflow-y: auto; display: grid; grid-template-columns: 1fr 1fr; padding: 0; }
+.ww-page { display: flex; flex-direction: column; gap: 10px; padding: 18px 20px; background-image: repeating-linear-gradient(to bottom, transparent 0 calc(1.6em - 2px), var(--rule) calc(1.6em - 2px) 1.6em); }
+.ww-page + .ww-page { border-left: 3px solid var(--rule); }
+@media (max-width: 760px) { .ww-journal { grid-template-columns: 1fr; } .ww-page + .ww-page { border-left: 0; border-top: 3px solid var(--rule); } }
+.ww-page .ww-heading { margin: 0; }
+.ww-journal-room { margin: 0; font: 700 0.85em var(--font-display); letter-spacing: 0.04em; color: var(--ink-soft); }
+.ww-journal-game { font-size: 1.5em; }
+.ww-journal-notes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; text-transform: none; font-size: 1.1em; }
+/* how the picked game fits this room, at the foot of the page */
+.ww-journal-here { margin: auto 0 0; padding-top: 10px; border-top: 2px dashed var(--rule); text-transform: none; }
+.ww-journal-here[data-state='notHere'], .ww-journal-here[data-state='later'] { color: var(--ink-soft); }
+.ww-stamps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--gap); }
+.ww-stamp { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; aspect-ratio: 9 / 8; padding: 6px; border: 3px solid currentColor; background: none; font: 700 0.8em/1.15 var(--font-display); letter-spacing: 0.03em; text-align: center; rotate: calc(-1.5deg * var(--wonk)); }
+.ww-stamp:nth-child(2n) { rotate: calc(1.2deg * var(--wonk)); }
+.ww-stamp:nth-child(3n) { rotate: calc(-0.6deg * var(--wonk)); }
+.ww-stamp svg { width: 30px; height: 30px; fill: currentColor; }
+.ww-stamp small { font: 0.95em var(--font-body); }
+.ww-stamp[data-state='notHere'], .ww-stamp[data-state='later'] { border-style: dashed; color: var(--ink-soft); }
+.ww-stamp[aria-pressed='true'] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent-ink); }
+.ww-journal-play { align-self: flex-end; margin-top: auto; }
+.ww-journal-play > .ww-face { padding: 8px 20px; font: 700 1em var(--font-display); letter-spacing: 0.04em; }
+.ww-journal-play[aria-disabled='true'] { filter: none; opacity: 0.5; cursor: default; }
+
 /* ---- debug card: heading and help stay put, only the sections scroll -------- */
-.ww-debug { bottom: var(--edge); width: 300px; max-width: calc(100% - 2 * var(--edge) - var(--tile) - var(--gap)); max-height: calc(100% - 2 * var(--edge)); display: flex; flex-direction: column; }
+.ww-debug { width: 300px; max-width: calc(100% - 2 * var(--edge) - var(--tile) - var(--gap)); max-height: calc(100% - 2 * var(--edge)); display: flex; flex-direction: column; }
 .ww-debug-sections { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding-right: 6px; }
 .ww-debug details { border-top: 2px solid var(--rule); padding: 6px 0; }
 .ww-debug summary { display: flex; align-items: center; justify-content: space-between; padding: 2px 0; cursor: pointer; list-style: none; font-family: var(--font-display); letter-spacing: 0.04em; }

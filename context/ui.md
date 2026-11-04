@@ -8,20 +8,34 @@ that unfold from them.
 
 ## What is on screen
 
-- **Tiles.** Scans and Characters (top-right); Controls, Back to the start and Debug (bottom-right);
-  Credits (bottom-left). The top-left corner is left free (the scan-light debug panorama
-  goes there). The Scans card lists the `listed` entries of `SCANS`
-  (`src/scan/scan-list.ts`), then "Import your own scan".
-  The Credits card (`src/ui/credits.ts`) names who made what, with the licences that ask
-  for credit; `CREDITS.md` says the same at length, and the two are kept in step.
-- **Cards.** Scans, Characters, Controls, Credits and Debug unfold beside their tile. The
+- **Tiles.** What changes the scene is kept together, top-right: Scans, Journal, Characters.
+  Back to the start is alone bottom-right; More information and Debug are bottom-left. The
+  top-left corner is left free (the scan-light debug panorama goes there). The Scans card
+  lists the `listed` entries of `SCANS` (`src/scan/scan-list.ts`), then "Import your own scan".
+  More information holds the controls, then the credits (`src/ui/credits.ts`), which name who
+  made what, with the licences that ask for credit; `CREDITS.md` says the same at length, and
+  the two are kept in step.
+- **The journal** (`src/ui/journal.ts`): the Wonderer's page for the room it is in, two pages
+  side by side (one above the other in a narrow window). The right page is the games the room
+  can be played as, as stamps: one it can be played as, one the room's shape does not suit
+  ("not here", its Play greyed), one not made yet ("later"). The left page is the game picked:
+  the room's name small above the game's, what the game is in the Wonderer's own words, and at
+  the foot how it fits this room (why not, when it does not). It describes the game, not the
+  room's shape (Sam: a page of observations about the room said nothing about what to play).
+  Picking a stamp shows it on the left; Play folds the journal and calls `onPlayGame`. It opens only from its tile:
+  never by itself, and it has no key (a key would be handled in `character.ts`'s `keyEvent`).
+  What it says comes from outside, through `hud.setJournal(page)`. **For now the pages are
+  sample data** (`src/game/journal-sample.ts`, written by hand from the game branch's
+  measurements; Play only says games are coming): the game replaces that file with pages
+  worked out from the room's shape.
+- **Cards.** Scans, Journal, Characters, More information and Debug unfold beside their tile. The
   Characters card shows `CHARACTERS` (`src/figurine/characters.ts`) as pictures, three to a row,
   and rings the one in play. A character's name (`label`) is its button's accessible name and
   tooltip, not shown. The pictures (`thumb`) are made from the models by
   `scripts/character-thumbs.mjs` (through `thumbs.html`, `src/dev-pages/character-thumbs.ts`):
   run it after adding or changing a character. At most one is open;
   `Escape` folds it. `` ` `` toggles Debug.
-- **The controls** are not on screen in play: they are in the Controls card, so the
+- **The controls** are not on screen in play: they are in the More information card, so the
   view is the room alone. The title screen says how to walk and jump instead
   (`.ww-keys-note`, hidden on touch screens, which have no keys).
 - **Status note** (top-centre).
@@ -52,6 +66,8 @@ that unfold from them.
 | `src/ui/ui.css` | Every style. Tokens at the top, on `.ww-ui`. |
 | `src/ui/paper.ts` | The building blocks: `piece` (shadow holder + cut face), `tile`, `el`, the icon paths |
 | `src/ui/hud.ts` | `createHud`: builds all of it, owns what is open, returns the `Hud` handle |
+| `src/ui/journal.ts` | The journal card: a room's page (`JournalPage`) drawn as notes and stamps, which stamp is picked, Play |
+| `src/ui/credits.ts` | The credits, as the list More information holds |
 | `src/ui/debug-panel.ts` | The Debug card: `section()` → `addToggle` / `addSlider` (which returns a function that shows a value on the slider, for a setting that changed without it) |
 | `src/loading/paper-bits.ts` | The sheet of paper dots: where they sit and what a dot looks like. One set of formulas, used by both files below |
 | `src/loading/loading-scene.ts` | The stand-in dots drawn before a scan has loaded (one instanced sprite) |
@@ -60,8 +76,8 @@ that unfold from them.
 | `src/three-internals.ts` | The private parts of three.js the app reaches into (`GaussianSplat`, the renderer's material conversion), in one place |
 
 `app.ts` creates the one `hud`, and nothing outside `src/ui/` touches UI DOM. It tells the HUD what happened
-(`setCurrentRoom`, `addRoom`, `status`, `setLoading`) and is called back with what
-the player asked for (`onPickRoom`, `onImport`, `onReset`).
+(`setCurrentRoom`, `addRoom`, `setJournal`, `status`, `setLoading`) and is called back with what
+the player asked for (`onPickRoom`, `onImport`, `onReset`, `onPlayGame`).
 
 ## Rules
 
@@ -188,8 +204,8 @@ was set after the fill, about 0.2 s later.
   Before, parsing the 453 MB Playroom blocked the main thread for about 10 s and a
   click on Begin did nothing until it ended.
 
-- **`scripts/uicheck.mjs` is the regression check for all of this**: 30 checks of
-  the title, keys, tiles, Credits and Controls cards, Debug card, loading note, progress bar, arrival, the scan
+- **`scripts/uicheck.mjs` is the regression check for all of this**: 36 checks of
+  the title, keys, tiles, the More information card, the journal, Debug card, loading note, progress bar, arrival, the scan
   light's capture at load (`context/lighting.md`), room switch, importing a scan and a failed load. Run it after any change here. It waits for conditions,
   not for fixed times: a fixed 200 ms wait failed about one run in five.
 - **Headless scripts start with the title screen dismissed.** A fresh browser profile

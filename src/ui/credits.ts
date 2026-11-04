@@ -1,6 +1,7 @@
-// The Credits card: who made what the visitor is looking at, with the licences that ask
-// for credit (CC BY 4.0: the Chibi figurine and the Mip-NeRF 360 scenes). CREDITS.md at the
-// repository's root says the same at more length; keep the two in step.
+// The credits, in the More information card (hud.ts): who made what the visitor is looking
+// at, with the licences that ask for credit (CC BY 4.0: the Chibi figurine and the Mip-NeRF
+// 360 scenes). CREDITS.md at the repository's root says the same at more length; keep the
+// two in step.
 
 import { CHARACTERS } from '../figurine/characters';
 import { el } from './paper';
@@ -44,16 +45,14 @@ function line(className: string, parts: Part[]): HTMLParagraphElement {
   return p;
 }
 
-/** The card, folded until its tile is pressed (the HUD unfolds one card at a time). */
-export function createCreditsCard(): HTMLElement {
-  const card = el('section', 'ww-card ww-credits');
-  card.appendChild(el('h2', 'ww-heading', 'Credits'));
-  const list = card.appendChild(el('dl'));
+/** The credits as a list, for the More information card to hold. */
+export function creditsList(): HTMLDListElement {
+  const list = el('dl', 'ww-credits');
   for (const c of CREDITS) {
     list.appendChild(el('dt', '', c.what));
     const dd = list.appendChild(el('dd'));
     dd.appendChild(line('', c.who));
     if (c.note) dd.appendChild(line('ww-credit-note', c.note));
   }
-  return card;
+  return list;
 }

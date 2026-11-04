@@ -88,12 +88,24 @@ try {
   check('Space jumps after clicking a tile', await soon(() => window.__dbg.state === 'air'), `state=${(await dbg()).state}`);
   await soon(() => window.__dbg.state === 'ground');
 
-  // --- the Credits card: opens from its tile, credits what needs crediting, folds on Escape
-  await page.getByRole('button', { name: 'Credits', exact: true }).click();
-  const credits = await page.evaluate(() => { const c = document.querySelector('.ww-credits'); return c && !c.hidden ? c.textContent : ''; });
+  // --- More information: the controls and the credits, in one card that opens from its tile and folds on Escape
+  const hintGone = await page.evaluate(() => !document.querySelector('.ww-hint'));
+  await page.getByRole('button', { name: 'More information', exact: true }).click();
+  const info = await page.evaluate(() => { const c = document.querySelector('.ww-info'); return c && !c.hidden ? { controls: c.querySelector('.ww-controls').textContent, credits: c.querySelector('.ww-credits').textContent } : { controls: '', credits: '' }; });
   await page.keyboard.press('Escape');
-  check('the Credits card opens and credits the characters, the scans and the maker', /PolyOne Studio/.test(credits) && /Kay Lousberg/.test(credits) && /Kenney/.test(credits) && /Mip-NeRF 360/.test(credits) && /Samantha Lee/.test(credits)
-    && await page.evaluate(() => document.querySelector('.ww-credits').hidden));
+  const infoFolded = await page.evaluate(() => document.querySelector('.ww-info').hidden);
+  check('More information credits the characters, the scans and the maker', /PolyOne Studio/.test(info.credits) && /Kay Lousberg/.test(info.credits) && /Kenney/.test(info.credits) && /Mip-NeRF 360/.test(info.credits) && /Samantha Lee/.test(info.credits) && infoFolded);
+  check('More information has the controls, not on screen until asked for, and says a climb starts with a jump', hintGone && /walk/.test(info.controls) && /jump into a wall/.test(info.controls) && infoFolded, info.controls);
+
+  // --- the journal: shut until its tile is pressed; the room's page, its games as stamps; Play folds it
+  check('the journal stays shut until its tile is pressed', await page.evaluate(() => document.querySelector('.ww-journal').hidden));
+  await page.getByRole('button', { name: 'Journal', exact: true }).click();
+  const page1 = await page.evaluate(() => { const j = document.querySelector('.ww-journal'); return j.hidden ? null : { room: j.querySelector('.ww-journal-room').textContent, stamps: [...j.querySelectorAll('.ww-stamp')].map((b) => b.dataset.state) }; });
+  check(`the journal opens from its tile on ${FIRST.label}'s page, with its games as stamps`, page1?.room.startsWith(FIRST.label) && page1.stamps.filter((st) => st === 'open').length >= 2, JSON.stringify(page1));
+  await page.locator('.ww-journal').getByRole('button', { name: 'The spilled pack', exact: true }).click();
+  const picked = await page.evaluate(() => ({ pressed: document.querySelector('.ww-stamp[aria-pressed="true"]')?.textContent, play: document.querySelector('.ww-journal-play').textContent }));
+  await page.locator('.ww-journal-play').click();
+  check('a stamp picks its game, and Play folds the journal', picked.pressed === 'The spilled pack' && /The spilled pack/.test(picked.play) && await page.evaluate(() => document.querySelector('.ww-journal').hidden), JSON.stringify(picked));
 
   // --- the Characters card: lists every character, switches to one, remembers it
   await page.getByRole('button', { name: 'Characters', exact: true }).click();
@@ -104,14 +116,6 @@ try {
     && await soon(() => document.querySelector('.ww-characters [aria-current="true"]')?.getAttribute('aria-label') === 'Skeleton' && localStorage.getItem('ww.character') === 'skeleton'), listed.join());
   check('every character picture loads', await page.evaluate(() => [...document.querySelectorAll('.ww-characters li img')].every((i) => i.complete && i.naturalWidth > 0)));
   await page.evaluate(() => localStorage.removeItem('ww.character'));
-
-  // --- the controls are folded away, in a card of their own
-  const hintGone = await page.evaluate(() => !document.querySelector('.ww-hint'));
-  await page.getByRole('button', { name: 'Controls', exact: true }).click();
-  const controls = await page.evaluate(() => { const c = document.querySelector('.ww-controls'); return c && !c.hidden ? c.textContent : ''; });
-  await page.keyboard.press('Escape');
-  check('the controls are in their card, not on screen until asked for', hintGone && /walk/.test(controls) && /jump/.test(controls) && /climb/.test(controls)
-    && await page.evaluate(() => document.querySelector('.ww-controls').hidden));
 
   // --- the Debug card
   await page.keyboard.press('Backquote');
@@ -141,6 +145,12 @@ try {
   check('` opens Debug while a room loads', await page.evaluate(() => !document.querySelector('.ww-debug').hidden));
   await page.keyboard.press('Escape');
   check(`${SECOND.label} loads and arrives`, await loaded() && await arrived() && logs.some((l) => l.startsWith(`loaded ${SECOND.file}`)));
+  // the journal follows the room: Counter's shape does not suit lava, which says why and cannot be played
+  await page.getByRole('button', { name: 'Journal', exact: true }).click();
+  await page.locator('.ww-journal .ww-stamp[data-state="notHere"]').first().click();
+  const page2 = await page.evaluate(() => { const j = document.querySelector('.ww-journal'); return { room: j.querySelector('.ww-journal-room').textContent, here: j.querySelector('.ww-journal-here').textContent, play: j.querySelector('.ww-journal-play').getAttribute('aria-disabled') }; });
+  await page.keyboard.press('Escape');
+  check(`the journal turns to ${SECOND.label}'s page, where a game the room does not suit says why and cannot be played`, page2.room.startsWith(SECOND.label) && page2.here.length > 0 && page2.play === 'true', JSON.stringify(page2));
   await page.getByRole('button', { name: 'Scans', exact: true }).click();
   check(`${SECOND.label} is marked current`, await page.evaluate(() => [...document.querySelectorAll('.ww-rooms [aria-current="true"]')].map((b) => b.textContent).join()) === SECOND.label);
 
