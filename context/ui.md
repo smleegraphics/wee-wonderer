@@ -1,7 +1,7 @@
 # UI
 
 The on-screen UI is cut paper laid over the scan: off-white pieces with lopsided
-hand-cut edges and a hard slate shadow, pixel lettering for labels and printed
+hand-cut edges and a hard slate shadow, rounded lettering (Baloo 2) for labels and printed
 capitals for text. The reference is the HUD of Messenger (messenger.abeto.co):
 almost nothing on screen, a few small icon tiles at the window's edge, and cards
 that unfold from them.
@@ -19,8 +19,12 @@ that unfold from them.
   side by side (one above the other in a narrow window). The right page is the games the room
   can be played as, as stamps: one it can be played as, one the room's shape does not suit
   ("not here", its Play greyed), one not made yet ("later"). The left page is the game picked:
-  the room's name small above the game's, what the game is in the Wonderer's own words, and at
-  the foot how it fits this room (why not, when it does not). It describes the game, not the
+  the room's name small above the game's, what the game is in the Wonderer's own words, and a
+  line below that, how it fits this room (why not, when it does not). The left page is written on
+  its rules: every line of it is one rule (`--ruled`) tall and what is between them whole rules,
+  so wrapped lines stay on the rules too; that is why the fit line follows the notes rather than
+  sitting at the foot, where the page's height (set by the stamps beside it) would put it between
+  rules. `--ruled-drop` moves the rules onto the writing's baseline, set by eye for these fonts. It describes the game, not the
   room's shape (Sam: a page of observations about the room said nothing about what to play).
   Picking a stamp shows it on the left; Play folds the journal and calls `onPlayGame`. It opens only from its tile:
   never by itself, and it has no key (a key would be handled in `character.ts`'s `keyEvent`).
@@ -35,9 +39,9 @@ that unfold from them.
   `scripts/character-thumbs.mjs` (through `thumbs.html`, `src/dev-pages/character-thumbs.ts`):
   run it after adding or changing a character. At most one is open;
   `Escape` folds it. `` ` `` toggles Debug.
-- **The controls** are not on screen in play: they are in the More information card, so the
-  view is the room alone. The title screen says how to walk and jump instead
-  (`.ww-keys-note`, hidden on touch screens, which have no keys).
+- **The controls** are not on screen, in play or on the title screen: they are in the More
+  information card, so the view is the room alone. (The title once showed how to walk and
+  jump; Sam took it off, to keep the title to the name.)
 - **Status note** (top-centre).
 - **Loading view** while a scan is fetched and its collision built, and until the
   figurine has loaded. There is no room yet: the figurine stands idle on a rippling
@@ -161,8 +165,8 @@ was set after the fill, about 0.2 s later.
   **`public/apple-touch-icon.png`** is the same at 180 px on the `--sky` colour, for an
   iPhone home screen.
 - **`public/social-preview.png`** (1200 × 630) is the title screen over Kitchen,
-  screenshot headless at that size with the HUD's corner tiles and any on-screen key
-  hints hidden and Begin made invisible. Retake it the same way when the title screen changes. The `og:image`
+  screenshot headless at that size with the HUD's corner tiles hidden (`.ww-corner`) and
+  Begin made invisible, once the room has arrived (`__dbg.reveal` 1, `?tel=1`). Retake it the same way when the title screen changes. The `og:image`
   address in `index.html` is the public site's (`context/deploy.md`): a link preview
   needs a full address.
 

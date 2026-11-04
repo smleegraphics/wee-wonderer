@@ -19,7 +19,7 @@ const TAGS: Record<JournalGame['state'], string> = { open: '', notHere: 'not her
 export function createJournal(onPlay: (id: string) => void): { el: HTMLElement; show(page: JournalPage | null): void } {
   const card = el('section', 'ww-card ww-journal');
   card.setAttribute('aria-label', 'Journal');
-  const left = card.appendChild(el('div', 'ww-page'));
+  const left = card.appendChild(el('div', 'ww-page ww-page-written'));
   const room = left.appendChild(el('p', 'ww-journal-room'));
   const name = left.appendChild(el('h2', 'ww-heading ww-journal-game'));
   const notes = left.appendChild(el('ul', 'ww-journal-notes'));

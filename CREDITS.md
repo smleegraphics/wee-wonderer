@@ -49,7 +49,7 @@ SpAItial.
 
 ## Type
 
-[Pixelify Sans](https://fonts.google.com/specimen/Pixelify+Sans) and
+[Baloo 2](https://fonts.google.com/specimen/Baloo+2) and
 [Patrick Hand SC](https://fonts.google.com/specimen/Patrick+Hand+SC), both under the
 [SIL Open Font License 1.1](https://openfontlicense.org), served from the app's own build
 through Fontsource.

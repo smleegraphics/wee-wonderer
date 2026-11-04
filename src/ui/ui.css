@@ -10,7 +10,7 @@
   --accent: #f1c84c;        /* the one loud colour: Begin, and whichever tile is open */
   --accent-ink: #5a4310;
   --danger: #b8434e;
-  --font-display: 'Pixelify Sans', ui-monospace, monospace;
+  --font-display: 'Baloo 2', ui-rounded, system-ui, sans-serif;
   --font-body: 'Patrick Hand SC', 'Comic Sans MS', cursive;
   --text: 17px;
   --tile: 58px;             /* side of a square icon tile */
@@ -100,16 +100,21 @@ button.ww-piece[aria-expanded='true'] > .ww-face, .ww-primary > .ww-face { backg
 .ww-rooms .ww-import { margin-top: 6px; padding-top: 10px; border-top: 2px dashed var(--ink-soft); color: var(--ink-soft); }
 
 /* ---- journal: two pages, the room on the left and its games as stamps on the right; one above the other in a narrow window */
-.ww-journal { top: var(--edge); width: min(860px, calc(100% - 2 * var(--edge) - var(--tile) - var(--gap))); max-height: calc(100% - 2 * var(--edge)); overflow-y: auto; display: grid; grid-template-columns: 1fr 1fr; padding: 0; }
-.ww-page { display: flex; flex-direction: column; gap: 10px; padding: 18px 20px; background-image: repeating-linear-gradient(to bottom, transparent 0 calc(1.6em - 2px), var(--rule) calc(1.6em - 2px) 1.6em); }
+.ww-journal { --ruled: 30px; --ruled-drop: -6px; top: var(--edge); width: min(860px, calc(100% - 2 * var(--edge) - var(--tile) - var(--gap))); max-height: calc(100% - 2 * var(--edge)); overflow-y: auto; display: grid; grid-template-columns: 1fr 1fr; padding: 0; }
+.ww-page { display: flex; flex-direction: column; gap: 10px; padding: 18px 20px; background-image: repeating-linear-gradient(to bottom, transparent 0 calc(var(--ruled) - 2px), var(--rule) calc(var(--ruled) - 2px) var(--ruled)); background-origin: content-box; background-position: 0 var(--ruled-drop); }
+/* The written page: every line of it, wrapped ones too, is one ruled line (--ruled) tall, and what
+   is between them whole lines, so the writing sits on the rules; --ruled-drop moves the rules down
+   onto the writing's baseline (set by eye for Patrick Hand SC and Baloo 2). */
+.ww-page-written { gap: 0; }
+.ww-journal .ww-page-written > * { margin: 0; line-height: var(--ruled); } /* (.ww-journal: over the headings' own font shorthand, which sets a line height) */
 .ww-page + .ww-page { border-left: 3px solid var(--rule); }
 @media (max-width: 760px) { .ww-journal { grid-template-columns: 1fr; } .ww-page + .ww-page { border-left: 0; border-top: 3px solid var(--rule); } }
 .ww-page .ww-heading { margin: 0; }
 .ww-journal-room { margin: 0; font: 700 0.85em var(--font-display); letter-spacing: 0.04em; color: var(--ink-soft); }
 .ww-journal-game { font-size: 1.5em; }
-.ww-journal-notes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; text-transform: none; font-size: 1.1em; }
+.ww-journal-notes { list-style: none; padding: 0; text-transform: none; font-size: 1.1em; }
 /* how the picked game fits this room, at the foot of the page */
-.ww-journal-here { margin: auto 0 0; padding-top: 10px; border-top: 2px dashed var(--rule); text-transform: none; }
+.ww-page-written > .ww-journal-here { margin-top: var(--ruled); text-transform: none; } /* a blank line below the notes */
 .ww-journal-here[data-state='notHere'], .ww-journal-here[data-state='later'] { color: var(--ink-soft); }
 .ww-stamps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--gap); }
 .ww-stamp { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; aspect-ratio: 9 / 8; padding: 6px; border: 3px solid currentColor; background: none; font: 700 0.8em/1.15 var(--font-display); letter-spacing: 0.03em; text-align: center; rotate: calc(-1.5deg * var(--wonk)); }
@@ -177,9 +182,6 @@ button.ww-piece[aria-expanded='true'] > .ww-face, .ww-primary > .ww-face { backg
 /* Only where the main pointer is a finger and nothing can hover: a phone or tablet, where there are no keys to move with. */
 .ww-touch-note { display: none; }
 @media (hover: none) and (pointer: coarse) { .ww-title .ww-touch-note { display: block; } }
-.ww-title .ww-keys-note { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 14px; }
-/* No keys on a touch screen, so no reminder of them. */
-@media (hover: none) and (pointer: coarse) { .ww-title .ww-keys-note { display: none; } }
 .ww-begin > .ww-face { height: var(--tile); padding: 0 34px; font: 700 1.5em var(--font-display); letter-spacing: 0.04em; }
 
 @media (prefers-reduced-motion: reduce) {

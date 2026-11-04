@@ -3,8 +3,8 @@
 // DOM and what is open; the app tells it what happened and is called back with
 // what the player asked for. See context/ui.md.
 
-import '@fontsource/pixelify-sans/500.css';
-import '@fontsource/pixelify-sans/700.css';
+import '@fontsource/baloo-2/500.css';
+import '@fontsource/baloo-2/700.css';
 import '@fontsource/patrick-hand-sc/400.css';
 import './ui.css';
 import { el, piece, tile } from './paper';
@@ -159,7 +159,7 @@ export function createHud(opts: HudOptions): Hud {
   const characters = pickList(characterList, (id) => { unfold(null); opts.onPickCharacter(id); });
   opts.characters.forEach(characters.add);
 
-  // --- the controls: keys and what they do, in the More information card (and the first two on the title) ---
+  // --- the controls: keys and what they do, in the More information card ---
   const keysLine = (into: HTMLElement, keys: string[], does: string) => {
     const line = into.appendChild(el('span', 'ww-keys'));
     for (const k of keys) line.appendChild(el('kbd', 'ww-key', k));
@@ -236,10 +236,6 @@ export function createHud(opts: HudOptions): Hud {
   title.appendChild(el('p', 'ww-card', 'A tiny explorer in your real room'));
   // The figurine moves by keyboard only, so a touch screen says so up front (shown by ui.css on touch-only devices).
   title.appendChild(el('p', 'ww-card ww-touch-note', 'Best on a computer with a keyboard'));
-  // The controls are folded away in play, so the title says how to move (not on a touch screen, which has no keys: ui.css).
-  const keysNote = title.appendChild(el('p', 'ww-card ww-keys-note'));
-  keysLine(keysNote, ['W', 'A', 'S', 'D'], 'to walk');
-  keysLine(keysNote, ['Space'], 'to jump');
   const begin = piece('button', 'ww-begin ww-primary', 0);
   begin.face.textContent = 'Begin';
   title.appendChild(begin.holder);
